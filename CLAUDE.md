@@ -19,7 +19,7 @@ SaaS для организаторов мероприятий: организа�
 - Очередь: RabbitMQ
 - Логи: log/slog, структурные, в JSON
 - Метрики: Prometheus
-- Фронтенд: React с TypeScript, Vite
+- Фронтенд: Vue с TypeScript, Vite (см. ADR 001)
 - Локальный запуск: Docker Compose
 - Нагрузочные тесты: k6
 - Линтер: golangci-lint
@@ -37,7 +37,7 @@ internal/payment/ — платёжный шлюз, вебхуки, возвра�
 internal/ticket/  — QR, валидация, отчёты
 internal/platform/— db, redis, mq, config, http, observability
 migrations/       — goose-миграции
-web/              — React-приложение
+web/              — Vue-приложение
 loadtest/         — сценарии k6
 docs/             — спецификация, ADR, результаты экспериментов
 ```

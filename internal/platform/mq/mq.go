@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -52,7 +53,11 @@ func (c *Conn) Ping(ctx context.Context) error {
 	return err
 }
 
-// Close закрывает соединение, если оно открыто.
+// closeTimeout ограничивает ожидание ответа сервера при закрытии.
+const closeTimeout = 5 * time.Second
+
+// Close закрывает соединение, если оно открыто. Ответа сервера ждёт
+// не дольше closeTimeout, чтобы зависший RabbitMQ не держал выход процесса.
 func (c *Conn) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -60,7 +65,7 @@ func (c *Conn) Close() error {
 	if c.conn == nil || c.conn.IsClosed() {
 		return nil
 	}
-	if err := c.conn.Close(); err != nil && !errors.Is(err, amqp.ErrClosed) {
+	if err := c.conn.CloseDeadline(time.Now().Add(closeTimeout)); err != nil && !errors.Is(err, amqp.ErrClosed) {
 		return fmt.Errorf("close rabbitmq: %w", err)
 	}
 	return nil

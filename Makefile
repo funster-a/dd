@@ -2,6 +2,8 @@
 
 # Переменные из .env (если он есть) действуют и здесь, и в docker compose,
 # поэтому локальный запуск и контейнеры смотрят на одни и те же порты и пароли.
+# Значения из .env сильнее переменных окружения; разовое переопределение —
+# аргументом: make run HTTP_ADDR=:8081.
 -include .env
 
 POSTGRES_USER     ?= dd
@@ -18,7 +20,7 @@ REDIS_ADDR   ?= localhost:$(REDIS_PORT)
 RABBITMQ_URL ?= amqp://$(RABBITMQ_USER):$(RABBITMQ_PASSWORD)@localhost:$(RABBITMQ_PORT)/
 
 # Экспортируем всё, включая переменные приложения из .env (HTTP_ADDR, LOG_LEVEL...),
-# чтобы go run видел их так же, как контейнеры.
+# чтобы их видели процессы, запущенные через go run.
 export
 
 GOLANGCI_LINT_VERSION := v2.14.0

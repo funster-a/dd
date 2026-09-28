@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"sync"
 	"time"
 
@@ -41,6 +42,10 @@ func (c *Conn) Get(ctx context.Context) (*amqp.Connection, error) {
 
 	conn, err := amqp.DialConfig(c.url, amqp.Config{Dial: dialer(ctx)})
 	if err != nil {
+		// Ошибка разбора URL цитирует его целиком вместе с паролем.
+		if _, ok := errors.AsType[*url.Error](err); ok {
+			return nil, errors.New("dial rabbitmq: invalid URL")
+		}
 		return nil, fmt.Errorf("dial rabbitmq: %w", err)
 	}
 	c.conn = conn

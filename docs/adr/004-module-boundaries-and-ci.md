@@ -13,7 +13,7 @@
 3. **CI в GitHub Actions на каждый push**, четыре независимых задачи:
    - Build — `go mod tidy -diff` и сборка;
    - Lint — golangci-lint;
-   - Test — миграции `up`, `reset`, `up` и все тесты с детектором гонок, включая интеграционные, против настоящих PostgreSQL и RabbitMQ в service-контейнерах;
+   - Test — миграции против PostgreSQL в service-контейнере (`up`, `reset` с проверкой, что в базе ничего не осталось, снова `up`), затем все тесты с детектором гонок, включая интеграционные с RabbitMQ;
    - Compose — `docker compose up --build --wait` с нуля, проверки `/healthz` и `/readyz` и доставка тестового сообщения до worker.
 
 ## Альтернативы

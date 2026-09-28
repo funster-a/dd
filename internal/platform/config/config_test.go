@@ -2,6 +2,7 @@ package config
 
 import (
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 )
@@ -56,5 +57,20 @@ func TestLoadInvalid(t *testing.T) {
 				t.Fatal("Load() error = nil, want error")
 			}
 		})
+	}
+}
+
+func TestLoadDoesNotLeakRabbitMQPassword(t *testing.T) {
+	for _, pw := range []string{"s3cr%t", "ab/cd", "ab#cd", "ab?cd"} {
+		t.Setenv("RABBITMQ_URL", "amqp://dd:"+pw+"@rabbitmq:5672/")
+		_, err := Load()
+		if err == nil {
+			// "ab#cd" и "ab?cd" дают корректный URL с другим смыслом;
+			// главное — пароль не попадает в текст ошибки.
+			continue
+		}
+		if strings.Contains(err.Error(), pw) || strings.Contains(err.Error(), "amqp://") {
+			t.Errorf("error for password %q leaks it: %v", pw, err)
+		}
 	}
 }

@@ -59,6 +59,10 @@ docker compose logs worker
 
 Все порты открыты только на `127.0.0.1`. Порты и пароли меняются через `.env`: скопируйте `.env.example` в `.env` и поправьте нужное. Его читают и docker compose, и Makefile.
 
+- **Порты** можно менять когда угодно.
+- **Логины, пароли и имя базы** PostgreSQL, RabbitMQ и Grafana образы применяют только при первом создании volume. После их смены выполните `docker compose down -v` — это удалит локальные данные.
+- **Пароли подставляются в строки подключения как есть**, поэтому используйте только буквы, цифры и `-`, `_`, `.`, `~`. Makefile читает `.env` по правилам make: без кавычек, без комментариев в конце строки и без `$` и `#` в значениях.
+
 ## Локальная разработка
 
 Инфраструктура работает в Docker, api и worker запускаются через `go run`. Так быстрее пересобирать и можно подключить отладчик.
@@ -70,7 +74,9 @@ make run             # api на :8080
 make run-worker      # worker, в другом терминале
 ```
 
-Если api из Docker уже запущен, он занимает порт 8080. Остановите его (`docker compose stop api`) или запустите локальный на другом порту: `HTTP_ADDR=:8081 make run`.
+Если api из Docker уже запущен, он занимает порт 8080. Остановите его (`docker compose stop api`) или запустите локальный на другом порту: `make run HTTP_ADDR=:8081`.
+
+Разовые переопределения передавайте аргументом make (`make run LOG_LEVEL=debug`), а не префиксом перед командой. Значения из `.env` для make сильнее переменных окружения.
 
 ### Команды
 
@@ -91,7 +97,7 @@ make run-worker      # worker, в другом терминале
 | `make migrate-status` | статус миграций |
 | `make migrate-create name=add_events` | создать новую миграцию |
 
-`make test` и `make test-integration` запускаются с `-race`, а детектору гонок нужен C-компилятор: на Linux это gcc, на macOS — Xcode Command Line Tools.
+`make test` и `make test-integration` запускаются с `-race`. На Linux детектору гонок нужен C-компилятор (gcc), на macOS — не нужен.
 
 ### Переменные окружения api и worker
 
@@ -104,7 +110,7 @@ make run-worker      # worker, в другом терминале
 | `REDIS_ADDR` | `localhost:6379` | Redis |
 | `RABBITMQ_URL` | `amqp://dd:dd@localhost:5672/` | RabbitMQ |
 
-Значения по умолчанию совпадают с `docker-compose.yml`. Неверное значение, например `LOG_LEVEL=loud`, останавливает процесс при старте с понятной ошибкой.
+Значения по умолчанию совпадают с `docker-compose.yml`. Все переменные проверяются при старте (`DATABASE_URL` — в api, который им пользуется). Неверное значение, например `LOG_LEVEL=loud` или `REDIS_ADDR=redis` без порта, останавливает процесс с понятной ошибкой. Пароли в текст ошибок не попадают.
 
 ## Как устроено
 
@@ -131,7 +137,7 @@ GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) запу
 
 - **Build** — `go mod tidy -diff`, сборка;
 - **Lint** — golangci-lint v2.14.0;
-- **Test** — миграции `up`, `reset`, `up`, затем все тесты с `-race` против PostgreSQL и RabbitMQ;
+- **Test** — миграции против PostgreSQL: `up`, `reset` с проверкой, что в базе ничего не осталось, снова `up`; затем все тесты с `-race`, включая интеграционные с RabbitMQ;
 - **Compose** — `docker compose up --build --wait` с нуля, проверка api и доставки сообщения до worker.
 
 Интеграционные тесты RabbitMQ запускаются, только если задана переменная `RABBITMQ_TEST_URL`, иначе пропускаются. `make test-integration` задаёт её сама.

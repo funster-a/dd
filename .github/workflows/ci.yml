@@ -50,7 +50,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U dd -d dd"
+          --health-cmd "pg_isready -h 127.0.0.1 -U dd -d dd"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
@@ -72,9 +72,30 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Migrations apply and roll back
+        env:
+          PGPASSWORD: dd
         run: |
           make migrate-up
           make migrate-reset
+          # После полного отката в базе не должно остаться ничего, кроме
+          # служебной таблицы goose: иначе у какой-то миграции неполный Down.
+          left=$(psql -h localhost -U dd -d dd -tA -v ON_ERROR_STOP=1 <<'SQL'
+          SELECT
+            (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+              WHERE n.nspname = 'public' AND c.relname NOT LIKE 'goose\_db\_version%')
+          + (SELECT count(*) FROM pg_namespace
+              WHERE nspname NOT IN ('public', 'information_schema') AND nspname NOT LIKE 'pg\_%')
+          + (SELECT count(*) FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+              WHERE n.nspname = 'public' AND t.typtype IN ('e', 'd', 'r', 'm'))
+          + (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+              WHERE n.nspname = 'public')
+          + (SELECT count(*) FROM pg_extension WHERE extname <> 'plpgsql');
+          SQL
+          )
+          if [ "$left" != "0" ]; then
+            echo "::error::$left database objects remain after migrate-reset: some migration has an incomplete Down"
+            exit 1
+          fi
           make migrate-up
           make migrate-status
       - name: Tests (unit and integration)
@@ -93,9 +114,16 @@ jobs:
           curl -fsS http://127.0.0.1:8080/readyz
       - name: worker consumes the test queue
         run: |
-          curl -fsS -u dd:dd -H 'content-type: application/json' \
+          # Очередь объявляет worker; до этого публикация в неё не маршрутизируется.
+          for i in $(seq 1 30); do
+            docker compose logs worker | grep -q '"msg":"consuming"' && break
+            sleep 1
+          done
+          resp=$(curl -fsS -u dd:dd -H 'content-type: application/json' \
             -X POST http://127.0.0.1:15672/api/exchanges/%2F/amq.default/publish \
-            -d '{"routing_key":"dd.test","payload":"ci-smoke","payload_encoding":"string","properties":{"message_id":"ci-1"}}'
+            -d '{"routing_key":"dd.test","payload":"ci-smoke","payload_encoding":"string","properties":{"message_id":"ci-1"}}')
+          echo "$resp"
+          echo "$resp" | grep -q '"routed":true'
           for i in $(seq 1 20); do
             docker compose logs worker | grep -q '"message_id":"ci-1"' && exit 0
             sleep 1

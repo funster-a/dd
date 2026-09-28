@@ -14,7 +14,9 @@ import (
 // процесса оставались в JSON.
 func NewClient(addr string, log *slog.Logger) *goredis.Client {
 	goredis.SetLogger(slogAdapter{log: log})
-	return goredis.NewClient(&goredis.Options{Addr: addr})
+	// ContextTimeoutEnabled: дедлайн контекста ограничивает и чтение/запись,
+	// иначе /readyz ждал бы ReadTimeout (5 с) вместо своего бюджета.
+	return goredis.NewClient(&goredis.Options{Addr: addr, ContextTimeoutEnabled: true})
 }
 
 type slogAdapter struct {

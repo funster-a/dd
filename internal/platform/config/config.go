@@ -5,7 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"time"
 )
@@ -51,7 +54,35 @@ func Load() (Config, error) {
 	}
 	cfg.ShutdownTimeout = timeout
 
+	if _, _, err := net.SplitHostPort(cfg.HTTPAddr); err != nil {
+		errs = append(errs, fmt.Errorf("HTTP_ADDR: %w", err))
+	}
+	if _, _, err := net.SplitHostPort(cfg.RedisAddr); err != nil {
+		errs = append(errs, fmt.Errorf("REDIS_ADDR: %w", err))
+	}
+	if err := validateURL(cfg.RabbitMQURL, "amqp", "amqps"); err != nil {
+		errs = append(errs, fmt.Errorf("RABBITMQ_URL: %w", err))
+	}
+	// DATABASE_URL разбирает pgx при создании пула: он принимает и URL,
+	// и формат key=value, а пароль в ошибках скрывает.
+
 	return cfg, errors.Join(errs...)
+}
+
+// validateURL проверяет схему и хост. Текст ошибки никогда не содержит
+// сам URL: в нём пароль, а ошибки url.Parse цитируют исходную строку.
+func validateURL(raw string, schemes ...string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return errors.New("invalid URL; special characters in user or password must be percent-encoded")
+	}
+	if !slices.Contains(schemes, u.Scheme) {
+		return fmt.Errorf("scheme must be one of %v", schemes)
+	}
+	if u.Host == "" {
+		return errors.New("host is empty")
+	}
+	return nil
 }
 
 func getenv(key, fallback string) string {

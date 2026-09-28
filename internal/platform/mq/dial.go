@@ -18,7 +18,12 @@ func dialer(ctx context.Context) func(network, addr string) (net.Conn, error) {
 			return nil, err
 		}
 		// Дедлайн нужен на время AMQP-рукопожатия; amqp091 снимает его после.
-		if err := conn.SetDeadline(time.Now().Add(defaultDialTimeout)); err != nil {
+		// Он не позже дедлайна ctx, чтобы проверка готовности укладывалась в свой бюджет.
+		deadline := time.Now().Add(defaultDialTimeout)
+		if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+			deadline = ctxDeadline
+		}
+		if err := conn.SetDeadline(deadline); err != nil {
 			_ = conn.Close()
 			return nil, err
 		}

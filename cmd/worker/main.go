@@ -21,6 +21,8 @@ import (
 var testQueue = mq.ConsumerConfig{Queue: "dd.test", Prefetch: 10, Tag: "dd-worker"}
 
 func main() {
+	// JSON с самого начала: ошибка конфигурации тоже должна быть в формате логов.
+	slog.SetDefault(observability.NewLogger(os.Stdout, slog.LevelInfo, "worker"))
 	if err := run(); err != nil {
 		slog.Error("worker stopped with error", slog.Any("error", err))
 		os.Exit(1)

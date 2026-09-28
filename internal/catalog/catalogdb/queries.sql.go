@@ -354,6 +354,104 @@ func (q *Queries) GetEventForUpdate(ctx context.Context, arg GetEventForUpdatePa
 	return i, err
 }
 
+const getOrganizerSlug = `-- name: GetOrganizerSlug :one
+SELECT slug FROM organizers WHERE id = $1
+`
+
+func (q *Queries) GetOrganizerSlug(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, getOrganizerSlug, id)
+	var slug string
+	err := row.Scan(&slug)
+	return slug, err
+}
+
+const getPublishedEvent = `-- name: GetPublishedEvent :one
+SELECT e.id, e.organizer_id, e.venue_id, e.seat_map_id, e.slug, e.title, e.description, e.status, e.starts_at, e.ends_at, e.sales_start_at, e.sales_end_at, e.max_tickets_per_buyer, e.refund_deadline_hours, e.published_at, e.cancelled_at, e.created_at, e.updated_at, e.age_rating, e.cover_image_key, e.cover_video_key, o.slug AS organizer_slug, o.name AS organizer_name,
+       v.name AS venue_name, v.address AS venue_address, v.timezone AS venue_timezone,
+       v.latitude AS venue_latitude, v.longitude AS venue_longitude,
+       m.layout AS seat_map_layout
+FROM events e
+JOIN organizers o ON o.id = e.organizer_id
+JOIN venues v ON v.id = e.venue_id
+JOIN seat_maps m ON m.id = e.seat_map_id
+WHERE o.slug = $1 AND e.slug = $2 AND e.status = 'published'
+`
+
+type GetPublishedEventParams struct {
+	OrganizerSlug string
+	EventSlug     string
+}
+
+type GetPublishedEventRow struct {
+	ID                  string
+	OrganizerID         string
+	VenueID             string
+	SeatMapID           string
+	Slug                string
+	Title               string
+	Description         string
+	Status              string
+	StartsAt            time.Time
+	EndsAt              time.Time
+	SalesStartAt        *time.Time
+	SalesEndAt          *time.Time
+	MaxTicketsPerBuyer  int32
+	RefundDeadlineHours int32
+	PublishedAt         *time.Time
+	CancelledAt         *time.Time
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	AgeRating           string
+	CoverImageKey       *string
+	CoverVideoKey       *string
+	OrganizerSlug       string
+	OrganizerName       string
+	VenueName           string
+	VenueAddress        string
+	VenueTimezone       string
+	VenueLatitude       *float64
+	VenueLongitude      *float64
+	SeatMapLayout       []byte
+}
+
+// Публичная страница: только опубликованные события.
+func (q *Queries) GetPublishedEvent(ctx context.Context, arg GetPublishedEventParams) (GetPublishedEventRow, error) {
+	row := q.db.QueryRow(ctx, getPublishedEvent, arg.OrganizerSlug, arg.EventSlug)
+	var i GetPublishedEventRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizerID,
+		&i.VenueID,
+		&i.SeatMapID,
+		&i.Slug,
+		&i.Title,
+		&i.Description,
+		&i.Status,
+		&i.StartsAt,
+		&i.EndsAt,
+		&i.SalesStartAt,
+		&i.SalesEndAt,
+		&i.MaxTicketsPerBuyer,
+		&i.RefundDeadlineHours,
+		&i.PublishedAt,
+		&i.CancelledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AgeRating,
+		&i.CoverImageKey,
+		&i.CoverVideoKey,
+		&i.OrganizerSlug,
+		&i.OrganizerName,
+		&i.VenueName,
+		&i.VenueAddress,
+		&i.VenueTimezone,
+		&i.VenueLatitude,
+		&i.VenueLongitude,
+		&i.SeatMapLayout,
+	)
+	return i, err
+}
+
 const getSeatMap = `-- name: GetSeatMap :one
 SELECT id, organizer_id, venue_id, name, layout, created_at, updated_at FROM seat_maps
 WHERE organizer_id = $1 AND id = $2

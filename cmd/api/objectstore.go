@@ -19,6 +19,8 @@ func (s objectStore) PresignUpload(ctx context.Context, key, _ string, ttl time.
 	return s.c.PresignUpload(ctx, key, ttl)
 }
 
+func (s objectStore) URL(key string) string { return s.c.URL(key) }
+
 func (s objectStore) Stat(ctx context.Context, key string) (catalog.ObjectInfo, error) {
 	info, err := s.c.Stat(ctx, key)
 	if errors.Is(err, storage.ErrNotFound) {

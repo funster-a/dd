@@ -82,7 +82,7 @@ func run() error {
 		closeDeps()
 		return err
 	}
-	cat := catalog.NewService(pool, objectStore{c: store})
+	cat := catalog.NewService(pool, catalog.WithObjectStore(objectStore{c: store}), catalog.WithCache(redis.NewCache(rdb)))
 
 	r := chi.NewRouter()
 	r.Use(httpx.RequestID(log))
@@ -96,6 +96,7 @@ func run() error {
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(ident.Middleware)
 		r.Mount("/auth", ident.Routes())
+		r.Mount("/public", cat.PublicRoutes())
 		r.Mount("/admin", cat.AdminRoutes())
 		r.Mount("/organizer", cat.OrganizerRoutes())
 		r.With(auth.Require(auth.KindBuyer, auth.KindOrganizer, auth.KindAdmin)).Get("/me", identity.HandleMe)

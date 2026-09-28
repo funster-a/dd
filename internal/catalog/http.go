@@ -22,6 +22,28 @@ func (s *Service) AdminRoutes() http.Handler {
 	return r
 }
 
+// PublicRoutes — публичные страницы для покупателей, монтируются под
+// /v1/public и не требуют входа.
+func (s *Service) PublicRoutes() http.Handler {
+	r := chi.NewRouter()
+	r.Get("/events/{organizerSlug}/{eventSlug}", s.handlePublicEvent)
+	return r
+}
+
+func (s *Service) handlePublicEvent(w http.ResponseWriter, r *http.Request) {
+	b, err := s.GetPublicEvent(r.Context(), chi.URLParam(r, "organizerSlug"), chi.URLParam(r, "eventSlug"))
+	if writeError(w, r, err) {
+		return
+	}
+	// Страница одинакова для всех — её можно держать в CDN и браузере.
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "public, max-age=60")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(b) //nolint:gosec // G705: тело — JSON из json.Marshal с типом application/json, не HTML
+
+}
+
 // OrganizerRoutes — кабинет организатора, монтируется под /v1/organizer.
 // Организатор берётся только из сессии (ADR 006): идентификаторы в URL
 // ищутся в пределах его данных, чужие записи отвечают 404.

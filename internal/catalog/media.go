@@ -21,6 +21,8 @@ type ObjectStore interface {
 	PresignUpload(ctx context.Context, key, contentType string, ttl time.Duration) (string, error)
 	// Stat возвращает размер и тип загруженного файла; ErrObjectNotFound — файла нет.
 	Stat(ctx context.Context, key string) (ObjectInfo, error)
+	// URL — публичный адрес файла.
+	URL(key string) string
 }
 
 // ObjectInfo — метаданные файла в хранилище.
@@ -135,6 +137,7 @@ func (s *Service) SetMedia(ctx context.Context, organizerID, eventID string, in 
 	if err != nil {
 		return Event{}, notFound(err, "set event media")
 	}
+	s.invalidatePublic(ctx, organizerID, e.Slug)
 	return eventFrom(e), nil
 }
 

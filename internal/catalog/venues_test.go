@@ -28,7 +28,7 @@ const hallLayout = `{"sections":[
 
 func TestVenueLifecycle(t *testing.T) {
 	db := dbtest.New(t)
-	svc := NewService(db.Pool, nil)
+	svc := NewService(db.Pool)
 	ctx := t.Context()
 	org := newTenant(t, svc)
 
@@ -62,7 +62,7 @@ func TestVenueLifecycle(t *testing.T) {
 
 func TestVenueValidation(t *testing.T) {
 	db := dbtest.New(t)
-	svc := NewService(db.Pool, nil)
+	svc := NewService(db.Pool)
 	org := newTenant(t, svc)
 
 	tests := map[string]struct {
@@ -90,7 +90,7 @@ func TestVenueValidation(t *testing.T) {
 // площадки и схемы; чужие отвечают «не найдено», как несуществующие.
 func TestTenantIsolationInCatalog(t *testing.T) {
 	db := dbtest.New(t)
-	svc := NewService(db.Pool, nil)
+	svc := NewService(db.Pool)
 	ctx := t.Context()
 	a, b := newTenant(t, svc), newTenant(t, svc)
 
@@ -140,7 +140,7 @@ func TestTenantIsolationInCatalog(t *testing.T) {
 
 func TestSeatMapLifecycle(t *testing.T) {
 	db := dbtest.New(t)
-	svc := NewService(db.Pool, nil)
+	svc := NewService(db.Pool)
 	ctx := t.Context()
 	org := newTenant(t, svc)
 	venue, err := svc.CreateVenue(ctx, org, VenueInput{Name: "Клуб"})

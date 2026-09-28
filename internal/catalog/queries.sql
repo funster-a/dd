@@ -115,3 +115,18 @@ VALUES (@organizer_id, @event_id, @price_category_id, @kind, @section, @row_labe
 
 -- name: CountEventSeats :one
 SELECT count(*) FROM event_seats WHERE event_id = @event_id;
+
+-- name: GetPublishedEvent :one
+-- Публичная страница: только опубликованные события.
+SELECT e.*, o.slug AS organizer_slug, o.name AS organizer_name,
+       v.name AS venue_name, v.address AS venue_address, v.timezone AS venue_timezone,
+       v.latitude AS venue_latitude, v.longitude AS venue_longitude,
+       m.layout AS seat_map_layout
+FROM events e
+JOIN organizers o ON o.id = e.organizer_id
+JOIN venues v ON v.id = e.venue_id
+JOIN seat_maps m ON m.id = e.seat_map_id
+WHERE o.slug = @organizer_slug AND e.slug = @event_slug AND e.status = 'published';
+
+-- name: GetOrganizerSlug :one
+SELECT slug FROM organizers WHERE id = @id;

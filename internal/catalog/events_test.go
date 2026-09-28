@@ -34,6 +34,8 @@ func (f *fakeStore) Stat(_ context.Context, key string) (ObjectInfo, error) {
 	return info, nil
 }
 
+func (f *fakeStore) URL(key string) string { return "https://cdn.test/" + key }
+
 func (f *fakeStore) put(key string, info ObjectInfo) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -55,7 +57,7 @@ func newEventEnv(t *testing.T) *eventEnv {
 	t.Helper()
 	db := dbtest.New(t)
 	store := &fakeStore{}
-	svc := NewService(db.Pool, store)
+	svc := NewService(db.Pool, WithObjectStore(store))
 	ctx := t.Context()
 	org := newTenant(t, svc)
 	venue, err := svc.CreateVenue(ctx, org, VenueInput{Name: "Клуб"})

@@ -25,6 +25,12 @@ type ConflictError struct {
 
 func (e *ConflictError) Error() string { return e.Message }
 
+// invalidUUID — в запросе передан идентификатор не в формате UUID.
+func invalidUUID(err error) bool {
+	pgErr, ok := errors.AsType[*pgconn.PgError](err)
+	return ok && pgErr.Code == "22P02"
+}
+
 // uniqueConstraint возвращает имя нарушенного уникального ограничения или "".
 func uniqueConstraint(err error) string {
 	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok && pgErr.Code == "23505" {
@@ -32,3 +38,7 @@ func uniqueConstraint(err error) string {
 	}
 	return ""
 }
+
+// ErrNotFound — записи нет или она принадлежит другому организатору.
+// Эти случаи не различаются, чтобы не раскрывать чужие идентификаторы.
+var ErrNotFound = errors.New("not found")

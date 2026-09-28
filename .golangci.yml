@@ -107,6 +107,9 @@ linters:
 
     gocritic:
       enabled-tags: [diagnostic, performance]
+      # Модели sqlc весят 100–200 байт; копировать их дешевле, чем читать
+      # код на указателях. Остальные проверки производительности включены.
+      disabled-checks: [hugeParam, rangeValCopy]
 
   exclusions:
     presets:

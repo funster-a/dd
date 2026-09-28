@@ -86,6 +86,7 @@ func run() error {
 		r.Use(ident.Middleware)
 		r.Mount("/auth", ident.Routes())
 		r.Mount("/admin", cat.AdminRoutes())
+		r.Mount("/organizer", cat.OrganizerRoutes())
 		r.With(auth.Require(auth.KindBuyer, auth.KindOrganizer, auth.KindAdmin)).Get("/me", identity.HandleMe)
 	})
 

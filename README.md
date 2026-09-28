@@ -137,6 +137,22 @@ curl -X POST localhost:8080/v1/admin/organizers \
   -d '{"name":"Stand-up Club","slug":"standup-club","owner_email":"owner@example.com"}'
 ```
 
+Кабинет организатора (`/v1/organizer`, организатор берётся из сессии и видит только свои данные):
+
+| Метод и путь | Что делает |
+|---|---|
+| `GET/POST /venues`, `GET/PUT /venues/{id}` | площадки: название, адрес, часовой пояс, координаты |
+| `GET/POST /venues/{id}/seat-maps`, `GET /seat-maps/{id}` | схемы залов |
+
+Схема зала — это сектора с рядами и местами и входные зоны с вместимостью:
+
+```json
+{"name": "Open air", "layout": {"sections": [
+  {"name": "Фан-зона", "kind": "general", "capacity": 1500},
+  {"name": "VIP", "kind": "seat", "rows": [{"label": "1", "seats": [{"label": "1", "x": 10, "y": 20}]}]}
+]}}
+```
+
 Все изменяющие запросы, кроме входа, требуют заголовок `Idempotency-Key`. Повтор с тем же ключом возвращает прежний ответ и ничего не создаёт заново (ADR 008).
 
 ## Как устроено

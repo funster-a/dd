@@ -195,4 +195,6 @@ type Venue struct {
 	Timezone    string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+	Latitude    *float64
+	Longitude   *float64
 }

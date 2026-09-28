@@ -56,6 +56,130 @@ func (q *Queries) CreateOwner(ctx context.Context, arg CreateOwnerParams) (strin
 	return id, err
 }
 
+const createSeatMap = `-- name: CreateSeatMap :one
+INSERT INTO seat_maps (organizer_id, venue_id, name, layout)
+VALUES ($1, $2, $3, $4)
+RETURNING id, organizer_id, venue_id, name, layout, created_at, updated_at
+`
+
+type CreateSeatMapParams struct {
+	OrganizerID string
+	VenueID     string
+	Name        string
+	Layout      []byte
+}
+
+func (q *Queries) CreateSeatMap(ctx context.Context, arg CreateSeatMapParams) (SeatMap, error) {
+	row := q.db.QueryRow(ctx, createSeatMap,
+		arg.OrganizerID,
+		arg.VenueID,
+		arg.Name,
+		arg.Layout,
+	)
+	var i SeatMap
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizerID,
+		&i.VenueID,
+		&i.Name,
+		&i.Layout,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const createVenue = `-- name: CreateVenue :one
+INSERT INTO venues (organizer_id, name, address, timezone, latitude, longitude)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, organizer_id, name, address, timezone, created_at, updated_at, latitude, longitude
+`
+
+type CreateVenueParams struct {
+	OrganizerID string
+	Name        string
+	Address     string
+	Timezone    string
+	Latitude    *float64
+	Longitude   *float64
+}
+
+func (q *Queries) CreateVenue(ctx context.Context, arg CreateVenueParams) (Venue, error) {
+	row := q.db.QueryRow(ctx, createVenue,
+		arg.OrganizerID,
+		arg.Name,
+		arg.Address,
+		arg.Timezone,
+		arg.Latitude,
+		arg.Longitude,
+	)
+	var i Venue
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizerID,
+		&i.Name,
+		&i.Address,
+		&i.Timezone,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Latitude,
+		&i.Longitude,
+	)
+	return i, err
+}
+
+const getSeatMap = `-- name: GetSeatMap :one
+SELECT id, organizer_id, venue_id, name, layout, created_at, updated_at FROM seat_maps
+WHERE organizer_id = $1 AND id = $2
+`
+
+type GetSeatMapParams struct {
+	OrganizerID string
+	ID          string
+}
+
+func (q *Queries) GetSeatMap(ctx context.Context, arg GetSeatMapParams) (SeatMap, error) {
+	row := q.db.QueryRow(ctx, getSeatMap, arg.OrganizerID, arg.ID)
+	var i SeatMap
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizerID,
+		&i.VenueID,
+		&i.Name,
+		&i.Layout,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getVenue = `-- name: GetVenue :one
+SELECT id, organizer_id, name, address, timezone, created_at, updated_at, latitude, longitude FROM venues
+WHERE organizer_id = $1 AND id = $2
+`
+
+type GetVenueParams struct {
+	OrganizerID string
+	ID          string
+}
+
+func (q *Queries) GetVenue(ctx context.Context, arg GetVenueParams) (Venue, error) {
+	row := q.db.QueryRow(ctx, getVenue, arg.OrganizerID, arg.ID)
+	var i Venue
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizerID,
+		&i.Name,
+		&i.Address,
+		&i.Timezone,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Latitude,
+		&i.Longitude,
+	)
+	return i, err
+}
+
 const listOrganizers = `-- name: ListOrganizers :many
 SELECT o.id, o.name, o.slug, o.created_at, m.email AS owner_email
 FROM organizers o
@@ -97,4 +221,122 @@ func (q *Queries) ListOrganizers(ctx context.Context, pageSize int32) ([]ListOrg
 		return nil, err
 	}
 	return items, nil
+}
+
+const listSeatMaps = `-- name: ListSeatMaps :many
+SELECT id, organizer_id, venue_id, name, layout, created_at, updated_at FROM seat_maps
+WHERE organizer_id = $1 AND venue_id = $2
+ORDER BY name, id
+`
+
+type ListSeatMapsParams struct {
+	OrganizerID string
+	VenueID     string
+}
+
+func (q *Queries) ListSeatMaps(ctx context.Context, arg ListSeatMapsParams) ([]SeatMap, error) {
+	rows, err := q.db.Query(ctx, listSeatMaps, arg.OrganizerID, arg.VenueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SeatMap{}
+	for rows.Next() {
+		var i SeatMap
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrganizerID,
+			&i.VenueID,
+			&i.Name,
+			&i.Layout,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listVenues = `-- name: ListVenues :many
+SELECT id, organizer_id, name, address, timezone, created_at, updated_at, latitude, longitude FROM venues
+WHERE organizer_id = $1
+ORDER BY name, id
+`
+
+func (q *Queries) ListVenues(ctx context.Context, organizerID string) ([]Venue, error) {
+	rows, err := q.db.Query(ctx, listVenues, organizerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Venue{}
+	for rows.Next() {
+		var i Venue
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrganizerID,
+			&i.Name,
+			&i.Address,
+			&i.Timezone,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Latitude,
+			&i.Longitude,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const updateVenue = `-- name: UpdateVenue :one
+UPDATE venues
+SET name = $1, address = $2, timezone = $3,
+    latitude = $4, longitude = $5, updated_at = now()
+WHERE organizer_id = $6 AND id = $7
+RETURNING id, organizer_id, name, address, timezone, created_at, updated_at, latitude, longitude
+`
+
+type UpdateVenueParams struct {
+	Name        string
+	Address     string
+	Timezone    string
+	Latitude    *float64
+	Longitude   *float64
+	OrganizerID string
+	ID          string
+}
+
+func (q *Queries) UpdateVenue(ctx context.Context, arg UpdateVenueParams) (Venue, error) {
+	row := q.db.QueryRow(ctx, updateVenue,
+		arg.Name,
+		arg.Address,
+		arg.Timezone,
+		arg.Latitude,
+		arg.Longitude,
+		arg.OrganizerID,
+		arg.ID,
+	)
+	var i Venue
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizerID,
+		&i.Name,
+		&i.Address,
+		&i.Timezone,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Latitude,
+		&i.Longitude,
+	)
+	return i, err
 }

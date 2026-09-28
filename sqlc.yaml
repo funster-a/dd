@@ -2,6 +2,18 @@
 # у каждого модуля свои запросы и свой сгенерированный пакет.
 # Сгенерировать: make sqlc
 version: "2"
+overrides:
+  go:
+    overrides:
+      - db_type: uuid
+        go_type: string
+      - db_type: timestamptz
+        go_type: time.Time
+      - db_type: timestamptz
+        nullable: true
+        go_type:
+          type: time.Time
+          pointer: true
 sql:
   - engine: postgresql
     schema: migrations
@@ -12,6 +24,21 @@ sql:
         out: internal/identity/identitydb
         sql_package: pgx/v5
         emit_empty_slices: true
-        overrides:
-          - db_type: uuid
-            go_type: string
+  - engine: postgresql
+    schema: migrations
+    queries: internal/platform/idempotency/queries.sql
+    gen:
+      go:
+        package: idempotencydb
+        out: internal/platform/idempotency/idempotencydb
+        sql_package: pgx/v5
+        emit_empty_slices: true
+  - engine: postgresql
+    schema: migrations
+    queries: internal/catalog/queries.sql
+    gen:
+      go:
+        package: catalogdb
+        out: internal/catalog/catalogdb
+        sql_package: pgx/v5
+        emit_empty_slices: true

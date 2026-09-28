@@ -27,6 +27,8 @@ type Config struct {
 	RedisAddr string
 	// RabbitMQURL — строка подключения к RabbitMQ.
 	RabbitMQURL string
+	// AdminEmails — администраторы платформы (ADR 006), из ADMIN_EMAILS через запятую.
+	AdminEmails []string
 }
 
 // Load читает конфигурацию из окружения. Незаданные переменные получают
@@ -62,6 +64,17 @@ func Load() (Config, error) {
 	}
 	if err := validateURL(cfg.RabbitMQURL, "amqp", "amqps"); err != nil {
 		errs = append(errs, fmt.Errorf("RABBITMQ_URL: %w", err))
+	}
+	for e := range strings.SplitSeq(os.Getenv("ADMIN_EMAILS"), ",") {
+		e = strings.ToLower(strings.TrimSpace(e))
+		if e == "" {
+			continue
+		}
+		if !strings.Contains(e, "@") {
+			errs = append(errs, fmt.Errorf("ADMIN_EMAILS: %q is not an email", e))
+			continue
+		}
+		cfg.AdminEmails = append(cfg.AdminEmails, e)
 	}
 	// DATABASE_URL разбирает pgx при создании пула: он принимает и URL,
 	// и формат key=value, а пароль в ошибках скрывает.

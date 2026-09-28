@@ -2,7 +2,6 @@ package httpx
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -16,7 +15,7 @@ type Check func(ctx context.Context) error
 
 // Healthz отвечает 200, пока процесс жив. Зависимости не проверяет.
 func Healthz(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 // Readyz параллельно выполняет проверки и отвечает 200, если все прошли,
@@ -52,12 +51,6 @@ func Readyz(checks map[string]Check) http.HandlerFunc {
 		if !ready {
 			status, code = "unavailable", http.StatusServiceUnavailable
 		}
-		writeJSON(w, code, map[string]any{"status": status, "checks": results})
+		WriteJSON(w, code, map[string]any{"status": status, "checks": results})
 	}
-}
-
-func writeJSON(w http.ResponseWriter, code int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(v)
 }

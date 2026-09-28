@@ -31,7 +31,7 @@ INFRA := postgres redis rabbitmq prometheus grafana
 
 .DEFAULT_GOAL := help
 
-.PHONY: help up down infra-up build run run-worker test test-integration lint \
+.PHONY: help up down infra-up build run run-worker test test-integration lint sqlc \
 	migrate-up migrate-down migrate-reset migrate-status migrate-create
 
 help: ## Показать список команд
@@ -59,7 +59,10 @@ test: ## Юнит-тесты с детектором гонок
 	go test -race ./...
 
 test-integration: ## Все тесты, включая интеграционные (нужен make infra-up)
-	DATABASE_TEST_URL="$(DATABASE_URL)" RABBITMQ_TEST_URL="$(RABBITMQ_URL)" go test -race -count=1 ./...
+	DATABASE_TEST_URL="$(DATABASE_URL)" REDIS_TEST_ADDR="$(REDIS_ADDR)" RABBITMQ_TEST_URL="$(RABBITMQ_URL)" go test -race -count=1 ./...
+
+sqlc: ## Сгенерировать Go-код запросов из *.sql (ADR 007)
+	go tool -modfile=tools.mod sqlc generate
 
 lint: ## Линтер той же версии, что в CI
 	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run ./...

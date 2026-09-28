@@ -45,6 +45,8 @@ linters:
               desc: модули общаются через интерфейсы на стороне потребителя
             - pkg: github.com/funster-a/dd/internal/ticket
               desc: модули общаются через интерфейсы на стороне потребителя
+            - pkg: github.com/funster-a/dd/internal/identity
+              desc: модули общаются через интерфейсы на стороне потребителя
         booking:
           files: ["**/internal/booking/**"]
           deny:
@@ -53,6 +55,8 @@ linters:
             - pkg: github.com/funster-a/dd/internal/payment
               desc: модули общаются через интерфейсы на стороне потребителя
             - pkg: github.com/funster-a/dd/internal/ticket
+              desc: модули общаются через интерфейсы на стороне потребителя
+            - pkg: github.com/funster-a/dd/internal/identity
               desc: модули общаются через интерфейсы на стороне потребителя
         payment:
           files: ["**/internal/payment/**"]
@@ -63,6 +67,8 @@ linters:
               desc: модули общаются через интерфейсы на стороне потребителя
             - pkg: github.com/funster-a/dd/internal/ticket
               desc: модули общаются через интерфейсы на стороне потребителя
+            - pkg: github.com/funster-a/dd/internal/identity
+              desc: модули общаются через интерфейсы на стороне потребителя
         ticket:
           files: ["**/internal/ticket/**"]
           deny:
@@ -71,6 +77,19 @@ linters:
             - pkg: github.com/funster-a/dd/internal/booking
               desc: модули общаются через интерфейсы на стороне потребителя
             - pkg: github.com/funster-a/dd/internal/payment
+              desc: модули общаются через интерфейсы на стороне потребителя
+            - pkg: github.com/funster-a/dd/internal/identity
+              desc: модули общаются через интерфейсы на стороне потребителя
+        identity:
+          files: ["**/internal/identity/**"]
+          deny:
+            - pkg: github.com/funster-a/dd/internal/catalog
+              desc: модули общаются через интерфейсы на стороне потребителя
+            - pkg: github.com/funster-a/dd/internal/booking
+              desc: модули общаются через интерфейсы на стороне потребителя
+            - pkg: github.com/funster-a/dd/internal/payment
+              desc: модули общаются через интерфейсы на стороне потребителя
+            - pkg: github.com/funster-a/dd/internal/ticket
               desc: модули общаются через интерфейсы на стороне потребителя
         platform:
           files: ["**/internal/platform/**"]
@@ -82,6 +101,8 @@ linters:
             - pkg: github.com/funster-a/dd/internal/payment
               desc: platform — общий код и не зависит от доменных модулей
             - pkg: github.com/funster-a/dd/internal/ticket
+              desc: platform — общий код и не зависит от доменных модулей
+            - pkg: github.com/funster-a/dd/internal/identity
               desc: platform — общий код и не зависит от доменных модулей
 
     gocritic:

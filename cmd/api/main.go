@@ -1,4 +1,9 @@
 // Command api запускает HTTP-сервер платформы.
+//
+// Использование:
+//
+//	api              — запустить сервер
+//	api healthcheck  — проверить /healthz запущенного сервера (для Docker)
 package main
 
 import (
@@ -23,6 +28,14 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		if err := runHealthcheck(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if err := run(); err != nil {
 		slog.Error("api stopped with error", slog.Any("error", err))
 		os.Exit(1)

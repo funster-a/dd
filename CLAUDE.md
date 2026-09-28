@@ -35,6 +35,7 @@ internal/catalog/ — события, залы, схемы мест
 internal/booking/ — холды, брони, статусы заказа
 internal/payment/ — платёжный шлюз, вебхуки, возвраты
 internal/ticket/  — QR, валидация, отчёты
+internal/identity/— вход по одноразовому коду, сессии (ADR 006)
 internal/platform/— db, redis, mq, config, http, observability
 migrations/       — goose-миграции
 web/              — Vue-приложение

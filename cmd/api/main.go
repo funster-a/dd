@@ -19,6 +19,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/funster-a/dd/internal/identity"
+	"github.com/funster-a/dd/internal/platform/auth"
 	"github.com/funster-a/dd/internal/platform/config"
 	"github.com/funster-a/dd/internal/platform/db"
 	"github.com/funster-a/dd/internal/platform/httpx"
@@ -68,6 +70,8 @@ func run() error {
 		_ = rmq.Close()
 	}
 
+	ident := identity.NewService(pool, rdb, identity.LogSender{Log: log}, cfg.AdminEmails, log)
+
 	r := chi.NewRouter()
 	r.Use(httpx.RequestID(log))
 	r.Get("/healthz", httpx.Healthz)
@@ -76,6 +80,11 @@ func run() error {
 		"redis":    func(ctx context.Context) error { return rdb.Ping(ctx).Err() },
 		"rabbitmq": rmq.Ping,
 	}))
+	r.Route("/v1", func(r chi.Router) {
+		r.Use(ident.Middleware)
+		r.Mount("/auth", ident.Routes())
+		r.With(auth.Require(auth.KindBuyer, auth.KindOrganizer, auth.KindAdmin)).Get("/me", identity.HandleMe)
+	})
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,

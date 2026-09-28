@@ -91,6 +91,7 @@ make run-worker      # worker, в другом терминале
 | `make test` | юнит-тесты с детектором гонок |
 | `make test-integration` | все тесты, включая интеграционные с PostgreSQL и RabbitMQ (нужен `make infra-up`) |
 | `make lint` | golangci-lint той же версии, что в CI |
+| `make sqlc` | сгенерировать Go-код запросов из `queries.sql` |
 | `make migrate-up` | применить все новые миграции |
 | `make migrate-down` | откатить последнюю миграцию |
 | `make migrate-reset` | откатить все миграции |
@@ -112,6 +113,22 @@ make run-worker      # worker, в другом терминале
 
 Значения по умолчанию совпадают с `docker-compose.yml`. Все переменные проверяются при старте (`DATABASE_URL` — в api, который им пользуется). Неверное значение, например `LOG_LEVEL=loud` или `REDIS_ADDR=redis` без порта, останавливает процесс с понятной ошибкой. Пароли в текст ошибок не попадают.
 
+## API
+
+Все эндпоинты — под `/v1`, ошибки в формате `{"error": {"code": "...", "message": "..."}}` (ADR 007). Вход без паролей, по одноразовому коду (ADR 006). В разработке код не отправляется, а пишется в лог api.
+
+Вход покупателя:
+
+```sh
+curl -X POST localhost:8080/v1/auth/codes -d '{"kind":"buyer","phone":"+77001234567"}'
+docker compose logs api | grep one-time    # код из лога
+curl -X POST localhost:8080/v1/auth/sessions -d '{"kind":"buyer","phone":"+77001234567","code":"123456"}'
+curl localhost:8080/v1/me -H "Authorization: Bearer <token>"
+curl -X DELETE localhost:8080/v1/auth/session -H "Authorization: Bearer <token>"
+```
+
+Организатор входит так же, но с `"kind":"organizer","email":"..."`, администратор платформы — с `"kind":"admin"`. Его email должен быть в `ADMIN_EMAILS`.
+
 ## Как устроено
 
 ```
@@ -121,6 +138,7 @@ internal/catalog/ события, залы, схемы мест        (пока
 internal/booking/ холды, брони, статусы заказа     (пока пусто)
 internal/payment/ платёжный шлюз, вебхуки, возвраты (пока пусто)
 internal/ticket/  QR, валидация, отчёты            (пока пусто)
+internal/identity/ вход по одноразовому коду, сессии
 internal/platform/ общий код: config, db, redis, mq, httpx, observability
 migrations/       goose-миграции
 docs/             спецификация и ADR

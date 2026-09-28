@@ -89,7 +89,7 @@ make run-worker      # worker, в другом терминале
 | `make run` / `make run-worker` | запустить api или worker локально |
 | `make build` | собрать бинари в `bin/` |
 | `make test` | юнит-тесты с детектором гонок |
-| `make test-integration` | все тесты, включая интеграционные с RabbitMQ (нужен `make infra-up`) |
+| `make test-integration` | все тесты, включая интеграционные с PostgreSQL и RabbitMQ (нужен `make infra-up`) |
 | `make lint` | golangci-lint той же версии, что в CI |
 | `make migrate-up` | применить все новые миграции |
 | `make migrate-down` | откатить последнюю миграцию |
@@ -137,10 +137,12 @@ GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) запу
 
 - **Build** — `go mod tidy -diff`, сборка;
 - **Lint** — golangci-lint v2.14.0;
-- **Test** — миграции против PostgreSQL: `up`, `reset` с проверкой, что в базе ничего не осталось, снова `up`; затем все тесты с `-race`, включая интеграционные с RabbitMQ;
+- **Test** — миграции против PostgreSQL: `up`, `reset` с проверкой, что в базе ничего не осталось, снова `up`; затем все тесты с `-race`, включая тесты инвариантов схемы и интеграционные с RabbitMQ;
 - **Compose** — `docker compose up --build --wait` с нуля, проверка api и доставки сообщения до worker.
 
-Интеграционные тесты RabbitMQ запускаются, только если задана переменная `RABBITMQ_TEST_URL`, иначе пропускаются. `make test-integration` задаёт её сама.
+Интеграционные тесты запускаются, только если заданы переменные `DATABASE_TEST_URL` (PostgreSQL) и `RABBITMQ_TEST_URL`, иначе пропускаются. `make test-integration` задаёт их сама. Тесты базы создают для себя временную базу `dd_test_*`, применяют к ней миграции и удаляют её после теста, поэтому рабочая база не засоряется.
+
+Главный инвариант — место не продаётся дважды — проверяется прямо на схеме: 50 транзакций одновременно выпускают билет на одно место, и выпуск удаётся ровно у одной (`migrations/schema_test.go`).
 
 ## Если что-то не работает
 

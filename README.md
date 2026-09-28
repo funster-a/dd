@@ -129,6 +129,16 @@ curl -X DELETE localhost:8080/v1/auth/session -H "Authorization: Bearer <token>"
 
 Организатор входит так же, но с `"kind":"organizer","email":"..."`, администратор платформы — с `"kind":"admin"`. Его email должен быть в `ADMIN_EMAILS`.
 
+Администратор заводит организатора. После этого владелец может войти по своему email:
+
+```sh
+curl -X POST localhost:8080/v1/admin/organizers \
+  -H "Authorization: Bearer <admin-token>" -H "Idempotency-Key: $(uuidgen)" \
+  -d '{"name":"Stand-up Club","slug":"standup-club","owner_email":"owner@example.com"}'
+```
+
+Все изменяющие запросы, кроме входа, требуют заголовок `Idempotency-Key`. Повтор с тем же ключом возвращает прежний ответ и ничего не создаёт заново (ADR 008).
+
 ## Как устроено
 
 ```

@@ -19,6 +19,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/funster-a/dd/internal/catalog"
 	"github.com/funster-a/dd/internal/identity"
 	"github.com/funster-a/dd/internal/platform/auth"
 	"github.com/funster-a/dd/internal/platform/config"
@@ -71,6 +72,7 @@ func run() error {
 	}
 
 	ident := identity.NewService(pool, rdb, identity.LogSender{Log: log}, cfg.AdminEmails, log)
+	cat := catalog.NewService(pool)
 
 	r := chi.NewRouter()
 	r.Use(httpx.RequestID(log))
@@ -83,6 +85,7 @@ func run() error {
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(ident.Middleware)
 		r.Mount("/auth", ident.Routes())
+		r.Mount("/admin", cat.AdminRoutes())
 		r.With(auth.Require(auth.KindBuyer, auth.KindOrganizer, auth.KindAdmin)).Get("/me", identity.HandleMe)
 	})
 

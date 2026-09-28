@@ -1,0 +1,125 @@
+# Конфигурация golangci-lint v2. Версия линтера закреплена в Makefile и CI.
+version: "2"
+
+run:
+  timeout: 5m
+
+issues:
+  # Показывать все замечания: не только первые три одного вида
+  # и не только одно на строку (иначе одно замечание может скрыть другое).
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  uniq-by-line: false
+
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - bodyclose
+    - contextcheck
+    - depguard
+    - errname
+    - errorlint
+    - gocritic
+    - gosec
+    - nilerr
+    - noctx
+    - revive
+    - rowserrcheck
+    - sqlclosecheck
+    - unconvert
+    - unparam
+    - usestdlibvars
+
+  settings:
+    depguard:
+      # Границы модульного монолита (CLAUDE.md, ADR 001): доменные модули
+      # не импортируют друг друга, общий код живёт в internal/platform,
+      # а platform не зависит от доменных модулей.
+      rules:
+        catalog:
+          files: ["**/internal/catalog/**"]
+          deny:
+            - pkg: github.com/funster-a/dd/internal/booking
+              desc: модули общаются через интерфейсы на стороне потребителя
+            - pkg: github.com/funster-a/dd/internal/payment
+              desc: модули общаются через интерфейсы на стороне потребителя
+            - pkg: github.com/funster-a/dd/internal/ticket
+              desc: модули общаются через интерфейсы на стороне потребителя
+            - pkg: github.com/funster-a/dd/internal/identity
+              desc: модули общаются через интерфейсы на стороне потребителя
+        booking:
+          files: ["**/internal/booking/**"]
+          deny:
+            - pkg: github.com/funster-a/dd/internal/catalog
+              desc: модули общаются через интерфейсы на стороне потребителя
+            - pkg: github.com/funster-a/dd/internal/payment
+              desc: модули общаются через интерфейсы на стороне потребителя
+            - pkg: github.com/funster-a/dd/internal/ticket
+              desc: модули общаются через интерфейсы на стороне потребителя
+            - pkg: github.com/funster-a/dd/internal/identity
+              desc: модули общаются через интерфейсы на стороне потребителя
+        payment:
+          files: ["**/internal/payment/**"]
+          deny:
+            - pkg: github.com/funster-a/dd/internal/catalog
+              desc: модули общаются через интерфейсы на стороне потребителя
+            - pkg: github.com/funster-a/dd/internal/booking
+              desc: модули общаются через интерфейсы на стороне потребителя
+            - pkg: github.com/funster-a/dd/internal/ticket
+              desc: модули общаются через интерфейсы на стороне потребителя
+            - pkg: github.com/funster-a/dd/internal/identity
+              desc: модули общаются через интерфейсы на стороне потребителя
+        ticket:
+          files: ["**/internal/ticket/**"]
+          deny:
+            - pkg: github.com/funster-a/dd/internal/catalog
+              desc: модули общаются через интерфейсы на стороне потребителя
+            - pkg: github.com/funster-a/dd/internal/booking
+              desc: модули общаются через интерфейсы на стороне потребителя
+            - pkg: github.com/funster-a/dd/internal/payment
+              desc: модули общаются через интерфейсы на стороне потребителя
+            - pkg: github.com/funster-a/dd/internal/identity
+              desc: модули общаются через интерфейсы на стороне потребителя
+        identity:
+          files: ["**/internal/identity/**"]
+          deny:
+            - pkg: github.com/funster-a/dd/internal/catalog
+              desc: модули общаются через интерфейсы на стороне потребителя
+            - pkg: github.com/funster-a/dd/internal/booking
+              desc: модули общаются через интерфейсы на стороне потребителя
+            - pkg: github.com/funster-a/dd/internal/payment
+              desc: модули общаются через интерфейсы на стороне потребителя
+            - pkg: github.com/funster-a/dd/internal/ticket
+              desc: модули общаются через интерфейсы на стороне потребителя
+        platform:
+          files: ["**/internal/platform/**"]
+          deny:
+            - pkg: github.com/funster-a/dd/internal/catalog
+              desc: platform — общий код и не зависит от доменных модулей
+            - pkg: github.com/funster-a/dd/internal/booking
+              desc: platform — общий код и не зависит от доменных модулей
+            - pkg: github.com/funster-a/dd/internal/payment
+              desc: platform — общий код и не зависит от доменных модулей
+            - pkg: github.com/funster-a/dd/internal/ticket
+              desc: platform — общий код и не зависит от доменных модулей
+            - pkg: github.com/funster-a/dd/internal/identity
+              desc: platform — общий код и не зависит от доменных модулей
+
+    gocritic:
+      enabled-tags: [diagnostic, performance]
+      # Модели sqlc весят 100–200 байт; копировать их дешевле, чем читать
+      # код на указателях. Остальные проверки производительности включены.
+      disabled-checks: [hugeParam, rangeValCopy]
+
+  exclusions:
+    presets:
+      - std-error-handling
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/funster-a/dd

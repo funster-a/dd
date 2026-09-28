@@ -1,0 +1,167 @@
+# Локальный запуск проекта: инфраструктура, миграции, api и worker.
+# Значения по умолчанию подходят для локального запуска; переопределяются через .env.
+name: dd
+
+# Общие переменные api и worker: адреса зависимостей внутри сети compose.
+x-app-env: &app-env
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  SHUTDOWN_TIMEOUT: 15s
+  DATABASE_URL: postgres://${POSTGRES_USER:-dd}:${POSTGRES_PASSWORD:-dd}@postgres:5432/${POSTGRES_DB:-dd}?sslmode=disable
+  REDIS_ADDR: redis:6379
+  RABBITMQ_URL: amqp://${RABBITMQ_USER:-dd}:${RABBITMQ_PASSWORD:-dd}@rabbitmq:5672/
+
+services:
+  postgres:
+    image: postgres:18.6-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-dd}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dd}
+      POSTGRES_DB: ${POSTGRES_DB:-dd}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      # Через TCP, а не сокет: во время первой инициализации временный сервер
+      # слушает только сокет, и migrate успел бы стартовать до открытия порта.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:8.10.2-alpine
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:4.3.6-management-alpine
+    # RabbitMQ хранит данные в каталоге по имени узла rabbit@<hostname>. Без
+    # постоянного hostname пересозданный контейнер не увидит очереди в volume.
+    hostname: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-dd}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-dd}
+    ports:
+      - "127.0.0.1:${RABBITMQ_PORT:-5672}:5672"
+      - "127.0.0.1:${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  prometheus:
+    image: prom/prometheus:v3.14.0
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - prometheus-data:/prometheus
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:9090/-/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  grafana:
+    image: grafana/grafana:13.2.2
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    configs:
+      - source: grafana-datasources
+        target: /etc/grafana/provisioning/datasources/prometheus.yml
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+
+  # Одноразовый сервис: применяет миграции и завершается. api стартует
+  # только после его успешного завершения.
+  migrate:
+    build:
+      context: .
+      target: migrate
+    environment:
+      GOOSE_DBSTRING: postgres://${POSTGRES_USER:-dd}:${POSTGRES_PASSWORD:-dd}@postgres:5432/${POSTGRES_DB:-dd}?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      target: api
+    environment:
+      <<: *app-env
+      HTTP_ADDR: ":8080"
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+    ports:
+      - "127.0.0.1:${API_PORT:-8080}:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/api", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    # Больше SHUTDOWN_TIMEOUT, чтобы Docker не прервал graceful shutdown.
+    stop_grace_period: 20s
+
+  worker:
+    build:
+      context: .
+      target: worker
+    environment:
+      <<: *app-env
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    stop_grace_period: 20s
+
+configs:
+  grafana-datasources:
+    content: |
+      apiVersion: 1
+      datasources:
+        - name: Prometheus
+          type: prometheus
+          access: proxy
+          url: http://prometheus:9090
+          isDefault: true
+
+volumes:
+  postgres-data:
+  redis-data:
+  rabbitmq-data:
+  prometheus-data:
+  grafana-data:

@@ -1,0 +1,110 @@
+name: CI
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: go.mod is tidy
+        run: go mod tidy -diff
+      - name: Build
+        run: go build ./...
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.14.0 # та же версия, что в Makefile
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18.6-alpine
+        env:
+          POSTGRES_USER: dd
+          POSTGRES_PASSWORD: dd
+          POSTGRES_DB: dd
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dd -d dd"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      rabbitmq:
+        image: rabbitmq:4.3.6-alpine
+        env:
+          RABBITMQ_DEFAULT_USER: dd
+          RABBITMQ_DEFAULT_PASS: dd
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Migrations apply and roll back
+        run: |
+          make migrate-up
+          make migrate-reset
+          make migrate-up
+          make migrate-status
+      - name: Tests (unit and integration)
+        run: make test-integration
+
+  compose:
+    name: Docker Compose smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Start the whole project from scratch
+        run: docker compose up -d --build --wait --wait-timeout 300
+      - name: api is live and ready
+        run: |
+          curl -fsS http://127.0.0.1:8080/healthz
+          curl -fsS http://127.0.0.1:8080/readyz
+      - name: worker consumes the test queue
+        run: |
+          curl -fsS -u dd:dd -H 'content-type: application/json' \
+            -X POST http://127.0.0.1:15672/api/exchanges/%2F/amq.default/publish \
+            -d '{"routing_key":"dd.test","payload":"ci-smoke","payload_encoding":"string","properties":{"message_id":"ci-1"}}'
+          for i in $(seq 1 20); do
+            docker compose logs worker | grep -q '"message_id":"ci-1"' && exit 0
+            sleep 1
+          done
+          docker compose logs worker
+          exit 1
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs
+      - name: Clean up
+        if: always()
+        run: docker compose down -v

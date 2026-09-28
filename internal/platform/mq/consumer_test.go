@@ -93,7 +93,7 @@ func TestConsumeAcksAndStops(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		Consume(ctx, c, ConsumerConfig{Queue: queue, Prefetch: 10, Tag: "test"}, slog.New(slog.DiscardHandler),
-			func(_ context.Context, d amqp.Delivery) error {
+			func(_ context.Context, d *amqp.Delivery) error {
 				mu.Lock()
 				got = append(got, string(d.Body))
 				mu.Unlock()
@@ -139,7 +139,7 @@ func TestConsumeFinishesInFlightMessageOnCancel(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		Consume(ctx, c, ConsumerConfig{Queue: queue, Prefetch: 10, Tag: "test"}, slog.New(slog.DiscardHandler),
-			func(hctx context.Context, d amqp.Delivery) error {
+			func(hctx context.Context, d *amqp.Delivery) error {
 				handled = append(handled, string(d.Body))
 				if string(d.Body) == "slow" {
 					close(started)
@@ -188,7 +188,7 @@ func TestConsumeRejectsFailedMessage(t *testing.T) {
 	calls := make(chan struct{}, 10)
 	go func() {
 		Consume(ctx, c, ConsumerConfig{Queue: queue, Prefetch: 1, Tag: "test"}, slog.New(slog.DiscardHandler),
-			func(context.Context, amqp.Delivery) error {
+			func(context.Context, *amqp.Delivery) error {
 				calls <- struct{}{}
 				return errors.New("boom")
 			})

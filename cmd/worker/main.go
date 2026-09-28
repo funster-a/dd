@@ -74,7 +74,7 @@ func run() error {
 
 // logMessage — обработчик тестовой очереди: только пишет сообщение в лог.
 func logMessage(log *slog.Logger) mq.Handler {
-	return func(ctx context.Context, d amqp.Delivery) error {
+	return func(ctx context.Context, d *amqp.Delivery) error {
 		log.InfoContext(ctx, "message received",
 			slog.String("queue", testQueue.Queue),
 			slog.String("message_id", d.MessageId),

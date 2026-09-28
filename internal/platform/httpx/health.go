@@ -40,7 +40,7 @@ func Readyz(checks map[string]Check) http.HandlerFunc {
 				if err != nil {
 					ready = false
 					results[name] = "fail"
-					Logger(r.Context()).Warn("readiness check failed", slog.String("check", name), slog.Any("error", err))
+					Logger(ctx).Warn("readiness check failed", slog.String("check", name), slog.Any("error", err))
 					return
 				}
 				results[name] = "ok"

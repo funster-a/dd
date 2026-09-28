@@ -19,7 +19,7 @@ func TestRequestIDGenerated(t *testing.T) {
 	}))
 
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil))
 
 	got := rec.Header().Get(RequestIDHeader)
 	if got == "" {
@@ -33,7 +33,7 @@ func TestRequestIDGenerated(t *testing.T) {
 func TestRequestIDPropagated(t *testing.T) {
 	h := RequestID(slog.New(slog.DiscardHandler))(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil)
 	req.Header.Set(RequestIDHeader, "abc-123")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -47,7 +47,7 @@ func TestRequestIDRejectsUnsafe(t *testing.T) {
 	h := RequestID(slog.New(slog.DiscardHandler))(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 
 	for _, bad := range []string{"has space", "line\nbreak", `quote"`, strings.Repeat("a", maxRequestIDLen+1)} {
-		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil)
 		req.Header.Set(RequestIDHeader, bad)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
@@ -65,7 +65,7 @@ func TestRequestIDInLogs(t *testing.T) {
 		Logger(r.Context()).Info("hello")
 	}))
 
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil)
 	req.Header.Set(RequestIDHeader, "log-me")
 	h.ServeHTTP(httptest.NewRecorder(), req)
 
@@ -90,7 +90,7 @@ func TestReadyz(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
-			Readyz(tt.checks)(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+			Readyz(tt.checks)(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/readyz", nil))
 
 			if rec.Code != tt.wantCode {
 				t.Errorf("code = %d, want %d", rec.Code, tt.wantCode)
@@ -117,7 +117,7 @@ func TestReadyz(t *testing.T) {
 
 func TestHealthz(t *testing.T) {
 	rec := httptest.NewRecorder()
-	Healthz(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	Healthz(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/healthz", nil))
 	if rec.Code != http.StatusOK {
 		t.Errorf("code = %d, want 200", rec.Code)
 	}

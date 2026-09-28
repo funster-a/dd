@@ -12,7 +12,7 @@ import (
 
 // Handler обрабатывает одно сообщение. Ошибка означает, что сообщение
 // не обработано: оно отклоняется без возврата в очередь.
-type Handler func(ctx context.Context, d amqp.Delivery) error
+type Handler func(ctx context.Context, d *amqp.Delivery) error
 
 // ConsumerConfig описывает, какую очередь и как потреблять.
 type ConsumerConfig struct {
@@ -96,7 +96,7 @@ func consumeOnce(ctx context.Context, c *Conn, cfg ConsumerConfig, log *slog.Log
 				stopConsuming(ch, cfg.Tag, log)
 				return nil
 			}
-			handle(handlerCtx, d, log, h)
+			handle(handlerCtx, &d, log, h)
 		}
 	}
 }
@@ -109,7 +109,7 @@ func stopConsuming(ch *amqp.Channel, tag string, log *slog.Logger) {
 	}
 }
 
-func handle(ctx context.Context, d amqp.Delivery, log *slog.Logger, h Handler) {
+func handle(ctx context.Context, d *amqp.Delivery, log *slog.Logger, h Handler) {
 	if err := h(ctx, d); err != nil {
 		log.Error("message handling failed", slog.String("message_id", d.MessageId), slog.Any("error", err))
 		if nackErr := d.Nack(false, false); nackErr != nil {

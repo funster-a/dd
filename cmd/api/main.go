@@ -72,7 +72,7 @@ func run() error {
 	}
 
 	ident := identity.NewService(pool, rdb, identity.LogSender{Log: log}, cfg.AdminEmails, log)
-	cat := catalog.NewService(pool)
+	cat := catalog.NewService(pool, nil)
 
 	r := chi.NewRouter()
 	r.Use(httpx.RequestID(log))

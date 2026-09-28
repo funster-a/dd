@@ -19,13 +19,15 @@ var slugPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
 // Service — операции каталога.
 type Service struct {
-	pool *pgxpool.Pool
-	q    *catalogdb.Queries
+	pool  *pgxpool.Pool
+	q     *catalogdb.Queries
+	store ObjectStore
 }
 
-// NewService создаёт сервис каталога.
-func NewService(pool *pgxpool.Pool) *Service {
-	return &Service{pool: pool, q: catalogdb.New(pool)}
+// NewService создаёт сервис каталога. store — хранилище обложек; без него
+// загрузка медиа недоступна, остальное работает.
+func NewService(pool *pgxpool.Pool, store ObjectStore) *Service {
+	return &Service{pool: pool, q: catalogdb.New(pool), store: store}
 }
 
 // NewOrganizer — данные для заведения организатора.

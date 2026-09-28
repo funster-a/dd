@@ -29,7 +29,7 @@ func newOrganizer() NewOrganizer {
 
 func TestCreateOrganizer(t *testing.T) {
 	db := dbtest.New(t)
-	svc := NewService(db.Pool)
+	svc := NewService(db.Pool, nil)
 	ctx := t.Context()
 
 	in := newOrganizer()
@@ -53,7 +53,7 @@ func TestCreateOrganizer(t *testing.T) {
 
 func TestCreateOrganizerConflicts(t *testing.T) {
 	db := dbtest.New(t)
-	svc := NewService(db.Pool)
+	svc := NewService(db.Pool, nil)
 	ctx := t.Context()
 	first := newOrganizer()
 	if _, err := svc.CreateOrganizer(ctx, first); err != nil {
@@ -86,7 +86,7 @@ func TestCreateOrganizerConflicts(t *testing.T) {
 
 func TestCreateOrganizerValidation(t *testing.T) {
 	db := dbtest.New(t)
-	svc := NewService(db.Pool)
+	svc := NewService(db.Pool, nil)
 
 	tests := map[string]struct {
 		mutate func(*NewOrganizer)
@@ -116,7 +116,7 @@ func TestCreateOrganizerValidation(t *testing.T) {
 // slug — успешно ровно одно, остальные получают slug_taken.
 func TestConcurrentCreateSameSlug(t *testing.T) {
 	db := dbtest.New(t)
-	svc := NewService(db.Pool)
+	svc := NewService(db.Pool, nil)
 	slug := "race-" + suffix()
 
 	const n = 10
@@ -157,7 +157,7 @@ func TestConcurrentCreateSameSlug(t *testing.T) {
 
 func TestAdminHTTP(t *testing.T) {
 	db := dbtest.New(t)
-	svc := NewService(db.Pool)
+	svc := NewService(db.Pool, nil)
 
 	r := chi.NewRouter()
 	r.Use(func(next http.Handler) http.Handler {

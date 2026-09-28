@@ -17,7 +17,7 @@ import (
 
 func TestOrganizerHTTP(t *testing.T) {
 	db := dbtest.New(t)
-	svc := NewService(db.Pool)
+	svc := NewService(db.Pool, nil)
 	a, b := newTenant(t, svc), newTenant(t, svc)
 
 	r := chi.NewRouter()

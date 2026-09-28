@@ -21,6 +21,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib" // драйвер database/sql для goose
 	"github.com/pressly/goose/v3"
 
+	"github.com/funster-a/dd/internal/platform/db"
 	"github.com/funster-a/dd/migrations"
 )
 
@@ -70,7 +71,7 @@ func NewEmpty(t testing.TB) *DB {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pool, err := pgxpool.New(ctx, dbURL)
+	pool, err := db.NewPool(ctx, dbURL)
 	if err != nil {
 		t.Fatalf("create pool: %v", err)
 	}

@@ -10,6 +10,86 @@ import (
 	"time"
 )
 
+const countEventSeats = `-- name: CountEventSeats :one
+SELECT count(*) FROM event_seats WHERE event_id = $1
+`
+
+func (q *Queries) CountEventSeats(ctx context.Context, eventID string) (int64, error) {
+	row := q.db.QueryRow(ctx, countEventSeats, eventID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const createEvent = `-- name: CreateEvent :one
+INSERT INTO events (organizer_id, venue_id, seat_map_id, slug, title, description, age_rating,
+                    starts_at, ends_at, sales_start_at, sales_end_at,
+                    max_tickets_per_buyer, refund_deadline_hours)
+VALUES ($1, $2, $3, $4, $5, $6, $7,
+        $8, $9, $10, $11,
+        $12, $13)
+RETURNING id, organizer_id, venue_id, seat_map_id, slug, title, description, status, starts_at, ends_at, sales_start_at, sales_end_at, max_tickets_per_buyer, refund_deadline_hours, published_at, cancelled_at, created_at, updated_at, age_rating, cover_image_key, cover_video_key
+`
+
+type CreateEventParams struct {
+	OrganizerID         string
+	VenueID             string
+	SeatMapID           string
+	Slug                string
+	Title               string
+	Description         string
+	AgeRating           string
+	StartsAt            time.Time
+	EndsAt              time.Time
+	SalesStartAt        *time.Time
+	SalesEndAt          *time.Time
+	MaxTicketsPerBuyer  int32
+	RefundDeadlineHours int32
+}
+
+func (q *Queries) CreateEvent(ctx context.Context, arg CreateEventParams) (Event, error) {
+	row := q.db.QueryRow(ctx, createEvent,
+		arg.OrganizerID,
+		arg.VenueID,
+		arg.SeatMapID,
+		arg.Slug,
+		arg.Title,
+		arg.Description,
+		arg.AgeRating,
+		arg.StartsAt,
+		arg.EndsAt,
+		arg.SalesStartAt,
+		arg.SalesEndAt,
+		arg.MaxTicketsPerBuyer,
+		arg.RefundDeadlineHours,
+	)
+	var i Event
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizerID,
+		&i.VenueID,
+		&i.SeatMapID,
+		&i.Slug,
+		&i.Title,
+		&i.Description,
+		&i.Status,
+		&i.StartsAt,
+		&i.EndsAt,
+		&i.SalesStartAt,
+		&i.SalesEndAt,
+		&i.MaxTicketsPerBuyer,
+		&i.RefundDeadlineHours,
+		&i.PublishedAt,
+		&i.CancelledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AgeRating,
+		&i.CoverImageKey,
+		&i.CoverVideoKey,
+	)
+	return i, err
+}
+
 const createOrganizer = `-- name: CreateOrganizer :one
 INSERT INTO organizers (name, slug) VALUES ($1, $2)
 RETURNING id, name, slug, created_at
@@ -56,6 +136,39 @@ func (q *Queries) CreateOwner(ctx context.Context, arg CreateOwnerParams) (strin
 	return id, err
 }
 
+const createPriceCategory = `-- name: CreatePriceCategory :one
+INSERT INTO price_categories (organizer_id, event_id, name, price_tiyn)
+VALUES ($1, $2, $3, $4)
+RETURNING id, organizer_id, event_id, name, price_tiyn, currency, created_at
+`
+
+type CreatePriceCategoryParams struct {
+	OrganizerID string
+	EventID     string
+	Name        string
+	PriceTiyn   int64
+}
+
+func (q *Queries) CreatePriceCategory(ctx context.Context, arg CreatePriceCategoryParams) (PriceCategory, error) {
+	row := q.db.QueryRow(ctx, createPriceCategory,
+		arg.OrganizerID,
+		arg.EventID,
+		arg.Name,
+		arg.PriceTiyn,
+	)
+	var i PriceCategory
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizerID,
+		&i.EventID,
+		&i.Name,
+		&i.PriceTiyn,
+		&i.Currency,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const createSeatMap = `-- name: CreateSeatMap :one
 INSERT INTO seat_maps (organizer_id, venue_id, name, layout)
 VALUES ($1, $2, $3, $4)
@@ -87,6 +200,28 @@ func (q *Queries) CreateSeatMap(ctx context.Context, arg CreateSeatMapParams) (S
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const createSectionPrice = `-- name: CreateSectionPrice :exec
+INSERT INTO event_section_prices (organizer_id, event_id, section, price_category_id)
+VALUES ($1, $2, $3, $4)
+`
+
+type CreateSectionPriceParams struct {
+	OrganizerID     string
+	EventID         string
+	Section         string
+	PriceCategoryID string
+}
+
+func (q *Queries) CreateSectionPrice(ctx context.Context, arg CreateSectionPriceParams) error {
+	_, err := q.db.Exec(ctx, createSectionPrice,
+		arg.OrganizerID,
+		arg.EventID,
+		arg.Section,
+		arg.PriceCategoryID,
+	)
+	return err
 }
 
 const createVenue = `-- name: CreateVenue :one
@@ -124,6 +259,97 @@ func (q *Queries) CreateVenue(ctx context.Context, arg CreateVenueParams) (Venue
 		&i.UpdatedAt,
 		&i.Latitude,
 		&i.Longitude,
+	)
+	return i, err
+}
+
+const deleteEventPrices = `-- name: DeleteEventPrices :exec
+DELETE FROM price_categories WHERE organizer_id = $1 AND event_id = $2
+`
+
+type DeleteEventPricesParams struct {
+	OrganizerID string
+	EventID     string
+}
+
+// Цены черновика заменяются целиком: сначала привязки, потом категории.
+func (q *Queries) DeleteEventPrices(ctx context.Context, arg DeleteEventPricesParams) error {
+	_, err := q.db.Exec(ctx, deleteEventPrices, arg.OrganizerID, arg.EventID)
+	return err
+}
+
+const getEvent = `-- name: GetEvent :one
+SELECT id, organizer_id, venue_id, seat_map_id, slug, title, description, status, starts_at, ends_at, sales_start_at, sales_end_at, max_tickets_per_buyer, refund_deadline_hours, published_at, cancelled_at, created_at, updated_at, age_rating, cover_image_key, cover_video_key FROM events WHERE organizer_id = $1 AND id = $2
+`
+
+type GetEventParams struct {
+	OrganizerID string
+	ID          string
+}
+
+func (q *Queries) GetEvent(ctx context.Context, arg GetEventParams) (Event, error) {
+	row := q.db.QueryRow(ctx, getEvent, arg.OrganizerID, arg.ID)
+	var i Event
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizerID,
+		&i.VenueID,
+		&i.SeatMapID,
+		&i.Slug,
+		&i.Title,
+		&i.Description,
+		&i.Status,
+		&i.StartsAt,
+		&i.EndsAt,
+		&i.SalesStartAt,
+		&i.SalesEndAt,
+		&i.MaxTicketsPerBuyer,
+		&i.RefundDeadlineHours,
+		&i.PublishedAt,
+		&i.CancelledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AgeRating,
+		&i.CoverImageKey,
+		&i.CoverVideoKey,
+	)
+	return i, err
+}
+
+const getEventForUpdate = `-- name: GetEventForUpdate :one
+SELECT id, organizer_id, venue_id, seat_map_id, slug, title, description, status, starts_at, ends_at, sales_start_at, sales_end_at, max_tickets_per_buyer, refund_deadline_hours, published_at, cancelled_at, created_at, updated_at, age_rating, cover_image_key, cover_video_key FROM events WHERE organizer_id = $1 AND id = $2 FOR UPDATE
+`
+
+type GetEventForUpdateParams struct {
+	OrganizerID string
+	ID          string
+}
+
+func (q *Queries) GetEventForUpdate(ctx context.Context, arg GetEventForUpdateParams) (Event, error) {
+	row := q.db.QueryRow(ctx, getEventForUpdate, arg.OrganizerID, arg.ID)
+	var i Event
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizerID,
+		&i.VenueID,
+		&i.SeatMapID,
+		&i.Slug,
+		&i.Title,
+		&i.Description,
+		&i.Status,
+		&i.StartsAt,
+		&i.EndsAt,
+		&i.SalesStartAt,
+		&i.SalesEndAt,
+		&i.MaxTicketsPerBuyer,
+		&i.RefundDeadlineHours,
+		&i.PublishedAt,
+		&i.CancelledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AgeRating,
+		&i.CoverImageKey,
+		&i.CoverVideoKey,
 	)
 	return i, err
 }
@@ -180,6 +406,62 @@ func (q *Queries) GetVenue(ctx context.Context, arg GetVenueParams) (Venue, erro
 	return i, err
 }
 
+type InsertEventSeatsParams struct {
+	OrganizerID     string
+	EventID         string
+	PriceCategoryID string
+	Kind            string
+	Section         string
+	RowLabel        *string
+	SeatLabel       string
+}
+
+const listEvents = `-- name: ListEvents :many
+SELECT id, organizer_id, venue_id, seat_map_id, slug, title, description, status, starts_at, ends_at, sales_start_at, sales_end_at, max_tickets_per_buyer, refund_deadline_hours, published_at, cancelled_at, created_at, updated_at, age_rating, cover_image_key, cover_video_key FROM events WHERE organizer_id = $1 ORDER BY starts_at DESC, id
+`
+
+func (q *Queries) ListEvents(ctx context.Context, organizerID string) ([]Event, error) {
+	rows, err := q.db.Query(ctx, listEvents, organizerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Event{}
+	for rows.Next() {
+		var i Event
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrganizerID,
+			&i.VenueID,
+			&i.SeatMapID,
+			&i.Slug,
+			&i.Title,
+			&i.Description,
+			&i.Status,
+			&i.StartsAt,
+			&i.EndsAt,
+			&i.SalesStartAt,
+			&i.SalesEndAt,
+			&i.MaxTicketsPerBuyer,
+			&i.RefundDeadlineHours,
+			&i.PublishedAt,
+			&i.CancelledAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.AgeRating,
+			&i.CoverImageKey,
+			&i.CoverVideoKey,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOrganizers = `-- name: ListOrganizers :many
 SELECT o.id, o.name, o.slug, o.created_at, m.email AS owner_email
 FROM organizers o
@@ -212,6 +494,43 @@ func (q *Queries) ListOrganizers(ctx context.Context, pageSize int32) ([]ListOrg
 			&i.Slug,
 			&i.CreatedAt,
 			&i.OwnerEmail,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPriceCategories = `-- name: ListPriceCategories :many
+SELECT id, organizer_id, event_id, name, price_tiyn, currency, created_at FROM price_categories WHERE organizer_id = $1 AND event_id = $2 ORDER BY price_tiyn DESC, name
+`
+
+type ListPriceCategoriesParams struct {
+	OrganizerID string
+	EventID     string
+}
+
+func (q *Queries) ListPriceCategories(ctx context.Context, arg ListPriceCategoriesParams) ([]PriceCategory, error) {
+	rows, err := q.db.Query(ctx, listPriceCategories, arg.OrganizerID, arg.EventID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PriceCategory{}
+	for rows.Next() {
+		var i PriceCategory
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrganizerID,
+			&i.EventID,
+			&i.Name,
+			&i.PriceTiyn,
+			&i.Currency,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -262,6 +581,41 @@ func (q *Queries) ListSeatMaps(ctx context.Context, arg ListSeatMapsParams) ([]S
 	return items, nil
 }
 
+const listSectionPrices = `-- name: ListSectionPrices :many
+SELECT section, price_category_id FROM event_section_prices
+WHERE organizer_id = $1 AND event_id = $2 ORDER BY section
+`
+
+type ListSectionPricesParams struct {
+	OrganizerID string
+	EventID     string
+}
+
+type ListSectionPricesRow struct {
+	Section         string
+	PriceCategoryID string
+}
+
+func (q *Queries) ListSectionPrices(ctx context.Context, arg ListSectionPricesParams) ([]ListSectionPricesRow, error) {
+	rows, err := q.db.Query(ctx, listSectionPrices, arg.OrganizerID, arg.EventID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSectionPricesRow{}
+	for rows.Next() {
+		var i ListSectionPricesRow
+		if err := rows.Scan(&i.Section, &i.PriceCategoryID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listVenues = `-- name: ListVenues :many
 SELECT id, organizer_id, name, address, timezone, created_at, updated_at, latitude, longitude FROM venues
 WHERE organizer_id = $1
@@ -296,6 +650,143 @@ func (q *Queries) ListVenues(ctx context.Context, organizerID string) ([]Venue, 
 		return nil, err
 	}
 	return items, nil
+}
+
+const markEventPublished = `-- name: MarkEventPublished :exec
+UPDATE events SET status = 'published', published_at = now(), updated_at = now()
+WHERE organizer_id = $1 AND id = $2 AND status = 'draft'
+`
+
+type MarkEventPublishedParams struct {
+	OrganizerID string
+	ID          string
+}
+
+func (q *Queries) MarkEventPublished(ctx context.Context, arg MarkEventPublishedParams) error {
+	_, err := q.db.Exec(ctx, markEventPublished, arg.OrganizerID, arg.ID)
+	return err
+}
+
+const setEventMedia = `-- name: SetEventMedia :one
+UPDATE events
+SET cover_image_key = $1, cover_video_key = $2, updated_at = now()
+WHERE organizer_id = $3 AND id = $4 AND status <> 'cancelled'
+RETURNING id, organizer_id, venue_id, seat_map_id, slug, title, description, status, starts_at, ends_at, sales_start_at, sales_end_at, max_tickets_per_buyer, refund_deadline_hours, published_at, cancelled_at, created_at, updated_at, age_rating, cover_image_key, cover_video_key
+`
+
+type SetEventMediaParams struct {
+	CoverImageKey *string
+	CoverVideoKey *string
+	OrganizerID   string
+	ID            string
+}
+
+func (q *Queries) SetEventMedia(ctx context.Context, arg SetEventMediaParams) (Event, error) {
+	row := q.db.QueryRow(ctx, setEventMedia,
+		arg.CoverImageKey,
+		arg.CoverVideoKey,
+		arg.OrganizerID,
+		arg.ID,
+	)
+	var i Event
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizerID,
+		&i.VenueID,
+		&i.SeatMapID,
+		&i.Slug,
+		&i.Title,
+		&i.Description,
+		&i.Status,
+		&i.StartsAt,
+		&i.EndsAt,
+		&i.SalesStartAt,
+		&i.SalesEndAt,
+		&i.MaxTicketsPerBuyer,
+		&i.RefundDeadlineHours,
+		&i.PublishedAt,
+		&i.CancelledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AgeRating,
+		&i.CoverImageKey,
+		&i.CoverVideoKey,
+	)
+	return i, err
+}
+
+const updateDraftEvent = `-- name: UpdateDraftEvent :one
+UPDATE events
+SET venue_id = $1, seat_map_id = $2, slug = $3, title = $4,
+    description = $5, age_rating = $6,
+    starts_at = $7, ends_at = $8,
+    sales_start_at = $9, sales_end_at = $10,
+    max_tickets_per_buyer = $11, refund_deadline_hours = $12,
+    updated_at = now()
+WHERE organizer_id = $13 AND id = $14 AND status = 'draft'
+RETURNING id, organizer_id, venue_id, seat_map_id, slug, title, description, status, starts_at, ends_at, sales_start_at, sales_end_at, max_tickets_per_buyer, refund_deadline_hours, published_at, cancelled_at, created_at, updated_at, age_rating, cover_image_key, cover_video_key
+`
+
+type UpdateDraftEventParams struct {
+	VenueID             string
+	SeatMapID           string
+	Slug                string
+	Title               string
+	Description         string
+	AgeRating           string
+	StartsAt            time.Time
+	EndsAt              time.Time
+	SalesStartAt        *time.Time
+	SalesEndAt          *time.Time
+	MaxTicketsPerBuyer  int32
+	RefundDeadlineHours int32
+	OrganizerID         string
+	ID                  string
+}
+
+// Черновик меняется целиком; опубликованное событие этим запросом не меняется.
+func (q *Queries) UpdateDraftEvent(ctx context.Context, arg UpdateDraftEventParams) (Event, error) {
+	row := q.db.QueryRow(ctx, updateDraftEvent,
+		arg.VenueID,
+		arg.SeatMapID,
+		arg.Slug,
+		arg.Title,
+		arg.Description,
+		arg.AgeRating,
+		arg.StartsAt,
+		arg.EndsAt,
+		arg.SalesStartAt,
+		arg.SalesEndAt,
+		arg.MaxTicketsPerBuyer,
+		arg.RefundDeadlineHours,
+		arg.OrganizerID,
+		arg.ID,
+	)
+	var i Event
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizerID,
+		&i.VenueID,
+		&i.SeatMapID,
+		&i.Slug,
+		&i.Title,
+		&i.Description,
+		&i.Status,
+		&i.StartsAt,
+		&i.EndsAt,
+		&i.SalesStartAt,
+		&i.SalesEndAt,
+		&i.MaxTicketsPerBuyer,
+		&i.RefundDeadlineHours,
+		&i.PublishedAt,
+		&i.CancelledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AgeRating,
+		&i.CoverImageKey,
+		&i.CoverVideoKey,
+	)
+	return i, err
 }
 
 const updateVenue = `-- name: UpdateVenue :one

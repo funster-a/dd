@@ -53,6 +53,7 @@ func TestLoadInvalid(t *testing.T) {
 		"rabbitmq scheme":   {"RABBITMQ_URL": "http://rabbitmq:5672/"},
 		"rabbitmq no host":  {"RABBITMQ_URL": "amqp:///vhost"},
 		"admin not email":   {"ADMIN_EMAILS": "admin@example.com,nobody"},
+		"s3 not url":        {"S3_ENDPOINT": "seaweedfs:8333"},
 	}
 	for name, env := range tests {
 		t.Run(name, func(t *testing.T) {

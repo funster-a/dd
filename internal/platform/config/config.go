@@ -29,6 +29,20 @@ type Config struct {
 	RabbitMQURL string
 	// AdminEmails — администраторы платформы (ADR 006), из ADMIN_EMAILS через запятую.
 	AdminEmails []string
+	// S3 — хранилище файлов (ADR 009).
+	S3 S3Config
+}
+
+// S3Config — параметры S3-совместимого хранилища.
+type S3Config struct {
+	// Endpoint — адрес для api; PublicEndpoint — для браузера (ссылки загрузки,
+	// публичные адреса обложек). В Docker они различаются.
+	Endpoint       string
+	PublicEndpoint string
+	AccessKey      string
+	SecretKey      string
+	Bucket         string
+	Region         string
 }
 
 // Load читает конфигурацию из окружения. Незаданные переменные получают
@@ -39,7 +53,15 @@ func Load() (Config, error) {
 		DatabaseURL: getenv("DATABASE_URL", "postgres://dd:dd@localhost:5432/dd?sslmode=disable"),
 		RedisAddr:   getenv("REDIS_ADDR", "localhost:6379"),
 		RabbitMQURL: getenv("RABBITMQ_URL", "amqp://dd:dd@localhost:5672/"),
+		S3: S3Config{
+			Endpoint:  getenv("S3_ENDPOINT", "http://localhost:8333"),
+			AccessKey: getenv("S3_ACCESS_KEY", "dd"),
+			SecretKey: getenv("S3_SECRET_KEY", "dd-secret-key"),
+			Bucket:    getenv("S3_BUCKET", "dd-media"),
+			Region:    getenv("S3_REGION", "us-east-1"),
+		},
 	}
+	cfg.S3.PublicEndpoint = getenv("S3_PUBLIC_ENDPOINT", cfg.S3.Endpoint)
 
 	var errs []error
 
@@ -64,6 +86,12 @@ func Load() (Config, error) {
 	}
 	if err := validateURL(cfg.RabbitMQURL, "amqp", "amqps"); err != nil {
 		errs = append(errs, fmt.Errorf("RABBITMQ_URL: %w", err))
+	}
+	if err := validateURL(cfg.S3.Endpoint, "http", "https"); err != nil {
+		errs = append(errs, fmt.Errorf("S3_ENDPOINT: %w", err))
+	}
+	if err := validateURL(cfg.S3.PublicEndpoint, "http", "https"); err != nil {
+		errs = append(errs, fmt.Errorf("S3_PUBLIC_ENDPOINT: %w", err))
 	}
 	for e := range strings.SplitSeq(os.Getenv("ADMIN_EMAILS"), ",") {
 		e = strings.ToLower(strings.TrimSpace(e))

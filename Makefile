@@ -14,10 +14,12 @@ REDIS_PORT        ?= 6379
 RABBITMQ_USER     ?= dd
 RABBITMQ_PASSWORD ?= dd
 RABBITMQ_PORT     ?= 5672
+S3_PORT           ?= 8333
 
 DATABASE_URL ?= postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:$(POSTGRES_PORT)/$(POSTGRES_DB)?sslmode=disable
 REDIS_ADDR   ?= localhost:$(REDIS_PORT)
 RABBITMQ_URL ?= amqp://$(RABBITMQ_USER):$(RABBITMQ_PASSWORD)@localhost:$(RABBITMQ_PORT)/
+S3_ENDPOINT  ?= http://localhost:$(S3_PORT)
 
 # Экспортируем всё, включая переменные приложения из .env (HTTP_ADDR, LOG_LEVEL...),
 # чтобы их видели процессы, запущенные через go run.
@@ -27,7 +29,7 @@ GOLANGCI_LINT_VERSION := v2.14.0
 # goose закреплён в tools.mod, чтобы его зависимости не попадали в go.mod (ADR 002).
 GOOSE_CMD := go tool -modfile=tools.mod goose
 GOOSE := $(GOOSE_CMD) -dir migrations postgres "$(DATABASE_URL)"
-INFRA := postgres redis rabbitmq prometheus grafana
+INFRA := postgres redis rabbitmq seaweedfs prometheus grafana
 
 .DEFAULT_GOAL := help
 
@@ -59,7 +61,8 @@ test: ## Юнит-тесты с детектором гонок
 	go test -race ./...
 
 test-integration: ## Все тесты, включая интеграционные (нужен make infra-up)
-	DATABASE_TEST_URL="$(DATABASE_URL)" REDIS_TEST_ADDR="$(REDIS_ADDR)" RABBITMQ_TEST_URL="$(RABBITMQ_URL)" go test -race -count=1 ./...
+	DATABASE_TEST_URL="$(DATABASE_URL)" REDIS_TEST_ADDR="$(REDIS_ADDR)" RABBITMQ_TEST_URL="$(RABBITMQ_URL)" \
+		S3_TEST_ENDPOINT="$(S3_ENDPOINT)" go test -race -count=1 ./...
 
 sqlc: ## Сгенерировать Go-код запросов из *.sql (ADR 007)
 	go tool -modfile=tools.mod sqlc generate

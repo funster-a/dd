@@ -82,6 +82,21 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+      # SeaweedFS нужен аргумент команды, а service-контейнеры его не принимают.
+      - name: Start S3 (SeaweedFS)
+        run: |
+          cat > /tmp/s3.json <<'JSON'
+          {"identities": [
+            {"name": "dd", "credentials": [{"accessKey": "dd", "secretKey": "dd-secret-key"}],
+             "actions": ["Admin", "Read", "List", "Tagging", "Write"]},
+            {"name": "anonymous", "actions": ["Read:dd-media"]}
+          ]}
+          JSON
+          docker run -d --name seaweedfs -p 8333:8333 -v /tmp/s3.json:/etc/seaweedfs/s3.json:ro \
+            chrislusf/seaweedfs:4.47 mini -dir=/data -ip.bind=0.0.0.0 -bucket=dd-media -s3.config=/etc/seaweedfs/s3.json
+          for i in $(seq 1 60); do curl -fs http://localhost:8333/healthz >/dev/null && exit 0; sleep 1; done
+          docker logs seaweedfs
+          exit 1
       - name: Migrations apply and roll back
         env:
           PGPASSWORD: dd

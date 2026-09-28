@@ -28,6 +28,7 @@ import (
 	"github.com/funster-a/dd/internal/platform/mq"
 	"github.com/funster-a/dd/internal/platform/observability"
 	"github.com/funster-a/dd/internal/platform/redis"
+	"github.com/funster-a/dd/internal/platform/storage"
 )
 
 func main() {
@@ -72,7 +73,16 @@ func run() error {
 	}
 
 	ident := identity.NewService(pool, rdb, identity.LogSender{Log: log}, cfg.AdminEmails, log)
-	cat := catalog.NewService(pool, nil)
+	store, err := storage.New(storage.Config{
+		Endpoint: cfg.S3.Endpoint, PublicEndpoint: cfg.S3.PublicEndpoint,
+		AccessKey: cfg.S3.AccessKey, SecretKey: cfg.S3.SecretKey,
+		Bucket: cfg.S3.Bucket, Region: cfg.S3.Region,
+	})
+	if err != nil {
+		closeDeps()
+		return err
+	}
+	cat := catalog.NewService(pool, objectStore{c: store})
 
 	r := chi.NewRouter()
 	r.Use(httpx.RequestID(log))
@@ -81,6 +91,7 @@ func run() error {
 		"postgres": pool.Ping,
 		"redis":    func(ctx context.Context) error { return rdb.Ping(ctx).Err() },
 		"rabbitmq": rmq.Ping,
+		"storage":  store.Ping,
 	}))
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(ident.Middleware)

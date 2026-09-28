@@ -54,6 +54,7 @@ docker compose logs worker
 | RabbitMQ, панель управления | http://localhost:15672 | `dd` / `dd` |
 | Prometheus | http://localhost:9090 | — |
 | Grafana | http://localhost:3000 | `admin` / `admin`, источник Prometheus подключён |
+| S3 (SeaweedFS) | http://localhost:8333 | `dd` / `dd-secret-key`, бакет `dd-media` открыт на чтение |
 | PostgreSQL | `localhost:5432` | `dd` / `dd`, база `dd` |
 | Redis | `localhost:6379` | без пароля |
 
@@ -68,7 +69,7 @@ docker compose logs worker
 Инфраструктура работает в Docker, api и worker запускаются через `go run`. Так быстрее пересобирать и можно подключить отладчик.
 
 ```sh
-make infra-up        # только PostgreSQL, Redis, RabbitMQ, Prometheus, Grafana
+make infra-up        # только PostgreSQL, Redis, RabbitMQ, SeaweedFS, Prometheus, Grafana
 make migrate-up      # применить миграции
 make run             # api на :8080
 make run-worker      # worker, в другом терминале
@@ -143,6 +144,10 @@ curl -X POST localhost:8080/v1/admin/organizers \
 |---|---|
 | `GET/POST /venues`, `GET/PUT /venues/{id}` | площадки: название, адрес, часовой пояс, координаты |
 | `GET/POST /venues/{id}/seat-maps`, `GET /seat-maps/{id}` | схемы залов |
+| `GET/POST /events`, `GET/PUT /events/{id}` | события (черновик меняется целиком) |
+| `GET/PUT /events/{id}/prices` | ценовые категории и их секторы |
+| `POST /events/{id}/media/uploads`, `PUT /events/{id}/media` | ссылка на загрузку обложки и её прикрепление |
+| `POST /events/{id}/publish` | публикация: проверка готовности и генерация мест |
 
 Схема зала — это сектора с рядами и местами и входные зоны с вместимостью:
 

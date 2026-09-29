@@ -10,6 +10,29 @@ import (
 	"time"
 )
 
+const countBuyerTickets = `-- name: CountBuyerTickets :one
+SELECT count(*)::int FROM order_items i
+JOIN orders o ON o.id = i.order_id
+LEFT JOIN tickets t ON t.order_item_id = i.id
+WHERE o.buyer_id = $1 AND o.event_id = $2
+  AND o.status IN ('paid', 'partially_refunded')
+  AND (t.id IS NULL OR t.status <> 'revoked')
+`
+
+type CountBuyerTicketsParams struct {
+	BuyerID string
+	EventID string
+}
+
+// Сколько билетов покупатель уже купил на событие: места оплаченных заказов,
+// кроме возвращённых билетов.
+func (q *Queries) CountBuyerTickets(ctx context.Context, arg CountBuyerTicketsParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countBuyerTickets, arg.BuyerID, arg.EventID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countGeneralAvailable = `-- name: CountGeneralAvailable :many
 SELECT section, count(*) FILTER (WHERE status = 'available')::int AS available
 FROM event_seats
@@ -94,7 +117,7 @@ func (q *Queries) ExpireDueOrders(ctx context.Context, arg ExpireDueOrdersParams
 
 const getBookableEvent = `-- name: GetBookableEvent :one
 
-SELECT id, organizer_id, status, starts_at, sales_start_at, sales_end_at, max_tickets_per_buyer
+SELECT id, organizer_id, status, admission, starts_at, sales_start_at, sales_end_at, max_tickets_per_buyer
 FROM events WHERE id = $1
 `
 
@@ -102,6 +125,7 @@ type GetBookableEventRow struct {
 	ID                 string
 	OrganizerID        string
 	Status             string
+	Admission          string
 	StartsAt           time.Time
 	SalesStartAt       *time.Time
 	SalesEndAt         *time.Time
@@ -116,6 +140,7 @@ func (q *Queries) GetBookableEvent(ctx context.Context, id string) (GetBookableE
 		&i.ID,
 		&i.OrganizerID,
 		&i.Status,
+		&i.Admission,
 		&i.StartsAt,
 		&i.SalesStartAt,
 		&i.SalesEndAt,

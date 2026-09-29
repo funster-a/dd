@@ -236,3 +236,54 @@ func TestConfirmPaymentRacesExpiry(t *testing.T) {
 	}
 	t.Logf("paid %d, expired with refund %d", paidN, expiredN)
 }
+
+// Лимит билетов — на покупателя за всё событие: уже оплаченные билеты
+// уменьшают, сколько можно взять новым заказом (лимит в фикстуре — 10).
+func TestBuyerLimitAcrossOrders(t *testing.T) {
+	e := newEnv(t, false, 0, 0, 20)
+	ctx := t.Context()
+	buyer := e.buyer(t)
+	o, err := e.svc.CreateOrder(ctx, buyer, e.eventID, generalReq(6), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.ConfirmPayment(ctx, paid(o, time.Now())); err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.svc.CreateOrder(ctx, buyer, e.eventID, generalReq(5), time.Now())
+	if pe, ok := err.(*PreconditionError); !ok || pe.Code != "ticket_limit_exceeded" { //nolint:errorlint // ошибка не оборачивается
+		t.Fatalf("second order over the limit = %v, want ticket_limit_exceeded", err)
+	}
+	if _, err := e.svc.CreateOrder(ctx, buyer, e.eventID, generalReq(4), time.Now()); err != nil {
+		t.Errorf("order within the remaining limit: %v", err)
+	}
+	// Другой покупатель лимит не делит.
+	if _, err := e.svc.CreateOrder(ctx, e.buyer(t), e.eventID, generalReq(10), time.Now()); err != nil {
+		t.Errorf("another buyer: %v", err)
+	}
+}
+
+// Бесплатные билеты: заказ оформляется сразу, без оплаты.
+func TestFreeOrder(t *testing.T) {
+	e := newEnv(t, false, 1, 2, 5)
+	ctx := t.Context()
+	e.exec(t, `UPDATE price_categories SET price_tiyn = 0 WHERE event_id = $1 AND name = 'Фан'`, e.eventID)
+	o, err := e.svc.CreateOrder(ctx, e.buyer(t), e.eventID, generalReq(2), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.Status != "paid" || o.TotalTiyn != 0 || o.PaidAt == nil || len(o.Items) != 2 {
+		t.Fatalf("free order = %+v, want paid with 2 items", o)
+	}
+	if e.events(t, events.OrderPaid, o.ID) != 1 {
+		t.Error("free order must emit order.paid to issue tickets")
+	}
+	if a := e.availability(t); a.General[0].Available != 3 {
+		t.Errorf("available = %d, want 3", a.General[0].Available)
+	}
+	// Платные места в том же событии по-прежнему ждут оплаты.
+	p, err := e.svc.CreateOrder(ctx, e.buyer(t), e.eventID, seatsReq(seat(1, 1)), time.Now())
+	if err != nil || p.Status != "pending" {
+		t.Errorf("paid order = %+v, %v; want pending", p, err)
+	}
+}

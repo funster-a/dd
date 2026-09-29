@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -88,4 +89,20 @@ func (s *Service) requestRefund(ctx context.Context, tx pgx.Tx, ev events.Paymen
 	return outbox.Add(ctx, tx, events.RefundRequested, events.RefundRequestedEvent{
 		PaymentID: ev.PaymentID, OrderID: ev.OrderID, Reason: events.RefundLatePayment,
 	})
+}
+
+// completeFree оформляет заказ без оплаты (сумма 0): места продаются,
+// заказ становится paid, событие order.paid выпускает билеты.
+func (s *Service) completeFree(ctx context.Context, tx pgx.Tx, q *bookingdb.Queries, orderID string, now time.Time) (bookingdb.Order, error) {
+	if _, err := q.SellOrderSeats(ctx, orderID); err != nil {
+		return bookingdb.Order{}, fmt.Errorf("sell seats: %w", err)
+	}
+	o, err := q.MarkOrderPaid(ctx, bookingdb.MarkOrderPaidParams{ID: orderID, PaidAt: now})
+	if err != nil {
+		return bookingdb.Order{}, fmt.Errorf("mark free order paid: %w", err)
+	}
+	if err := outbox.Add(ctx, tx, events.OrderPaid, events.OrderPaidEvent{OrderID: orderID}); err != nil {
+		return bookingdb.Order{}, err
+	}
+	return o, nil
 }

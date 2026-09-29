@@ -267,3 +267,25 @@ func TestLatePaymentIsRefunded(t *testing.T) {
 		t.Errorf("tickets issued for a refunded order: %d", len(ts))
 	}
 }
+
+// Бесплатные билеты: оплаты нет, заказ оформлен сразу, билеты выпускает
+// тот же конвейер событий.
+func TestFreeTicketsFlow(t *testing.T) {
+	f := newFlow(t)
+	ctx := t.Context()
+	if _, err := f.db.Pool.Exec(ctx, `UPDATE price_categories SET price_tiyn = 0 WHERE event_id = $1`, f.eventID); err != nil {
+		t.Fatal(err)
+	}
+	buyer := f.buyer(t)
+	o := f.order(t, buyer, "4")
+	if o.Status != "paid" || o.TotalTiyn != 0 {
+		t.Fatalf("free order = %+v, want paid", o)
+	}
+	eventually(t, "free tickets", func() bool {
+		ts, err := f.tickets.ForOrder(ctx, buyer, o.ID)
+		return err == nil && len(ts) == 1
+	})
+	if _, err := f.pay.StartPayment(ctx, buyer, o.ID, time.Now()); err == nil {
+		t.Error("payment started for a free paid order")
+	}
+}

@@ -11,7 +11,8 @@ import (
 )
 
 // Handler обрабатывает одно сообщение. Ошибка означает, что сообщение
-// не обработано: оно отклоняется без возврата в очередь.
+// не обработано: оно отклоняется без возврата в очередь и, если у очереди
+// включён DeadLetter, попадает в очередь <имя>.dead для разбора.
 type Handler func(ctx context.Context, d *amqp.Delivery) error
 
 // ConsumerConfig описывает, какую очередь и как потреблять.
@@ -20,6 +21,9 @@ type ConsumerConfig struct {
 	Prefetch int
 	// Tag — имя потребителя, видимое в RabbitMQ.
 	Tag string
+	// DeadLetter — отклонённые сообщения уходят в очередь <Queue>.dead,
+	// а не пропадают. Настройка должна совпадать у издателя и потребителя.
+	DeadLetter bool
 }
 
 const (
@@ -62,8 +66,8 @@ func consumeOnce(ctx context.Context, c *Conn, cfg ConsumerConfig, log *slog.Log
 	}
 	defer func() { _ = ch.Close() }()
 
-	if _, err := ch.QueueDeclare(cfg.Queue, true, false, false, false, nil); err != nil {
-		return fmt.Errorf("declare queue %q: %w", cfg.Queue, err)
+	if err := DeclareQueue(ch, cfg.Queue, cfg.DeadLetter); err != nil {
+		return err
 	}
 	if err := ch.Qos(cfg.Prefetch, 0, false); err != nil {
 		return fmt.Errorf("set qos: %w", err)

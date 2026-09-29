@@ -113,6 +113,14 @@ type OrganizerMember struct {
 	CreatedAt   time.Time
 }
 
+type Outbox struct {
+	ID          string
+	Topic       string
+	Payload     []byte
+	CreatedAt   time.Time
+	PublishedAt *time.Time
+}
+
 type Payment struct {
 	ID                string
 	OrganizerID       string
@@ -124,6 +132,7 @@ type Payment struct {
 	ProviderPaymentID *string
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
+	PaymentUrl        *string
 }
 
 type PaymentWebhookEvent struct {

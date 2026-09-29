@@ -22,6 +22,7 @@ import (
 	"github.com/funster-a/dd/internal/booking"
 	"github.com/funster-a/dd/internal/catalog"
 	"github.com/funster-a/dd/internal/identity"
+	"github.com/funster-a/dd/internal/payment"
 	"github.com/funster-a/dd/internal/platform/auth"
 	"github.com/funster-a/dd/internal/platform/config"
 	"github.com/funster-a/dd/internal/platform/db"
@@ -30,6 +31,7 @@ import (
 	"github.com/funster-a/dd/internal/platform/observability"
 	"github.com/funster-a/dd/internal/platform/redis"
 	"github.com/funster-a/dd/internal/platform/storage"
+	"github.com/funster-a/dd/internal/ticket"
 )
 
 func main() {
@@ -84,6 +86,11 @@ func run() error {
 		return err
 	}
 	book := booking.NewService(pool, rdb, log)
+	pay := payment.NewService(pool,
+		payment.NewPSPClient(cfg.Payment.ProviderURL, cfg.Payment.APIKey, cfg.Payment.WebhookSecret),
+		payment.Config{ReturnURL: cfg.PublicBaseURL + "/payment/return", CallbackURL: cfg.Payment.CallbackURL}, log)
+	tickets := ticket.NewService(pool, ticket.LogMailer{Log: log},
+		ticket.Config{PublicBaseURL: cfg.PublicBaseURL, SigningKey: cfg.TicketSigningKey}, log)
 	cat := catalog.NewService(pool, catalog.WithObjectStore(objectStore{c: store}), catalog.WithCache(redis.NewCache(rdb)))
 
 	r := chi.NewRouter()
@@ -95,6 +102,9 @@ func run() error {
 		"rabbitmq": rmq.Ping,
 		"storage":  store.Ping,
 	}))
+	// Страницы для браузера покупателя: возврат после оплаты и билет по ссылке.
+	r.Get("/payment/return", payment.HandleReturn)
+	r.Get("/t/{token}", tickets.HandlePage)
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(ident.Middleware)
 		r.Mount("/auth", ident.Routes())
@@ -102,6 +112,8 @@ func run() error {
 		r.Mount("/admin", cat.AdminRoutes())
 		r.Mount("/organizer", cat.OrganizerRoutes())
 		book.Register(r)
+		pay.Register(r)
+		tickets.Register(r)
 		r.With(auth.Require(auth.KindBuyer, auth.KindOrganizer, auth.KindAdmin)).Get("/me", identity.HandleMe)
 	})
 

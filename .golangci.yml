@@ -47,6 +47,13 @@ linters:
               desc: модули общаются через интерфейсы на стороне потребителя
             - pkg: github.com/funster-a/dd/internal/identity
               desc: модули общаются через интерфейсы на стороне потребителя
+        # Мок провайдера — только для тестов и отдельного сервиса cmd/fakepsp:
+        # продуктовый код говорит с провайдером через payment.Gateway.
+        fakepsp:
+          files: ["**/internal/**", "!**/internal/fakepsp/**", "!$test"]
+          deny:
+            - pkg: github.com/funster-a/dd/internal/fakepsp
+              desc: продуктовый код не зависит от мока провайдера
         booking:
           files: ["**/internal/booking/**"]
           deny:

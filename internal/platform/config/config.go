@@ -31,6 +31,27 @@ type Config struct {
 	AdminEmails []string
 	// S3 — хранилище файлов (ADR 009).
 	S3 S3Config
+	// PublicBaseURL — адрес платформы для браузера: ссылки на билеты,
+	// возврат покупателя после оплаты.
+	PublicBaseURL string
+	// QueuePrefix — префикс имён очередей событий между модулями (ADR 012).
+	QueuePrefix string
+	// Payment — платёжный провайдер (ADR 012).
+	Payment PaymentConfig
+	// TicketSigningKey — секрет подписи ссылок на билеты.
+	TicketSigningKey string
+}
+
+// PaymentConfig — параметры платёжного провайдера. Значения по умолчанию
+// подходят только моку fakepsp; реальных ключей в репозитории нет
+// (CLAUDE.md, правило 7).
+type PaymentConfig struct {
+	// ProviderURL — API провайдера для api и worker.
+	ProviderURL   string
+	APIKey        string
+	WebhookSecret string
+	// CallbackURL — адрес вебхука платформы, доступный провайдеру.
+	CallbackURL string
 }
 
 // S3Config — параметры S3-совместимого хранилища.
@@ -62,6 +83,15 @@ func Load() (Config, error) {
 		},
 	}
 	cfg.S3.PublicEndpoint = getenv("S3_PUBLIC_ENDPOINT", cfg.S3.Endpoint)
+	cfg.PublicBaseURL = strings.TrimRight(getenv("PUBLIC_BASE_URL", "http://localhost:8080"), "/")
+	cfg.QueuePrefix = getenv("QUEUE_PREFIX", "dd.")
+	cfg.Payment = PaymentConfig{
+		ProviderURL:   getenv("PSP_URL", "http://localhost:8090"),
+		APIKey:        getenv("PSP_API_KEY", "dev-psp-api-key"),
+		WebhookSecret: getenv("PSP_WEBHOOK_SECRET", "dev-psp-webhook-secret"),
+		CallbackURL:   getenv("PAYMENT_CALLBACK_URL", cfg.PublicBaseURL+"/v1/payments/webhooks/fakepsp"),
+	}
+	cfg.TicketSigningKey = getenv("TICKET_SIGNING_KEY", "dev-ticket-signing-key-change-me")
 
 	var errs []error
 
@@ -92,6 +122,16 @@ func Load() (Config, error) {
 	}
 	if err := validateURL(cfg.S3.PublicEndpoint, "http", "https"); err != nil {
 		errs = append(errs, fmt.Errorf("S3_PUBLIC_ENDPOINT: %w", err))
+	}
+	for name, v := range map[string]string{
+		"PUBLIC_BASE_URL": cfg.PublicBaseURL, "PSP_URL": cfg.Payment.ProviderURL, "PAYMENT_CALLBACK_URL": cfg.Payment.CallbackURL,
+	} {
+		if err := validateURL(v, "http", "https"); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", name, err))
+		}
+	}
+	if len(cfg.TicketSigningKey) < 16 {
+		errs = append(errs, errors.New("TICKET_SIGNING_KEY: must be at least 16 characters"))
 	}
 	for e := range strings.SplitSeq(os.Getenv("ADMIN_EMAILS"), ",") {
 		e = strings.ToLower(strings.TrimSpace(e))

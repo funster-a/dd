@@ -9,6 +9,12 @@ x-app-env: &app-env
   DATABASE_URL: postgres://${POSTGRES_USER:-dd}:${POSTGRES_PASSWORD:-dd}@postgres:5432/${POSTGRES_DB:-dd}?sslmode=disable
   REDIS_ADDR: redis:6379
   RABBITMQ_URL: amqp://${RABBITMQ_USER:-dd}:${RABBITMQ_PASSWORD:-dd}@rabbitmq:5672/
+  PUBLIC_BASE_URL: http://localhost:${API_PORT:-8080}
+  # Мок платёжного провайдера (ADR 012); ключи — только для разработки.
+  PSP_URL: http://fakepsp:8090
+  PSP_API_KEY: dev-psp-api-key
+  PSP_WEBHOOK_SECRET: dev-psp-webhook-secret
+  PAYMENT_CALLBACK_URL: http://api:8080/v1/payments/webhooks/fakepsp
 
 services:
   postgres:
@@ -162,6 +168,25 @@ services:
       start_period: 5s
     # Больше SHUTDOWN_TIMEOUT, чтобы Docker не прервал graceful shutdown.
     stop_grace_period: 20s
+
+  # Мок внешнего платёжного провайдера: своя страница оплаты и вебхуки.
+  # Карточных данных не принимает (CLAUDE.md, правило 7).
+  fakepsp:
+    build:
+      context: .
+      target: fakepsp
+    environment:
+      FAKEPSP_PUBLIC_URL: http://localhost:${FAKEPSP_PORT:-8090}
+      PSP_API_KEY: dev-psp-api-key
+      PSP_WEBHOOK_SECRET: dev-psp-webhook-secret
+    ports:
+      - "127.0.0.1:${FAKEPSP_PORT:-8090}:8090"
+    healthcheck:
+      test: ["CMD", "/fakepsp", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
 
   worker:
     build:

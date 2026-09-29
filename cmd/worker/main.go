@@ -1,5 +1,7 @@
-// Command worker запускает потребителя очереди RabbitMQ и фоновые задачи:
-// закрытие просроченных заказов.
+// Command worker обрабатывает события между модулями и фоновые задачи
+// (ADR 011, ADR 012): публикует outbox в RabbitMQ, подтверждает оплату
+// заказов, выпускает билеты, возвращает деньги за опоздавшую оплату и
+// закрывает просроченные заказы.
 package main
 
 import (
@@ -8,15 +10,20 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 
 	"github.com/funster-a/dd/internal/booking"
+	"github.com/funster-a/dd/internal/payment"
 	"github.com/funster-a/dd/internal/platform/config"
 	"github.com/funster-a/dd/internal/platform/db"
+	"github.com/funster-a/dd/internal/platform/events"
 	"github.com/funster-a/dd/internal/platform/mq"
 	"github.com/funster-a/dd/internal/platform/observability"
+	"github.com/funster-a/dd/internal/platform/outbox"
+	"github.com/funster-a/dd/internal/ticket"
 )
 
 // testQueue — очередь каркаса для проверки связки с RabbitMQ.
@@ -49,18 +56,27 @@ func run() error {
 		return err
 	}
 	book := booking.NewService(pool, nil, log)
+	pay := payment.NewService(pool,
+		payment.NewPSPClient(cfg.Payment.ProviderURL, cfg.Payment.APIKey, cfg.Payment.WebhookSecret),
+		payment.Config{}, log)
+	tickets := ticket.NewService(pool, ticket.LogMailer{Log: log},
+		ticket.Config{PublicBaseURL: cfg.PublicBaseURL, SigningKey: cfg.TicketSigningKey}, log)
 	conn := mq.New(cfg.RabbitMQURL)
+	pub := mq.NewPublisher(conn)
 
-	done := make(chan struct{})
-	go func() {
-		mq.Consume(ctx, conn, testQueue, log, logMessage(log))
-		close(done)
-	}()
-	expired := make(chan struct{})
-	go func() {
-		expireOrders(ctx, book, log)
-		close(expired)
-	}()
+	subs := []subscription{
+		subscribe(cfg.QueuePrefix, events.PaymentSucceeded, log, book.ConfirmPayment),
+		subscribe(cfg.QueuePrefix, events.OrderPaid, log, tickets.Issue),
+		subscribe(cfg.QueuePrefix, events.RefundRequested, log, pay.Refund),
+	}
+
+	var tasks sync.WaitGroup
+	tasks.Go(func() { mq.Consume(ctx, conn, testQueue, log, logMessage(log)) })
+	for _, s := range subs {
+		tasks.Go(func() { mq.Consume(ctx, conn, s.cfg, log, s.handler) })
+	}
+	tasks.Go(func() { outbox.NewRelay(pool, pub, cfg.QueuePrefix, log).Run(ctx) })
+	tasks.Go(func() { expireOrders(ctx, book, log) })
 
 	<-ctx.Done()
 
@@ -71,9 +87,9 @@ func run() error {
 
 	stopped := make(chan struct{})
 	go func() {
-		<-done
-		<-expired
-		log.Info("consumer stopped")
+		tasks.Wait()
+		log.Info("consumers stopped")
+		pub.Close()
 		if err := conn.Close(); err != nil {
 			log.Warn("close rabbitmq", slog.Any("error", err))
 		}

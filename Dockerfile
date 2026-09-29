@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1
 
-# Один Dockerfile на три образа: api, worker и migrate (goose + миграции).
+# Один Dockerfile на все образы: api, worker, fakepsp (мок платёжного
+# провайдера, ADR 012) и migrate (goose + миграции).
 # Версия Go должна совпадать с go.mod; GOTOOLCHAIN=local не даст
 # тихо скачать другую, а сломает сборку.
 ARG GO_VERSION=1.27.1
@@ -18,7 +19,7 @@ COPY . .
 # тегами, нужен только postgres.
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    go build -trimpath -ldflags="-s -w" -o /out/ ./cmd/api ./cmd/worker && \
+    go build -trimpath -ldflags="-s -w" -o /out/ ./cmd/api ./cmd/worker ./cmd/fakepsp && \
     go build -modfile=tools.mod -trimpath -ldflags="-s -w" \
       -tags "no_clickhouse no_libsql no_mssql no_mysql no_sqlite3 no_vertica no_ydb" \
       -o /out/goose github.com/pressly/goose/v3/cmd/goose
@@ -31,6 +32,11 @@ ENTRYPOINT ["/api"]
 FROM gcr.io/distroless/static-debian13:nonroot AS worker
 COPY --from=build /out/worker /worker
 ENTRYPOINT ["/worker"]
+
+FROM gcr.io/distroless/static-debian13:nonroot AS fakepsp
+COPY --from=build /out/fakepsp /fakepsp
+EXPOSE 8090
+ENTRYPOINT ["/fakepsp"]
 
 FROM gcr.io/distroless/static-debian13:nonroot AS migrate
 COPY --from=build /out/goose /goose

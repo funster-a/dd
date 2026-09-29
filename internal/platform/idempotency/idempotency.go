@@ -98,7 +98,7 @@ func Middleware(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 				Scope: scope, Key: key,
 				ResponseStatus:      pgtype.Int4{Int32: int32(rec.status), Valid: true}, //nolint:gosec // HTTP-код помещается в int32
 				ResponseBody:        rec.body.Bytes(),
-				ResponseContentType: pgtype.Text{String: rec.Header().Get("Content-Type"), Valid: rec.Header().Get("Content-Type") != ""},
+				ResponseContentType: nonEmpty(rec.Header().Get("Content-Type")),
 			}); err != nil {
 				log.Error("complete idempotency key", slog.Any("error", err))
 			}
@@ -150,8 +150,8 @@ func replay(w http.ResponseWriter, r *http.Request, q *idempotencydb.Queries,
 		return
 	}
 	w.Header().Set(ReplayedHeader, "true")
-	if row.ResponseContentType.Valid {
-		w.Header().Set("Content-Type", row.ResponseContentType.String)
+	if row.ResponseContentType != nil {
+		w.Header().Set("Content-Type", *row.ResponseContentType)
 	}
 	w.WriteHeader(int(row.ResponseStatus.Int32))
 	_, _ = w.Write(row.ResponseBody)
@@ -205,4 +205,11 @@ func (r *recorder) Write(b []byte) (int, error) {
 		r.truncated = true
 	}
 	return r.ResponseWriter.Write(b)
+}
+
+func nonEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }

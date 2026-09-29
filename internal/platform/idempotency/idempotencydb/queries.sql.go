@@ -43,7 +43,7 @@ WHERE scope = $4 AND key = $5
 type CompleteParams struct {
 	ResponseStatus      pgtype.Int4
 	ResponseBody        []byte
-	ResponseContentType pgtype.Text
+	ResponseContentType *string
 	Scope               string
 	Key                 string
 }
@@ -74,7 +74,7 @@ type GetRow struct {
 	RequestHash         []byte
 	ResponseStatus      pgtype.Int4
 	ResponseBody        []byte
-	ResponseContentType pgtype.Text
+	ResponseContentType *string
 	CreatedAt           time.Time
 	CompletedAt         *time.Time
 }

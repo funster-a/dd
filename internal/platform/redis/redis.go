@@ -3,8 +3,10 @@ package redis
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -25,4 +27,40 @@ type slogAdapter struct {
 
 func (a slogAdapter) Printf(ctx context.Context, format string, v ...any) {
 	a.log.WarnContext(ctx, fmt.Sprintf(format, v...), slog.String("component", "go-redis"))
+}
+
+// Cache — простой кэш «ключ — байты» поверх Redis.
+type Cache struct {
+	rdb goredis.Cmdable
+}
+
+// NewCache создаёт кэш.
+func NewCache(rdb goredis.Cmdable) *Cache { return &Cache{rdb: rdb} }
+
+// Get возвращает значение; ok = false — ключа нет.
+func (c *Cache) Get(ctx context.Context, key string) ([]byte, bool, error) {
+	b, err := c.rdb.Get(ctx, key).Bytes()
+	if errors.Is(err, goredis.Nil) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("cache get: %w", err)
+	}
+	return b, true, nil
+}
+
+// Set сохраняет значение на ttl.
+func (c *Cache) Set(ctx context.Context, key string, value []byte, ttl time.Duration) error {
+	if err := c.rdb.Set(ctx, key, value, ttl).Err(); err != nil {
+		return fmt.Errorf("cache set: %w", err)
+	}
+	return nil
+}
+
+// Delete удаляет ключи.
+func (c *Cache) Delete(ctx context.Context, keys ...string) error {
+	if err := c.rdb.Del(ctx, keys...).Err(); err != nil {
+		return fmt.Errorf("cache delete: %w", err)
+	}
+	return nil
 }

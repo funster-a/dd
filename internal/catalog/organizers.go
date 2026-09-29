@@ -6,11 +6,13 @@ import (
 	"net/mail"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/funster-a/dd/internal/catalog/catalogdb"
 )
@@ -19,13 +21,31 @@ var slugPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
 // Service — операции каталога.
 type Service struct {
-	pool *pgxpool.Pool
-	q    *catalogdb.Queries
+	pool  *pgxpool.Pool
+	q     *catalogdb.Queries
+	store ObjectStore
+	cache Cache
+
+	group       singleflight.Group
+	publicLoads atomic.Int64 // сколько раз публичная страница строилась из базы
 }
 
+// Option настраивает сервис.
+type Option func(*Service)
+
+// WithObjectStore подключает хранилище обложек; без него загрузка медиа недоступна.
+func WithObjectStore(store ObjectStore) Option { return func(s *Service) { s.store = store } }
+
+// WithCache подключает кэш публичных страниц; без него страницы строятся из базы.
+func WithCache(cache Cache) Option { return func(s *Service) { s.cache = cache } }
+
 // NewService создаёт сервис каталога.
-func NewService(pool *pgxpool.Pool) *Service {
-	return &Service{pool: pool, q: catalogdb.New(pool)}
+func NewService(pool *pgxpool.Pool, opts ...Option) *Service {
+	s := &Service{pool: pool, q: catalogdb.New(pool)}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // NewOrganizer — данные для заведения организатора.

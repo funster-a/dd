@@ -35,6 +35,9 @@ type Event struct {
 	CancelledAt         *time.Time
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
+	AgeRating           string
+	CoverImageKey       *string
+	CoverVideoKey       *string
 }
 
 type EventSeat struct {
@@ -44,12 +47,19 @@ type EventSeat struct {
 	PriceCategoryID string
 	Kind            string
 	Section         string
-	RowLabel        pgtype.Text
+	RowLabel        *string
 	SeatLabel       string
 	Status          string
 	HoldOrderID     pgtype.UUID
 	HoldExpiresAt   *time.Time
 	Version         int32
+}
+
+type EventSectionPrice struct {
+	OrganizerID     string
+	EventID         string
+	Section         string
+	PriceCategoryID string
 }
 
 type IdempotencyKey struct {
@@ -60,7 +70,7 @@ type IdempotencyKey struct {
 	ResponseBody        []byte
 	CreatedAt           time.Time
 	CompletedAt         *time.Time
-	ResponseContentType pgtype.Text
+	ResponseContentType *string
 }
 
 type Order struct {
@@ -111,7 +121,7 @@ type Payment struct {
 	AmountTiyn        int64
 	Currency          string
 	Provider          string
-	ProviderPaymentID pgtype.Text
+	ProviderPaymentID *string
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
 }
@@ -142,7 +152,7 @@ type Refund struct {
 	Status           string
 	AmountTiyn       int64
 	Reason           string
-	ProviderRefundID pgtype.Text
+	ProviderRefundID *string
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 }

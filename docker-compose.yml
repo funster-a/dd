@@ -62,6 +62,25 @@ services:
       retries: 10
       start_period: 20s
 
+  # S3-совместимое хранилище обложек и билетов (ADR 009). Бакет создаётся
+  # при старте; обложки читаются без подписи, запись — только по ключам.
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.47
+    command: ["mini", "-dir=/data", "-ip.bind=0.0.0.0", "-bucket=${S3_BUCKET:-dd-media}", "-s3.config=/etc/seaweedfs/s3.json"]
+    ports:
+      - "127.0.0.1:${S3_PORT:-8333}:8333"
+    volumes:
+      - seaweedfs-data:/data
+    configs:
+      - source: seaweedfs-s3
+        target: /etc/seaweedfs/s3.json
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8333/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
   prometheus:
     image: prom/prometheus:v3.14.0
     ports:
@@ -117,6 +136,11 @@ services:
       <<: *app-env
       HTTP_ADDR: ":8080"
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      S3_ENDPOINT: http://seaweedfs:8333
+      S3_PUBLIC_ENDPOINT: http://localhost:${S3_PORT:-8333}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-dd}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-dd-secret-key}
+      S3_BUCKET: ${S3_BUCKET:-dd-media}
     ports:
       - "127.0.0.1:${API_PORT:-8080}:8080"
     depends_on:
@@ -127,6 +151,8 @@ services:
       redis:
         condition: service_healthy
       rabbitmq:
+        condition: service_healthy
+      seaweedfs:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "/api", "healthcheck"]
@@ -149,6 +175,14 @@ services:
     stop_grace_period: 20s
 
 configs:
+  seaweedfs-s3:
+    content: |
+      {"identities": [
+        {"name": "dd",
+         "credentials": [{"accessKey": "${S3_ACCESS_KEY:-dd}", "secretKey": "${S3_SECRET_KEY:-dd-secret-key}"}],
+         "actions": ["Admin", "Read", "List", "Tagging", "Write"]},
+        {"name": "anonymous", "actions": ["Read:${S3_BUCKET:-dd-media}"]}
+      ]}
   grafana-datasources:
     content: |
       apiVersion: 1
@@ -165,3 +199,4 @@ volumes:
   rabbitmq-data:
   prometheus-data:
   grafana-data:
+  seaweedfs-data:

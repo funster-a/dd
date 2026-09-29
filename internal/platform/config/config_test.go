@@ -8,7 +8,8 @@ import (
 )
 
 func TestLoadDefaults(t *testing.T) {
-	for _, k := range []string{"HTTP_ADDR", "LOG_LEVEL", "SHUTDOWN_TIMEOUT", "DATABASE_URL", "REDIS_ADDR", "RABBITMQ_URL"} {
+	for _, k := range []string{"HTTP_ADDR", "LOG_LEVEL", "SHUTDOWN_TIMEOUT", "DATABASE_URL", "REDIS_ADDR", "RABBITMQ_URL",
+		"PUBLIC_BASE_URL", "PAYMENT_CALLBACK_URL"} {
 		t.Setenv(k, "")
 	}
 
@@ -24,6 +25,9 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.ShutdownTimeout != 15*time.Second {
 		t.Errorf("ShutdownTimeout = %v, want 15s", cfg.ShutdownTimeout)
+	}
+	if cfg.Payment.CallbackURL != "http://localhost:8080/v1/payments/webhooks/fakepsp" {
+		t.Errorf("Payment.CallbackURL = %q, want derived from PUBLIC_BASE_URL", cfg.Payment.CallbackURL)
 	}
 }
 
@@ -54,6 +58,9 @@ func TestLoadInvalid(t *testing.T) {
 		"rabbitmq no host":  {"RABBITMQ_URL": "amqp:///vhost"},
 		"admin not email":   {"ADMIN_EMAILS": "admin@example.com,nobody"},
 		"s3 not url":        {"S3_ENDPOINT": "seaweedfs:8333"},
+		"base url no host":  {"PUBLIC_BASE_URL": "http://"},
+		"psp not url":       {"PSP_URL": "fakepsp:8090"},
+		"short ticket key":  {"TICKET_SIGNING_KEY": "short"},
 	}
 	for name, env := range tests {
 		t.Run(name, func(t *testing.T) {

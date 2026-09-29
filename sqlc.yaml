@@ -52,3 +52,39 @@ sql:
         out: internal/catalog/catalogdb
         sql_package: pgx/v5
         emit_empty_slices: true
+  - engine: postgresql
+    schema: migrations
+    queries: internal/booking/queries.sql
+    gen:
+      go:
+        package: bookingdb
+        out: internal/booking/bookingdb
+        sql_package: pgx/v5
+        emit_empty_slices: true
+  - engine: postgresql
+    schema: migrations
+    queries: internal/platform/outbox/queries.sql
+    gen:
+      go:
+        package: outboxdb
+        out: internal/platform/outbox/outboxdb
+        sql_package: pgx/v5
+        emit_empty_slices: true
+  - engine: postgresql
+    schema: migrations
+    queries: internal/payment/queries.sql
+    gen:
+      go:
+        package: paymentdb
+        out: internal/payment/paymentdb
+        sql_package: pgx/v5
+        emit_empty_slices: true
+  - engine: postgresql
+    schema: migrations
+    queries: internal/ticket/queries.sql
+    gen:
+      go:
+        package: ticketdb
+        out: internal/ticket/ticketdb
+        sql_package: pgx/v5
+        emit_empty_slices: true

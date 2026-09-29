@@ -29,6 +29,8 @@ const publicTTL = 10 * time.Minute
 // схема зала. Наличие свободных мест сюда не входит: оно меняется каждую
 // секунду и отдаётся отдельно (модуль booking).
 type PublicEvent struct {
+	// ID — идентификатор для бронирования и занятости мест (модуль booking).
+	ID                  string          `json:"id"`
 	OrganizerSlug       string          `json:"organizer_slug"`
 	OrganizerName       string          `json:"organizer_name"`
 	Slug                string          `json:"slug"`
@@ -106,6 +108,7 @@ func (s *Service) buildPublicEvent(ctx context.Context, organizerSlug, eventSlug
 		return nil, err
 	}
 	pe := PublicEvent{
+		ID:            e.ID,
 		OrganizerSlug: e.OrganizerSlug, OrganizerName: e.OrganizerName,
 		Slug: e.Slug, Title: e.Title, Description: e.Description, AgeRating: e.AgeRating,
 		StartsAt: e.StartsAt, EndsAt: e.EndsAt, SalesStartAt: e.SalesStartAt, SalesEndAt: e.SalesEndAt,

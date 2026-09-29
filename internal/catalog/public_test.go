@@ -79,7 +79,7 @@ func TestPublicEvent(t *testing.T) {
 	if err := json.Unmarshal(b, &pe); err != nil {
 		t.Fatal(err)
 	}
-	if pe.Title != ev.Title || pe.Venue.Name != "Клуб" || len(pe.Prices) != len(fullPrices) || len(pe.Layout.Sections) == 0 {
+	if pe.ID != ev.ID || pe.Title != ev.Title || pe.Venue.Name != "Клуб" || len(pe.Prices) != len(fullPrices) || len(pe.Layout.Sections) == 0 {
 		t.Errorf("public event = %+v", pe)
 	}
 	if pe.CoverImageURL == "" || pe.CoverVideoURL != nil {

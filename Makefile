@@ -33,7 +33,7 @@ INFRA := postgres redis rabbitmq seaweedfs prometheus grafana
 
 .DEFAULT_GOAL := help
 
-.PHONY: help up down infra-up build run run-worker test test-integration lint sqlc \
+.PHONY: help up down infra-up build run run-worker run-fakepsp test test-integration lint sqlc \
 	migrate-up migrate-down migrate-reset migrate-status migrate-create
 
 help: ## Показать список команд
@@ -48,14 +48,17 @@ down: ## Остановить все контейнеры (данные в volum
 infra-up: ## Поднять только инфраструктуру — для запуска api и worker через go run
 	docker compose up -d --wait $(INFRA)
 
-build: ## Собрать бинари api и worker в bin/
-	go build -o bin/ ./cmd/api ./cmd/worker
+build: ## Собрать бинари api, worker и fakepsp в bin/
+	go build -o bin/ ./cmd/api ./cmd/worker ./cmd/fakepsp
 
 run: ## Запустить api локально
 	go run ./cmd/api
 
 run-worker: ## Запустить worker локально
 	go run ./cmd/worker
+
+run-fakepsp: ## Запустить мок платёжного провайдера локально (:8090)
+	go run ./cmd/fakepsp
 
 test: ## Юнит-тесты с детектором гонок
 	go test -race ./...

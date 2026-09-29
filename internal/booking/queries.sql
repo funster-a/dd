@@ -116,3 +116,22 @@ ORDER BY section;
 
 -- name: SetOrderTotal :one
 UPDATE orders SET total_tiyn = @total_tiyn, updated_at = now() WHERE id = @id RETURNING *;
+
+-- name: LockOrder :one
+SELECT * FROM orders WHERE id = @id FOR UPDATE;
+
+-- name: SellOrderSeats :many
+-- Продаёт места, которые всё ещё держит заказ (даже если срок холда уже
+-- вышел, но место никто не перехватил).
+UPDATE event_seats
+SET status = 'sold', hold_order_id = NULL, hold_expires_at = NULL
+WHERE hold_order_id = @order_id::uuid AND status = 'held'
+RETURNING id;
+
+-- name: CountOrderItems :one
+SELECT count(*)::int FROM order_items WHERE order_id = @order_id;
+
+-- name: MarkOrderPaid :one
+UPDATE orders SET status = 'paid', paid_at = @paid_at::timestamptz, updated_at = now()
+WHERE id = @id AND status = 'pending'
+RETURNING *;

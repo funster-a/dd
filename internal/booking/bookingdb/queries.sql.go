@@ -43,6 +43,17 @@ func (q *Queries) CountGeneralAvailable(ctx context.Context, eventID string) ([]
 	return items, nil
 }
 
+const countOrderItems = `-- name: CountOrderItems :one
+SELECT count(*)::int FROM order_items WHERE order_id = $1
+`
+
+func (q *Queries) CountOrderItems(ctx context.Context, orderID string) (int32, error) {
+	row := q.db.QueryRow(ctx, countOrderItems, orderID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const expireDueOrders = `-- name: ExpireDueOrders :many
 UPDATE orders SET status = 'expired', updated_at = now()
 WHERE id IN (
@@ -470,6 +481,30 @@ func (q *Queries) LockBuyerOrder(ctx context.Context, arg LockBuyerOrderParams) 
 	return i, err
 }
 
+const lockOrder = `-- name: LockOrder :one
+SELECT id, organizer_id, event_id, buyer_id, status, email, total_tiyn, currency, expires_at, paid_at, created_at, updated_at FROM orders WHERE id = $1 FOR UPDATE
+`
+
+func (q *Queries) LockOrder(ctx context.Context, id string) (Order, error) {
+	row := q.db.QueryRow(ctx, lockOrder, id)
+	var i Order
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizerID,
+		&i.EventID,
+		&i.BuyerID,
+		&i.Status,
+		&i.Email,
+		&i.TotalTiyn,
+		&i.Currency,
+		&i.ExpiresAt,
+		&i.PaidAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const lockPendingOrder = `-- name: LockPendingOrder :one
 SELECT id, expires_at FROM orders
 WHERE buyer_id = $1 AND event_id = $2 AND status = 'pending'
@@ -491,6 +526,37 @@ func (q *Queries) LockPendingOrder(ctx context.Context, arg LockPendingOrderPara
 	row := q.db.QueryRow(ctx, lockPendingOrder, arg.BuyerID, arg.EventID)
 	var i LockPendingOrderRow
 	err := row.Scan(&i.ID, &i.ExpiresAt)
+	return i, err
+}
+
+const markOrderPaid = `-- name: MarkOrderPaid :one
+UPDATE orders SET status = 'paid', paid_at = $1::timestamptz, updated_at = now()
+WHERE id = $2 AND status = 'pending'
+RETURNING id, organizer_id, event_id, buyer_id, status, email, total_tiyn, currency, expires_at, paid_at, created_at, updated_at
+`
+
+type MarkOrderPaidParams struct {
+	PaidAt time.Time
+	ID     string
+}
+
+func (q *Queries) MarkOrderPaid(ctx context.Context, arg MarkOrderPaidParams) (Order, error) {
+	row := q.db.QueryRow(ctx, markOrderPaid, arg.PaidAt, arg.ID)
+	var i Order
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizerID,
+		&i.EventID,
+		&i.BuyerID,
+		&i.Status,
+		&i.Email,
+		&i.TotalTiyn,
+		&i.Currency,
+		&i.ExpiresAt,
+		&i.PaidAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
 	return i, err
 }
 
@@ -546,6 +612,35 @@ WHERE hold_order_id = ANY($1::uuid[]) AND status = 'held'
 func (q *Queries) ReleaseSeatsOfOrders(ctx context.Context, orderIds []string) error {
 	_, err := q.db.Exec(ctx, releaseSeatsOfOrders, orderIds)
 	return err
+}
+
+const sellOrderSeats = `-- name: SellOrderSeats :many
+UPDATE event_seats
+SET status = 'sold', hold_order_id = NULL, hold_expires_at = NULL
+WHERE hold_order_id = $1::uuid AND status = 'held'
+RETURNING id
+`
+
+// Продаёт места, которые всё ещё держит заказ (даже если срок холда уже
+// вышел, но место никто не перехватил).
+func (q *Queries) SellOrderSeats(ctx context.Context, orderID string) ([]string, error) {
+	rows, err := q.db.Query(ctx, sellOrderSeats, orderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const setOrderStatus = `-- name: SetOrderStatus :one

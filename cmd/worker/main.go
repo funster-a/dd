@@ -1,4 +1,5 @@
-// Command worker запускает потребителя очереди RabbitMQ.
+// Command worker запускает потребителя очереди RabbitMQ и фоновые задачи:
+// закрытие просроченных заказов.
 package main
 
 import (
@@ -11,7 +12,9 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 
+	"github.com/funster-a/dd/internal/booking"
 	"github.com/funster-a/dd/internal/platform/config"
+	"github.com/funster-a/dd/internal/platform/db"
 	"github.com/funster-a/dd/internal/platform/mq"
 	"github.com/funster-a/dd/internal/platform/observability"
 )
@@ -41,12 +44,22 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	pool, err := db.NewPool(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	book := booking.NewService(pool, nil, log)
 	conn := mq.New(cfg.RabbitMQURL)
 
 	done := make(chan struct{})
 	go func() {
 		mq.Consume(ctx, conn, testQueue, log, logMessage(log))
 		close(done)
+	}()
+	expired := make(chan struct{})
+	go func() {
+		expireOrders(ctx, book, log)
+		close(expired)
 	}()
 
 	<-ctx.Done()
@@ -59,10 +72,12 @@ func run() error {
 	stopped := make(chan struct{})
 	go func() {
 		<-done
+		<-expired
 		log.Info("consumer stopped")
 		if err := conn.Close(); err != nil {
 			log.Warn("close rabbitmq", slog.Any("error", err))
 		}
+		pool.Close()
 		close(stopped)
 	}()
 

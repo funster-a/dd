@@ -172,6 +172,8 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     stop_grace_period: 20s
 
 configs:

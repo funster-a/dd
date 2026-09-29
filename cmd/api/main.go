@@ -19,6 +19,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/funster-a/dd/internal/booking"
 	"github.com/funster-a/dd/internal/catalog"
 	"github.com/funster-a/dd/internal/identity"
 	"github.com/funster-a/dd/internal/platform/auth"
@@ -82,6 +83,7 @@ func run() error {
 		closeDeps()
 		return err
 	}
+	book := booking.NewService(pool, rdb, log)
 	cat := catalog.NewService(pool, catalog.WithObjectStore(objectStore{c: store}), catalog.WithCache(redis.NewCache(rdb)))
 
 	r := chi.NewRouter()
@@ -99,6 +101,7 @@ func run() error {
 		r.Mount("/public", cat.PublicRoutes())
 		r.Mount("/admin", cat.AdminRoutes())
 		r.Mount("/organizer", cat.OrganizerRoutes())
+		book.Register(r)
 		r.With(auth.Require(auth.KindBuyer, auth.KindOrganizer, auth.KindAdmin)).Get("/me", identity.HandleMe)
 	})
 

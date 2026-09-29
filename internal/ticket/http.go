@@ -1,10 +1,12 @@
 package ticket
 
 import (
+	"context"
 	"errors"
 	"html/template"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/funster-a/dd/internal/platform/auth"
 	"github.com/funster-a/dd/internal/platform/httpx"
+	"github.com/funster-a/dd/internal/platform/idempotency"
 )
 
 // Register добавляет маршруты билетов в роутер /v1:
@@ -88,6 +91,10 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) bool {
 		httpx.WriteError(w, http.StatusNotFound, "not_found", "not found")
 		return true
 	}
+	if v, ok := errors.AsType[*ValidationError](err); ok {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_"+v.Field, v.Error())
+		return true
+	}
 	httpx.Logger(r.Context()).Error("ticket request failed", slog.Any("error", err))
 	httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
 	return true
@@ -116,3 +123,114 @@ img{width:240px;height:240px;image-rendering:pixelated}.used{color:#b91c1c;font-
 {{else}}<p class="used">Билет аннулирован</p>{{end}}
 </div></body></html>
 `))
+
+// RegisterOrganizer добавляет в кабинет организатора (/v1/organizer, вход
+// уже проверен) управление ссылками сканера:
+//
+//	POST   /events/{eventID}/scanners — создать ссылку (токен показывается один раз)
+//	GET    /events/{eventID}/scanners — ссылки события
+//	DELETE /scanners/{scannerID}      — отозвать
+func (s *Service) RegisterOrganizer(r chi.Router) {
+	r.With(idempotency.Middleware(s.pool)).Post("/events/{eventID}/scanners", s.handleCreateScanner)
+	r.Get("/events/{eventID}/scanners", s.handleListScanners)
+	r.Delete("/scanners/{scannerID}", s.handleRevokeScanner)
+}
+
+func organizerID(r *http.Request) string {
+	p, _ := auth.PrincipalFrom(r.Context())
+	return p.OrganizerID
+}
+
+func (s *Service) handleCreateScanner(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Name string `json:"name"`
+	}
+	if err := httpx.DecodeJSON(w, r, &in); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	sc, err := s.CreateScanner(r.Context(), organizerID(r), chi.URLParam(r, "eventID"), in.Name)
+	if writeError(w, r, err) {
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, sc)
+}
+
+func (s *Service) handleListScanners(w http.ResponseWriter, r *http.Request) {
+	list, err := s.ListScanners(r.Context(), organizerID(r), chi.URLParam(r, "eventID"))
+	if writeError(w, r, err) {
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, list)
+}
+
+func (s *Service) handleRevokeScanner(w http.ResponseWriter, r *http.Request) {
+	if writeError(w, r, s.RevokeScanner(r.Context(), organizerID(r), chi.URLParam(r, "scannerID"))) {
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ScannerRoutes — API сканера контролёра, монтируется под /v1/scanner.
+// Доступ по токену ссылки: заголовок Authorization: Scanner <токен>.
+//
+//	GET  /manifest — событие и все его билеты для работы без сети
+//	POST /scans    — сканирования: одно онлайн или пачка после офлайна
+func (s *Service) ScannerRoutes() http.Handler {
+	r := chi.NewRouter()
+	r.Use(s.scannerAuth)
+	r.Get("/manifest", s.handleManifest)
+	r.Post("/scans", s.handleScans)
+	return r
+}
+
+type scannerCtxKey struct{}
+
+func (s *Service) scannerAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Scanner ")
+		if !ok {
+			httpx.WriteError(w, http.StatusUnauthorized, "scanner_required", "send Authorization: Scanner <token>")
+			return
+		}
+		sess, err := s.ScannerByToken(r.Context(), strings.TrimSpace(token))
+		if errors.Is(err, ErrScannerRevoked) {
+			httpx.WriteError(w, http.StatusUnauthorized, "scanner_revoked", err.Error())
+			return
+		}
+		if writeError(w, r, err) {
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), scannerCtxKey{}, sess)))
+	})
+}
+
+func scannerFrom(r *http.Request) ScannerSession {
+	sess, _ := r.Context().Value(scannerCtxKey{}).(ScannerSession)
+	return sess
+}
+
+func (s *Service) handleManifest(w http.ResponseWriter, r *http.Request) {
+	m, err := s.Manifest(r.Context(), scannerFrom(r), time.Now())
+	if writeError(w, r, err) {
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	httpx.WriteJSON(w, http.StatusOK, m)
+}
+
+func (s *Service) handleScans(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		DeviceID string      `json:"device_id"`
+		Scans    []ScanInput `json:"scans"`
+	}
+	if err := httpx.DecodeJSON(w, r, &in); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	res, err := s.Scan(r.Context(), scannerFrom(r), in.DeviceID, in.Scans, time.Now())
+	if writeError(w, r, err) {
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"results": res})
+}

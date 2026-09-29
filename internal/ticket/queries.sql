@@ -32,3 +32,63 @@ JOIN event_seats s ON s.id = t.event_seat_id
 JOIN events e ON e.id = t.event_id
 JOIN venues v ON v.id = e.venue_id
 WHERE t.id = @id;
+
+-- Контроль входа (ADR 013).
+
+-- name: CreateScannerLink :one
+INSERT INTO scanner_links (organizer_id, event_id, name, token_hash)
+VALUES (@organizer_id, @event_id, @name, @token_hash)
+RETURNING id, event_id, name, created_at, revoked_at;
+
+-- name: ListScannerLinks :many
+SELECT id, event_id, name, created_at, revoked_at FROM scanner_links
+WHERE organizer_id = @organizer_id AND event_id = @event_id
+ORDER BY created_at;
+
+-- name: RevokeScannerLink :execrows
+UPDATE scanner_links SET revoked_at = now()
+WHERE organizer_id = @organizer_id AND id = @id AND revoked_at IS NULL;
+
+-- name: ScannerLinkExists :one
+SELECT EXISTS (SELECT 1 FROM scanner_links WHERE organizer_id = @organizer_id AND id = @id);
+
+-- name: GetScannerByTokenHash :one
+SELECT l.id, l.organizer_id, l.event_id, l.name, l.revoked_at,
+       e.title, e.starts_at, e.ends_at, v.name AS venue_name, v.timezone AS venue_timezone
+FROM scanner_links l
+JOIN events e ON e.id = l.event_id
+JOIN venues v ON v.id = e.venue_id
+WHERE l.token_hash = @token_hash;
+
+-- name: ManifestTickets :many
+-- Все билеты события для проверки без сети: id, статус и место.
+SELECT t.id, t.status, s.section, s.row_label, s.seat_label
+FROM tickets t JOIN event_seats s ON s.id = t.event_seat_id
+WHERE t.event_id = @event_id
+ORDER BY t.id;
+
+-- name: GetScanByClient :one
+SELECT sc.result, sc.ticket_id, t.used_at, s.section, s.row_label, s.seat_label
+FROM ticket_scans sc
+JOIN tickets t ON t.id = sc.ticket_id
+JOIN event_seats s ON s.id = t.event_seat_id
+WHERE sc.scanner_link_id = @scanner_link_id AND sc.client_scan_id = @client_scan_id;
+
+-- name: LockTicketForScan :one
+SELECT t.id, t.organizer_id, t.event_id, t.status, t.used_at, s.section, s.row_label, s.seat_label
+FROM tickets t JOIN event_seats s ON s.id = t.event_seat_id
+WHERE t.id = @id
+FOR UPDATE OF t;
+
+-- name: MarkTicketUsed :exec
+UPDATE tickets SET status = 'used', used_at = @used_at::timestamptz WHERE id = @id AND status = 'issued';
+
+-- name: MoveTicketUsedAt :exec
+UPDATE tickets SET used_at = @used_at::timestamptz WHERE id = @id AND status = 'used';
+
+-- name: DemoteAcceptedScan :exec
+UPDATE ticket_scans SET result = 'duplicate' WHERE ticket_id = @ticket_id AND result = 'accepted';
+
+-- name: InsertScan :exec
+INSERT INTO ticket_scans (organizer_id, ticket_id, device_id, scanned_at, result, scanner_link_id, client_scan_id)
+VALUES (@organizer_id, @ticket_id, @device_id, @scanned_at, @result, @scanner_link_id, @client_scan_id);

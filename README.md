@@ -2,7 +2,7 @@
 
 Платформа для организаторов мероприятий: организатор заводит событие и схему зала и продаёт билеты со своего сайта. Дипломный проект.
 
-Сейчас готовы вход по одноразовому коду, кабинет организатора (площадки, схемы залов, события с ценами и обложками, публикация), публичная страница события и бронирование мест с холдом на 10 минут. Следующий этап — оплата.
+Сейчас готовы вход по одноразовому коду, кабинет организатора (площадки, схемы залов, события с ценами и обложками, публикация), публичная страница события и бронирование мест с холдом на 10 минут, оплата через платёжного провайдера (в MVP — его мок) и электронные билеты с QR-кодом. Следующий этап — контроль входа.
 
 - Правила работы и стек — [`CLAUDE.md`](CLAUDE.md)
 - Спецификация — [`docs/spec.md`](docs/spec.md)
@@ -26,7 +26,7 @@ cd dd
 docker compose up -d --build --wait
 ```
 
-Команда собирает образы и поднимает PostgreSQL, Redis, RabbitMQ, Prometheus и Grafana. Затем применяет миграции и запускает api и worker. Она завершается, когда все сервисы здоровы.
+Команда собирает образы и поднимает PostgreSQL, Redis, RabbitMQ, SeaweedFS, Prometheus, Grafana и мок платёжного провайдера. Затем применяет миграции и запускает api и worker. Она завершается, когда все сервисы здоровы.
 
 Проверка:
 
@@ -54,6 +54,7 @@ docker compose logs worker
 | RabbitMQ, панель управления | http://localhost:15672 | `dd` / `dd` |
 | Prometheus | http://localhost:9090 | — |
 | Grafana | http://localhost:3000 | `admin` / `admin`, источник Prometheus подключён |
+| Мок платёжного провайдера | http://localhost:8090 | страница оплаты, карта не нужна |
 | S3 (SeaweedFS) | http://localhost:8333 | `dd` / `dd-secret-key`, бакет `dd-media` открыт на чтение |
 | PostgreSQL | `localhost:5432` | `dd` / `dd`, база `dd` |
 | Redis | `localhost:6379` | без пароля |
@@ -73,6 +74,7 @@ make infra-up        # только PostgreSQL, Redis, RabbitMQ, SeaweedFS, Prom
 make migrate-up      # применить миграции
 make run             # api на :8080
 make run-worker      # worker, в другом терминале
+make run-fakepsp     # мок платёжного провайдера на :8090, в третьем терминале
 ```
 
 Если api из Docker уже запущен, он занимает порт 8080. Остановите его (`docker compose stop api`) или запустите локальный на другом порту: `make run HTTP_ADDR=:8081`.
@@ -87,7 +89,7 @@ make run-worker      # worker, в другом терминале
 |---|---|
 | `make up` / `make down` | поднять или остановить весь проект в Docker |
 | `make infra-up` | поднять только инфраструктуру |
-| `make run` / `make run-worker` | запустить api или worker локально |
+| `make run` / `make run-worker` / `make run-fakepsp` | запустить api, worker или мок платёжного провайдера локально |
 | `make build` | собрать бинари в `bin/` |
 | `make test` | юнит-тесты с детектором гонок |
 | `make test-integration` | все тесты, включая интеграционные с PostgreSQL и RabbitMQ (нужен `make infra-up`) |
@@ -111,6 +113,12 @@ make run-worker      # worker, в другом терминале
 | `DATABASE_URL` | `postgres://dd:dd@localhost:5432/dd?sslmode=disable` | PostgreSQL |
 | `REDIS_ADDR` | `localhost:6379` | Redis |
 | `RABBITMQ_URL` | `amqp://dd:dd@localhost:5672/` | RabbitMQ |
+| `PUBLIC_BASE_URL` | `http://localhost:8080` | адрес платформы для браузера: ссылки на билеты, возврат после оплаты |
+| `PSP_URL` | `http://localhost:8090` | API платёжного провайдера (мок `fakepsp`) |
+| `PSP_API_KEY`, `PSP_WEBHOOK_SECRET` | `dev-psp-api-key`, `dev-psp-webhook-secret` | ключ API и секрет подписи вебхуков; значения только для мока |
+| `PAYMENT_CALLBACK_URL` | `PUBLIC_BASE_URL` + `/v1/payments/webhooks/fakepsp` | куда провайдер шлёт вебхуки |
+| `TICKET_SIGNING_KEY` | ключ для разработки | секрет подписи ссылок на билеты, от 16 символов |
+| `QUEUE_PREFIX` | `dd.` | префикс очередей событий между модулями |
 
 Значения по умолчанию совпадают с `docker-compose.yml`. Все переменные проверяются при старте. Неверное значение, например `LOG_LEVEL=loud` или `REDIS_ADDR=redis` без порта, останавливает процесс с понятной ошибкой. Пароли в текст ошибок не попадают.
 
@@ -180,19 +188,37 @@ curl -X POST localhost:8080/v1/orders/<order-id>/cancel \
 
 Места держатся за заказом 10 минут. Потом worker переводит заказ в `expired`, а места снова продаются. Новый заказ покупателя на то же событие заменяет прежнюю корзину. В заказе не больше мест, чем лимит билетов на покупателя в карточке события. Если место занято, ответ — `409 seat_taken`. Если во входной зоне не хватает мест — `409 not_enough_seats`.
 
+Оплата и билеты (ADR 012). Карту покупатель вводит только на странице провайдера, платформа карточных данных не видит. В MVP провайдер — мок `fakepsp`: отдельный сервис со своей страницей оплаты и подписанными вебхуками.
+
+```sh
+curl -X POST localhost:8080/v1/orders/<order-id>/payments \
+  -H "Authorization: Bearer <buyer-token>" -H "Idempotency-Key: $(uuidgen)"
+# → {"payment_url": "http://localhost:8090/pay/pay_..."} — открыть в браузере и нажать «Оплатить»
+curl localhost:8080/v1/orders/<order-id>/tickets -H "Authorization: Bearer <buyer-token>"
+# → ссылки на билеты http://localhost:8080/t/<token>: страница с QR-кодом
+```
+
+После оплаты провайдер возвращает покупателя на `/payment/return`, а платформе присылает вебхук. Дальше события идут через outbox и RabbitMQ:
+1. booking помечает заказ оплаченным;
+2. ticket выпускает билеты и пишет письмо со ссылками в лог worker.
+
+Если оплата пришла после конца холда, заказ не восстанавливается, и деньги автоматически возвращаются.
+
 Все изменяющие запросы, кроме входа, требуют заголовок `Idempotency-Key`. Повтор с тем же ключом возвращает прежний ответ и ничего не создаёт заново (ADR 008).
 
 ## Как устроено
 
 ```
 cmd/api/          HTTP-сервер: chi, /healthz, /readyz, graceful shutdown
-cmd/worker/       потребитель RabbitMQ и закрытие просроченных заказов, graceful shutdown
+cmd/worker/       события между модулями (outbox → RabbitMQ), закрытие просроченных заказов
+cmd/fakepsp/      мок платёжного провайдера: страница оплаты, вебхуки, возвраты
 internal/catalog/ организаторы, площадки, схемы залов, события, публичная страница
 internal/booking/ холды мест, заказы, занятость мест
-internal/payment/ платёжный шлюз, вебхуки, возвраты (пока пусто)
-internal/ticket/  QR, валидация, отчёты            (пока пусто)
+internal/payment/ оплата через провайдера, вебхуки, возвраты
+internal/ticket/  выпуск билетов, ссылки с подписью, QR
 internal/identity/ вход по одноразовому коду, сессии
-internal/platform/ общий код: config, db, redis, mq, httpx, observability
+internal/platform/ общий код: config, db, redis, mq, outbox, events, httpx, observability, storage
+internal/fakepsp/ логика мока провайдера (для cmd/fakepsp и тестов)
 migrations/       goose-миграции
 docs/             спецификация и ADR
 web/, loadtest/   фронтенд на Vue и сценарии k6 (появятся позже)

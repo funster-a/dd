@@ -22,19 +22,20 @@ func (q *Queries) CountEventSeats(ctx context.Context, eventID string) (int64, e
 }
 
 const createEvent = `-- name: CreateEvent :one
-INSERT INTO events (organizer_id, venue_id, seat_map_id, slug, title, description, age_rating,
+INSERT INTO events (organizer_id, venue_id, seat_map_id, admission, slug, title, description, age_rating,
                     starts_at, ends_at, sales_start_at, sales_end_at,
                     max_tickets_per_buyer, refund_deadline_hours)
-VALUES ($1, $2, $3, $4, $5, $6, $7,
-        $8, $9, $10, $11,
-        $12, $13)
-RETURNING id, organizer_id, venue_id, seat_map_id, slug, title, description, status, starts_at, ends_at, sales_start_at, sales_end_at, max_tickets_per_buyer, refund_deadline_hours, published_at, cancelled_at, created_at, updated_at, age_rating, cover_image_key, cover_video_key
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+        $9, $10, $11, $12,
+        $13, $14)
+RETURNING id, organizer_id, venue_id, seat_map_id, slug, title, description, status, starts_at, ends_at, sales_start_at, sales_end_at, max_tickets_per_buyer, refund_deadline_hours, published_at, cancelled_at, created_at, updated_at, age_rating, cover_image_key, cover_video_key, admission
 `
 
 type CreateEventParams struct {
 	OrganizerID         string
 	VenueID             string
-	SeatMapID           string
+	SeatMapID           *string
+	Admission           string
 	Slug                string
 	Title               string
 	Description         string
@@ -52,6 +53,7 @@ func (q *Queries) CreateEvent(ctx context.Context, arg CreateEventParams) (Event
 		arg.OrganizerID,
 		arg.VenueID,
 		arg.SeatMapID,
+		arg.Admission,
 		arg.Slug,
 		arg.Title,
 		arg.Description,
@@ -86,6 +88,7 @@ func (q *Queries) CreateEvent(ctx context.Context, arg CreateEventParams) (Event
 		&i.AgeRating,
 		&i.CoverImageKey,
 		&i.CoverVideoKey,
+		&i.Admission,
 	)
 	return i, err
 }
@@ -279,7 +282,7 @@ func (q *Queries) DeleteEventPrices(ctx context.Context, arg DeleteEventPricesPa
 }
 
 const getEvent = `-- name: GetEvent :one
-SELECT id, organizer_id, venue_id, seat_map_id, slug, title, description, status, starts_at, ends_at, sales_start_at, sales_end_at, max_tickets_per_buyer, refund_deadline_hours, published_at, cancelled_at, created_at, updated_at, age_rating, cover_image_key, cover_video_key FROM events WHERE organizer_id = $1 AND id = $2
+SELECT id, organizer_id, venue_id, seat_map_id, slug, title, description, status, starts_at, ends_at, sales_start_at, sales_end_at, max_tickets_per_buyer, refund_deadline_hours, published_at, cancelled_at, created_at, updated_at, age_rating, cover_image_key, cover_video_key, admission FROM events WHERE organizer_id = $1 AND id = $2
 `
 
 type GetEventParams struct {
@@ -312,12 +315,13 @@ func (q *Queries) GetEvent(ctx context.Context, arg GetEventParams) (Event, erro
 		&i.AgeRating,
 		&i.CoverImageKey,
 		&i.CoverVideoKey,
+		&i.Admission,
 	)
 	return i, err
 }
 
 const getEventForUpdate = `-- name: GetEventForUpdate :one
-SELECT id, organizer_id, venue_id, seat_map_id, slug, title, description, status, starts_at, ends_at, sales_start_at, sales_end_at, max_tickets_per_buyer, refund_deadline_hours, published_at, cancelled_at, created_at, updated_at, age_rating, cover_image_key, cover_video_key FROM events WHERE organizer_id = $1 AND id = $2 FOR UPDATE
+SELECT id, organizer_id, venue_id, seat_map_id, slug, title, description, status, starts_at, ends_at, sales_start_at, sales_end_at, max_tickets_per_buyer, refund_deadline_hours, published_at, cancelled_at, created_at, updated_at, age_rating, cover_image_key, cover_video_key, admission FROM events WHERE organizer_id = $1 AND id = $2 FOR UPDATE
 `
 
 type GetEventForUpdateParams struct {
@@ -350,6 +354,7 @@ func (q *Queries) GetEventForUpdate(ctx context.Context, arg GetEventForUpdatePa
 		&i.AgeRating,
 		&i.CoverImageKey,
 		&i.CoverVideoKey,
+		&i.Admission,
 	)
 	return i, err
 }
@@ -366,14 +371,14 @@ func (q *Queries) GetOrganizerSlug(ctx context.Context, id string) (string, erro
 }
 
 const getPublishedEvent = `-- name: GetPublishedEvent :one
-SELECT e.id, e.organizer_id, e.venue_id, e.seat_map_id, e.slug, e.title, e.description, e.status, e.starts_at, e.ends_at, e.sales_start_at, e.sales_end_at, e.max_tickets_per_buyer, e.refund_deadline_hours, e.published_at, e.cancelled_at, e.created_at, e.updated_at, e.age_rating, e.cover_image_key, e.cover_video_key, o.slug AS organizer_slug, o.name AS organizer_name,
+SELECT e.id, e.organizer_id, e.venue_id, e.seat_map_id, e.slug, e.title, e.description, e.status, e.starts_at, e.ends_at, e.sales_start_at, e.sales_end_at, e.max_tickets_per_buyer, e.refund_deadline_hours, e.published_at, e.cancelled_at, e.created_at, e.updated_at, e.age_rating, e.cover_image_key, e.cover_video_key, e.admission, o.slug AS organizer_slug, o.name AS organizer_name,
        v.name AS venue_name, v.address AS venue_address, v.timezone AS venue_timezone,
        v.latitude AS venue_latitude, v.longitude AS venue_longitude,
        m.layout AS seat_map_layout
 FROM events e
 JOIN organizers o ON o.id = e.organizer_id
 JOIN venues v ON v.id = e.venue_id
-JOIN seat_maps m ON m.id = e.seat_map_id
+LEFT JOIN seat_maps m ON m.id = e.seat_map_id
 WHERE o.slug = $1 AND e.slug = $2 AND e.status = 'published'
 `
 
@@ -386,7 +391,7 @@ type GetPublishedEventRow struct {
 	ID                  string
 	OrganizerID         string
 	VenueID             string
-	SeatMapID           string
+	SeatMapID           *string
 	Slug                string
 	Title               string
 	Description         string
@@ -404,6 +409,7 @@ type GetPublishedEventRow struct {
 	AgeRating           string
 	CoverImageKey       *string
 	CoverVideoKey       *string
+	Admission           string
 	OrganizerSlug       string
 	OrganizerName       string
 	VenueName           string
@@ -440,6 +446,7 @@ func (q *Queries) GetPublishedEvent(ctx context.Context, arg GetPublishedEventPa
 		&i.AgeRating,
 		&i.CoverImageKey,
 		&i.CoverVideoKey,
+		&i.Admission,
 		&i.OrganizerSlug,
 		&i.OrganizerName,
 		&i.VenueName,
@@ -515,7 +522,7 @@ type InsertEventSeatsParams struct {
 }
 
 const listEvents = `-- name: ListEvents :many
-SELECT id, organizer_id, venue_id, seat_map_id, slug, title, description, status, starts_at, ends_at, sales_start_at, sales_end_at, max_tickets_per_buyer, refund_deadline_hours, published_at, cancelled_at, created_at, updated_at, age_rating, cover_image_key, cover_video_key FROM events WHERE organizer_id = $1 ORDER BY starts_at DESC, id
+SELECT id, organizer_id, venue_id, seat_map_id, slug, title, description, status, starts_at, ends_at, sales_start_at, sales_end_at, max_tickets_per_buyer, refund_deadline_hours, published_at, cancelled_at, created_at, updated_at, age_rating, cover_image_key, cover_video_key, admission FROM events WHERE organizer_id = $1 ORDER BY starts_at DESC, id
 `
 
 func (q *Queries) ListEvents(ctx context.Context, organizerID string) ([]Event, error) {
@@ -549,6 +556,7 @@ func (q *Queries) ListEvents(ctx context.Context, organizerID string) ([]Event, 
 			&i.AgeRating,
 			&i.CoverImageKey,
 			&i.CoverVideoKey,
+			&i.Admission,
 		); err != nil {
 			return nil, err
 		}
@@ -769,7 +777,7 @@ const setEventMedia = `-- name: SetEventMedia :one
 UPDATE events
 SET cover_image_key = $1, cover_video_key = $2, updated_at = now()
 WHERE organizer_id = $3 AND id = $4 AND status <> 'cancelled'
-RETURNING id, organizer_id, venue_id, seat_map_id, slug, title, description, status, starts_at, ends_at, sales_start_at, sales_end_at, max_tickets_per_buyer, refund_deadline_hours, published_at, cancelled_at, created_at, updated_at, age_rating, cover_image_key, cover_video_key
+RETURNING id, organizer_id, venue_id, seat_map_id, slug, title, description, status, starts_at, ends_at, sales_start_at, sales_end_at, max_tickets_per_buyer, refund_deadline_hours, published_at, cancelled_at, created_at, updated_at, age_rating, cover_image_key, cover_video_key, admission
 `
 
 type SetEventMediaParams struct {
@@ -809,25 +817,27 @@ func (q *Queries) SetEventMedia(ctx context.Context, arg SetEventMediaParams) (E
 		&i.AgeRating,
 		&i.CoverImageKey,
 		&i.CoverVideoKey,
+		&i.Admission,
 	)
 	return i, err
 }
 
 const updateDraftEvent = `-- name: UpdateDraftEvent :one
 UPDATE events
-SET venue_id = $1, seat_map_id = $2, slug = $3, title = $4,
-    description = $5, age_rating = $6,
-    starts_at = $7, ends_at = $8,
-    sales_start_at = $9, sales_end_at = $10,
-    max_tickets_per_buyer = $11, refund_deadline_hours = $12,
+SET venue_id = $1, seat_map_id = $2, admission = $3, slug = $4, title = $5,
+    description = $6, age_rating = $7,
+    starts_at = $8, ends_at = $9,
+    sales_start_at = $10, sales_end_at = $11,
+    max_tickets_per_buyer = $12, refund_deadline_hours = $13,
     updated_at = now()
-WHERE organizer_id = $13 AND id = $14 AND status = 'draft'
-RETURNING id, organizer_id, venue_id, seat_map_id, slug, title, description, status, starts_at, ends_at, sales_start_at, sales_end_at, max_tickets_per_buyer, refund_deadline_hours, published_at, cancelled_at, created_at, updated_at, age_rating, cover_image_key, cover_video_key
+WHERE organizer_id = $14 AND id = $15 AND status = 'draft'
+RETURNING id, organizer_id, venue_id, seat_map_id, slug, title, description, status, starts_at, ends_at, sales_start_at, sales_end_at, max_tickets_per_buyer, refund_deadline_hours, published_at, cancelled_at, created_at, updated_at, age_rating, cover_image_key, cover_video_key, admission
 `
 
 type UpdateDraftEventParams struct {
 	VenueID             string
-	SeatMapID           string
+	SeatMapID           *string
+	Admission           string
 	Slug                string
 	Title               string
 	Description         string
@@ -847,6 +857,7 @@ func (q *Queries) UpdateDraftEvent(ctx context.Context, arg UpdateDraftEventPara
 	row := q.db.QueryRow(ctx, updateDraftEvent,
 		arg.VenueID,
 		arg.SeatMapID,
+		arg.Admission,
 		arg.Slug,
 		arg.Title,
 		arg.Description,
@@ -883,6 +894,7 @@ func (q *Queries) UpdateDraftEvent(ctx context.Context, arg UpdateDraftEventPara
 		&i.AgeRating,
 		&i.CoverImageKey,
 		&i.CoverVideoKey,
+		&i.Admission,
 	)
 	return i, err
 }

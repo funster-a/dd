@@ -466,3 +466,13 @@ func TestExpiry(t *testing.T) {
 	})
 	e.checkNoDoubleBooking(t)
 }
+
+// На событие со свободным входом билеты не продаются.
+func TestFreeEntryEventHasNoOrders(t *testing.T) {
+	e := newEnv(t, false, 0, 0, 0)
+	e.exec(t, `UPDATE events SET admission = 'free_entry', seat_map_id = NULL WHERE id = $1`, e.eventID)
+	_, err := e.svc.CreateOrder(t.Context(), e.buyer(t), e.eventID, generalReq(1), time.Now())
+	if pe, ok := errors.AsType[*PreconditionError](err); !ok || pe.Code != "free_entry" {
+		t.Errorf("err = %v, want free_entry", err)
+	}
+}

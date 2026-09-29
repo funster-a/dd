@@ -50,10 +50,10 @@ WHERE organizer_id = @organizer_id AND venue_id = @venue_id
 ORDER BY name, id;
 
 -- name: CreateEvent :one
-INSERT INTO events (organizer_id, venue_id, seat_map_id, slug, title, description, age_rating,
+INSERT INTO events (organizer_id, venue_id, seat_map_id, admission, slug, title, description, age_rating,
                     starts_at, ends_at, sales_start_at, sales_end_at,
                     max_tickets_per_buyer, refund_deadline_hours)
-VALUES (@organizer_id, @venue_id, @seat_map_id, @slug, @title, @description, @age_rating,
+VALUES (@organizer_id, @venue_id, @seat_map_id, @admission, @slug, @title, @description, @age_rating,
         @starts_at, @ends_at, @sales_start_at, @sales_end_at,
         @max_tickets_per_buyer, @refund_deadline_hours)
 RETURNING *;
@@ -61,7 +61,7 @@ RETURNING *;
 -- name: UpdateDraftEvent :one
 -- Черновик меняется целиком; опубликованное событие этим запросом не меняется.
 UPDATE events
-SET venue_id = @venue_id, seat_map_id = @seat_map_id, slug = @slug, title = @title,
+SET venue_id = @venue_id, seat_map_id = @seat_map_id, admission = @admission, slug = @slug, title = @title,
     description = @description, age_rating = @age_rating,
     starts_at = @starts_at, ends_at = @ends_at,
     sales_start_at = @sales_start_at, sales_end_at = @sales_end_at,
@@ -125,7 +125,7 @@ SELECT e.*, o.slug AS organizer_slug, o.name AS organizer_name,
 FROM events e
 JOIN organizers o ON o.id = e.organizer_id
 JOIN venues v ON v.id = e.venue_id
-JOIN seat_maps m ON m.id = e.seat_map_id
+LEFT JOIN seat_maps m ON m.id = e.seat_map_id
 WHERE o.slug = @organizer_slug AND e.slug = @event_slug AND e.status = 'published';
 
 -- name: GetOrganizerSlug :one

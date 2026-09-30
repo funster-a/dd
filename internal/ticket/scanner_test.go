@@ -363,6 +363,15 @@ func TestScannerHTTP(t *testing.T) {
 	if code, body := do(http.MethodGet, "/v1/organizer/events/"+e.event+"/scanners", map[string]string{"X-Test-Org": e.org}, nil); code != http.StatusOK || bytes.Contains(body, []byte(sc.Token)) {
 		t.Errorf("list = %d %s", code, body)
 	}
+	if code, body := do(http.MethodGet, "/v1/organizer/events/"+e.event+"/report", map[string]string{"X-Test-Org": e.org}, nil); code != http.StatusOK || !bytes.Contains(body, []byte(`"used":1`)) {
+		t.Errorf("report = %d %s", code, body)
+	}
+	if code, body := do(http.MethodGet, "/v1/organizer/events/"+e.event+"/report/tickets.csv", map[string]string{"X-Test-Org": e.org}, nil); code != http.StatusOK || !bytes.Contains(body, []byte("прошёл")) {
+		t.Errorf("csv = %d %s", code, body)
+	}
+	if code, _ := do(http.MethodGet, "/v1/organizer/events/"+e.event+"/report/tickets.csv", map[string]string{"X-Test-Org": uuid.NewString()}, nil); code != http.StatusNotFound {
+		t.Errorf("csv of another organizer = %d, want 404", code)
+	}
 	if code, _ := do(http.MethodDelete, "/v1/organizer/scanners/"+sc.ID, map[string]string{"X-Test-Org": e.org}, nil); code != http.StatusNoContent {
 		t.Errorf("revoke = %d", code)
 	}

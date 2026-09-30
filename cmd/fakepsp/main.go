@@ -51,6 +51,7 @@ func run(addr string, log *slog.Logger) error {
 		PublicURL:     getenv("FAKEPSP_PUBLIC_URL", "http://localhost:8090"),
 		APIKey:        getenv("PSP_API_KEY", "dev-psp-api-key"),
 		WebhookSecret: getenv("PSP_WEBHOOK_SECRET", "dev-psp-webhook-secret"),
+		StateFile:     os.Getenv("FAKEPSP_STATE_FILE"),
 		Log:           log,
 	})
 	srv := &http.Server{Addr: addr, Handler: psp.Handler(), ReadHeaderTimeout: 5 * time.Second}

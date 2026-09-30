@@ -6,7 +6,8 @@
 //
 // Карточных данных здесь нет вообще: на странице оплаты только кнопки
 // «Оплатить» и «Отказать» (CLAUDE.md, правило 7). Состояние хранится в
-// памяти и теряется при перезапуске — это мок, а не хранилище денег.
+// памяти и, если задан StateFile, в JSON-файле: как настоящий провайдер,
+// мок помнит платежи после перезапуска и может вернуть по ним деньги.
 package fakepsp
 
 import (
@@ -22,6 +23,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -39,6 +41,8 @@ type Config struct {
 	RetryDelays []time.Duration
 	Client      *http.Client
 	Log         *slog.Logger
+	// StateFile — файл состояния; пусто — только память.
+	StateFile string
 }
 
 // Server — мок провайдера.
@@ -97,7 +101,73 @@ func New(cfg Config) *Server {
 		cfg.RetryDelays = []time.Duration{time.Second, 2 * time.Second, 5 * time.Second, 10 * time.Second, 30 * time.Second}
 	}
 	cfg.PublicURL = strings.TrimRight(cfg.PublicURL, "/")
-	return &Server{cfg: cfg, payments: map[string]*Payment{}, byMerch: map[string]string{}, refunds: map[string]*Refund{}}
+	s := &Server{cfg: cfg, payments: map[string]*Payment{}, byMerch: map[string]string{}, refunds: map[string]*Refund{}}
+	s.load()
+	return s
+}
+
+// storedPayment — платёж в файле состояния вместе со служебными полями.
+type storedPayment struct {
+	Payment
+	ReturnURL   string `json:"return_url"`
+	CallbackURL string `json:"callback_url"`
+	Refunded    int64  `json:"refunded"`
+}
+
+type state struct {
+	Payments []storedPayment `json:"payments"`
+	Refunds  []*Refund       `json:"refunds"`
+}
+
+func (s *Server) load() {
+	if s.cfg.StateFile == "" {
+		return
+	}
+	b, err := os.ReadFile(s.cfg.StateFile)
+	if errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	var st state
+	if err == nil {
+		err = json.Unmarshal(b, &st)
+	}
+	if err != nil {
+		s.cfg.Log.Error("load fakepsp state, starting empty", slog.Any("error", err))
+		return
+	}
+	for _, sp := range st.Payments {
+		p := sp.Payment
+		p.returnURL, p.callbackURL, p.refunded = sp.ReturnURL, sp.CallbackURL, sp.Refunded
+		s.payments[p.ID] = &p
+		s.byMerch[p.MerchantPaymentID] = p.ID
+	}
+	for _, rf := range st.Refunds {
+		s.refunds[rf.MerchantRefundID] = rf
+	}
+}
+
+// save пишет состояние атомарно (временный файл и rename). Вызывается под s.mu.
+func (s *Server) save() {
+	if s.cfg.StateFile == "" {
+		return
+	}
+	var st state
+	for _, p := range s.payments {
+		st.Payments = append(st.Payments, storedPayment{Payment: *p, ReturnURL: p.returnURL, CallbackURL: p.callbackURL, Refunded: p.refunded})
+	}
+	for _, rf := range s.refunds {
+		st.Refunds = append(st.Refunds, rf)
+	}
+	b, err := json.Marshal(st)
+	if err == nil {
+		tmp := s.cfg.StateFile + ".tmp"
+		if err = os.WriteFile(tmp, b, 0o600); err == nil {
+			err = os.Rename(tmp, s.cfg.StateFile)
+		}
+	}
+	if err != nil {
+		s.cfg.Log.Error("save fakepsp state", slog.Any("error", err))
+	}
 }
 
 // Sign — подпись тела уведомления: заголовок X-Signature: sha256=<hex>.
@@ -167,6 +237,7 @@ func (s *Server) handleCreatePayment(w http.ResponseWriter, r *http.Request) {
 	}
 	s.payments[id] = p
 	s.byMerch[req.MerchantPaymentID] = id
+	s.save()
 	writeJSON(w, http.StatusCreated, p)
 }
 
@@ -216,6 +287,7 @@ func (s *Server) handleCreateRefund(w http.ResponseWriter, r *http.Request) {
 	p.refunded += req.Amount
 	rf := &Refund{ID: "rf_" + randomID(), MerchantRefundID: req.MerchantRefundID, PaymentID: p.ID, Amount: req.Amount, Status: "succeeded"}
 	s.refunds[req.MerchantRefundID] = rf
+	s.save()
 	writeJSON(w, http.StatusCreated, rf)
 }
 
@@ -294,6 +366,7 @@ func (s *Server) Decide(ctx context.Context, id, action string) (Event, string, 
 	}
 	ev := Event{ID: "evt_" + randomID(), Type: "payment." + p.Status, Payment: *p, CreatedAt: time.Now().UTC()}
 	callback, returnURL := p.callbackURL, p.returnURL
+	s.save()
 	s.mu.Unlock()
 
 	body, _ := json.Marshal(ev)

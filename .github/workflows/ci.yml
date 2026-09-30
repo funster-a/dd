@@ -164,6 +164,9 @@ jobs:
         run: |
           curl -fsS http://127.0.0.1:8000/ | grep -q '<div id="app">'
           curl -fsS http://127.0.0.1:8000/e/some-org/some-event | grep -q '<div id="app">'
+          curl -fsS http://127.0.0.1:8000/org/login | grep -q '<div id="app">'
+          curl -fsS http://127.0.0.1:8000/sw.js | grep -q 'dd-scanner'
+          curl -fsS http://127.0.0.1:8000/scanner.webmanifest | grep -q '"start_url": "/scan"'
           curl -fsS http://127.0.0.1:8000/v1/public/events
           curl -fsSI http://127.0.0.1:8000/ | grep -qi 'content-security-policy'
       - name: worker consumes the test queue

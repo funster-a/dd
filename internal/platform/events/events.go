@@ -13,8 +13,12 @@ const (
 	PaymentSucceeded = "payment.succeeded"
 	// OrderPaid — заказ оплачен, места проданы. booking → ticket.
 	OrderPaid = "order.paid"
-	// RefundRequested — деньги нужно вернуть. booking → payment.
+	// RefundRequested — деньги нужно вернуть. booking, ticket → payment.
 	RefundRequested = "refund.requested"
+	// OrderRefunded — деньги за билеты вернулись. payment, ticket → booking.
+	OrderRefunded = "order.refunded"
+	// EventCancelled — организатор отменил событие. catalog → ticket.
+	EventCancelled = "event.cancelled"
 )
 
 // PaymentSucceededEvent — содержимое PaymentSucceeded.
@@ -34,12 +38,32 @@ type OrderPaidEvent struct {
 
 // Причины возврата (совпадают с refunds.reason).
 const (
-	RefundLatePayment = "late_payment"
+	RefundLatePayment    = "late_payment"
+	RefundBuyerRequest   = "buyer_request"
+	RefundEventCancelled = "event_cancelled"
 )
 
-// RefundRequestedEvent — содержимое RefundRequested.
+// RefundRequestedEvent — содержимое RefundRequested. Без TicketIDs это
+// возврат всего платежа за неоформленный заказ (опоздавшая оплата); с
+// ними — возврат стоимости этих билетов оплаченного заказа.
 type RefundRequestedEvent struct {
-	PaymentID string `json:"payment_id"`
-	OrderID   string `json:"order_id"`
-	Reason    string `json:"reason"`
+	// RequestID — ключ идемпотентности возврата билетов.
+	RequestID string `json:"request_id,omitempty"`
+	// PaymentID — платёж; для возврата билетов платёж находится по заказу.
+	PaymentID  string   `json:"payment_id,omitempty"`
+	OrderID    string   `json:"order_id"`
+	Reason     string   `json:"reason"`
+	TicketIDs  []string `json:"ticket_ids,omitempty"`
+	AmountTiyn int64    `json:"amount_tiyn,omitempty"`
+}
+
+// OrderRefundedEvent — содержимое OrderRefunded.
+type OrderRefundedEvent struct {
+	OrderID   string   `json:"order_id"`
+	TicketIDs []string `json:"ticket_ids"`
+}
+
+// EventCancelledEvent — содержимое EventCancelled.
+type EventCancelledEvent struct {
+	EventID string `json:"event_id"`
 }

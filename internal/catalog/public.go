@@ -32,7 +32,9 @@ type PublicEvent struct {
 	// ID — идентификатор для бронирования и занятости мест (модуль booking).
 	ID string `json:"id"`
 	// Admission — ticketed или free_entry (свободный вход, билеты не нужны).
-	Admission           string          `json:"admission"`
+	Admission string `json:"admission"`
+	// Status — published или cancelled (событие отменено после публикации).
+	Status              string          `json:"status"`
 	OrganizerSlug       string          `json:"organizer_slug"`
 	OrganizerName       string          `json:"organizer_name"`
 	Slug                string          `json:"slug"`
@@ -116,6 +118,7 @@ func (s *Service) buildPublicEvent(ctx context.Context, organizerSlug, eventSlug
 	pe := PublicEvent{
 		ID:            e.ID,
 		Admission:     e.Admission,
+		Status:        e.Status,
 		OrganizerSlug: e.OrganizerSlug, OrganizerName: e.OrganizerName,
 		Slug: e.Slug, Title: e.Title, Description: e.Description, AgeRating: e.AgeRating,
 		StartsAt: e.StartsAt, EndsAt: e.EndsAt, SalesStartAt: e.SalesStartAt, SalesEndAt: e.SalesEndAt,

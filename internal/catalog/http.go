@@ -76,6 +76,7 @@ func (s *Service) OrganizerRoutes(extra ...func(chi.Router)) http.Handler {
 	r.With(idem).Post("/events/{eventID}/media/uploads", s.handleCreateUpload)
 	r.With(idem).Put("/events/{eventID}/media", s.handleSetMedia)
 	r.With(idem).Post("/events/{eventID}/publish", s.handlePublish)
+	r.With(idem).Post("/events/{eventID}/cancel", s.handleCancel)
 	return r
 }
 
@@ -159,6 +160,14 @@ func (s *Service) handleSetMedia(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	e, err := s.SetMedia(r.Context(), organizerID(r), chi.URLParam(r, "eventID"), in)
+	if writeError(w, r, err) {
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, e)
+}
+
+func (s *Service) handleCancel(w http.ResponseWriter, r *http.Request) {
+	e, err := s.CancelEvent(r.Context(), organizerID(r), chi.URLParam(r, "eventID"))
 	if writeError(w, r, err) {
 		return
 	}

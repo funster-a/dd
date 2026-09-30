@@ -10,6 +10,48 @@ import (
 	"time"
 )
 
+const cancelEvent = `-- name: CancelEvent :one
+UPDATE events SET status = 'cancelled', cancelled_at = now(), updated_at = now()
+WHERE organizer_id = $1 AND id = $2 AND status <> 'cancelled'
+RETURNING id, organizer_id, venue_id, seat_map_id, slug, title, description, status, starts_at, ends_at, sales_start_at, sales_end_at, max_tickets_per_buyer, refund_deadline_hours, published_at, cancelled_at, created_at, updated_at, age_rating, cover_image_key, cover_video_key, admission
+`
+
+type CancelEventParams struct {
+	OrganizerID string
+	ID          string
+}
+
+// Отмена события: опубликованное или черновик. Отменённое не меняется.
+func (q *Queries) CancelEvent(ctx context.Context, arg CancelEventParams) (Event, error) {
+	row := q.db.QueryRow(ctx, cancelEvent, arg.OrganizerID, arg.ID)
+	var i Event
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizerID,
+		&i.VenueID,
+		&i.SeatMapID,
+		&i.Slug,
+		&i.Title,
+		&i.Description,
+		&i.Status,
+		&i.StartsAt,
+		&i.EndsAt,
+		&i.SalesStartAt,
+		&i.SalesEndAt,
+		&i.MaxTicketsPerBuyer,
+		&i.RefundDeadlineHours,
+		&i.PublishedAt,
+		&i.CancelledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AgeRating,
+		&i.CoverImageKey,
+		&i.CoverVideoKey,
+		&i.Admission,
+	)
+	return i, err
+}
+
 const countEventSeats = `-- name: CountEventSeats :one
 SELECT count(*) FROM event_seats WHERE event_id = $1
 `
@@ -379,7 +421,7 @@ FROM events e
 JOIN organizers o ON o.id = e.organizer_id
 JOIN venues v ON v.id = e.venue_id
 LEFT JOIN seat_maps m ON m.id = e.seat_map_id
-WHERE o.slug = $1 AND e.slug = $2 AND e.status = 'published'
+WHERE o.slug = $1 AND e.slug = $2 AND e.status IN ('published', 'cancelled')
 `
 
 type GetPublishedEventParams struct {
@@ -420,7 +462,8 @@ type GetPublishedEventRow struct {
 	SeatMapLayout       []byte
 }
 
-// Публичная страница: только опубликованные события.
+// Публичная страница: опубликованные события и отменённые после публикации
+// (покупатель по старой ссылке видит, что событие отменено).
 func (q *Queries) GetPublishedEvent(ctx context.Context, arg GetPublishedEventParams) (GetPublishedEventRow, error) {
 	row := q.db.QueryRow(ctx, getPublishedEvent, arg.OrganizerSlug, arg.EventSlug)
 	var i GetPublishedEventRow

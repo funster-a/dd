@@ -98,6 +98,23 @@ func (s *Service) CreateOrganizer(ctx context.Context, in NewOrganizer) (Organiz
 	return org, nil
 }
 
+// Profile — организатор из сессии кабинета: название и slug для публичных
+// ссылок /e/{slug}/{событие}.
+type Profile struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Slug string `json:"slug"`
+}
+
+// GetProfile возвращает профиль организатора.
+func (s *Service) GetProfile(ctx context.Context, organizerID string) (Profile, error) {
+	p, err := s.q.GetOrganizerProfile(ctx, organizerID)
+	if err != nil {
+		return Profile{}, notFound(err, "get organizer profile")
+	}
+	return Profile{ID: p.ID, Name: p.Name, Slug: p.Slug}, nil
+}
+
 // ListOrganizers возвращает организаторов для админки, новые сверху.
 func (s *Service) ListOrganizers(ctx context.Context) ([]Organizer, error) {
 	const pageSize = 100

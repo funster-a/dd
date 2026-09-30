@@ -100,4 +100,11 @@ func TestOrganizerHTTP(t *testing.T) {
 	if code, _ := do(http.MethodGet, "/venues/"+venue.ID, "organizer", a, "", nil); code != http.StatusOK {
 		t.Errorf("GET own venue: code = %d, want 200", code)
 	}
+
+	// Профиль — только свой: организатор берётся из сессии.
+	code, data = do(http.MethodGet, "/profile", "organizer", a, "", nil)
+	var prof Profile
+	if code != http.StatusOK || json.Unmarshal(data, &prof) != nil || prof.ID != a || prof.Slug == "" || prof.Name == "" {
+		t.Errorf("profile: code = %d, body %s", code, data)
+	}
 }

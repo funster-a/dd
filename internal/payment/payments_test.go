@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/funster-a/dd/internal/fakepsp"
 	"github.com/funster-a/dd/internal/platform/events"
@@ -320,5 +323,84 @@ func TestWebhookHTTP(t *testing.T) {
 	}
 	if code := post(fakepsp.Sign(secret, body)); code != http.StatusNoContent {
 		t.Errorf("repeat = %d, want 204", code)
+	}
+}
+
+// ticketsOf создаёт n билетов заказа по price тиын: возврат ссылается на
+// конкретные билеты (refund_items).
+func (e *env) ticketsOf(t *testing.T, orderID string, n int, price int64) []string {
+	t.Helper()
+	ctx := t.Context()
+	var org, event string
+	if err := e.db.Pool.QueryRow(ctx, `SELECT organizer_id, event_id FROM orders WHERE id = $1`, orderID).Scan(&org, &event); err != nil {
+		t.Fatal(err)
+	}
+	var cat string
+	if err := e.db.Pool.QueryRow(ctx, `INSERT INTO price_categories (organizer_id, event_id, name, price_tiyn)
+		VALUES ($1, $2, 'cat-' || gen_random_uuid(), $3) RETURNING id`, org, event, price).Scan(&cat); err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for i := range n {
+		var seat, item, ticket string
+		if err := e.db.Pool.QueryRow(ctx, `INSERT INTO event_seats (organizer_id, event_id, price_category_id, kind, section, row_label, seat_label, status)
+			VALUES ($1, $2, $3, 'seat', $4, '1', $5, 'sold') RETURNING id`, org, event, cat, cat, strconv.Itoa(i+1)).Scan(&seat); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.db.Pool.QueryRow(ctx, `INSERT INTO order_items (organizer_id, event_id, order_id, event_seat_id, price_tiyn)
+			VALUES ($1, $2, $3, $4, $5) RETURNING id`, org, event, orderID, seat, price).Scan(&item); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.db.Pool.QueryRow(ctx, `INSERT INTO tickets (organizer_id, event_id, order_id, order_item_id, event_seat_id)
+			VALUES ($1, $2, $3, $4, $5) RETURNING id`, org, event, orderID, item, seat).Scan(&ticket); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, ticket)
+	}
+	return ids
+}
+
+func TestRefundTickets(t *testing.T) {
+	e := newEnv(t)
+	ctx := t.Context()
+	order, buyer := e.order(t, "pending", 10*time.Minute)
+	p, err := e.svc.StartPayment(ctx, buyer, order, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := e.psp.Decide(ctx, providerID(p), fakepsp.ActionSucceed); err != nil {
+		t.Fatal(err)
+	}
+	tickets := e.ticketsOf(t, order, 2, total/2)
+
+	ev := events.RefundRequestedEvent{
+		RequestID: uuid.NewString(), OrderID: order, Reason: events.RefundBuyerRequest,
+		TicketIDs: tickets[:1], AmountTiyn: total / 2,
+	}
+	for range 3 { // повторная доставка
+		if err := e.svc.Refund(ctx, ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := e.psp.Refunded(providerID(p)); got != total/2 {
+		t.Errorf("refunded = %d, want %d", got, total/2)
+	}
+	if n := e.count(t, `SELECT count(*) FROM outbox WHERE topic = $1`, events.OrderRefunded); n != 1 {
+		t.Errorf("order.refunded events = %d, want 1", n)
+	}
+	if n := e.count(t, `SELECT count(*) FROM refund_items`); n != 1 {
+		t.Errorf("refund items = %d, want 1", n)
+	}
+
+	// Возврат сверх суммы платежа не проходит и ничего не записывает.
+	over := events.RefundRequestedEvent{
+		RequestID: uuid.NewString(), OrderID: order, Reason: events.RefundBuyerRequest,
+		TicketIDs: tickets[1:], AmountTiyn: total,
+	}
+	if err := e.svc.Refund(ctx, over); err == nil {
+		t.Error("refund above the payment amount was accepted")
+	}
+	if got := e.psp.Refunded(providerID(p)); got != total/2 {
+		t.Errorf("refunded after an excessive request = %d", got)
 	}
 }

@@ -92,3 +92,80 @@ UPDATE ticket_scans SET result = 'duplicate' WHERE ticket_id = @ticket_id AND re
 -- name: InsertScan :exec
 INSERT INTO ticket_scans (organizer_id, ticket_id, device_id, scanned_at, result, scanner_link_id, client_scan_id)
 VALUES (@organizer_id, @ticket_id, @device_id, @scanned_at, @result, @scanner_link_id, @client_scan_id);
+
+-- Возвраты (ADR 014).
+
+-- name: GetRefundContext :one
+SELECT o.buyer_id, o.status, e.status AS event_status, e.starts_at, e.refund_deadline_hours
+FROM orders o JOIN events e ON e.id = o.event_id
+WHERE o.id = @order_id;
+
+-- name: LockOrderTickets :many
+-- Билеты заказа под блокировкой: сканирование и возврат одного билета
+-- выполняются по очереди.
+SELECT t.id, t.status, i.price_tiyn
+FROM tickets t JOIN order_items i ON i.id = t.order_item_id
+WHERE t.order_id = @order_id AND t.id = ANY(@ids::uuid[])
+ORDER BY t.id
+FOR UPDATE OF t;
+
+-- name: RevokeTickets :exec
+UPDATE tickets SET status = 'revoked', revoked_at = now()
+WHERE id = ANY(@ids::uuid[]) AND status = 'issued';
+
+-- name: LockEventTicketsForCancel :many
+-- Все действующие билеты отменённого события.
+SELECT t.id, t.order_id, t.status, i.price_tiyn
+FROM tickets t JOIN order_items i ON i.id = t.order_item_id
+WHERE t.event_id = @event_id AND t.status IN ('issued', 'used')
+ORDER BY t.order_id, t.id
+FOR UPDATE OF t;
+
+-- Отчёты организатора (ADR 014).
+
+-- name: ReportEvent :one
+SELECT id, title, status, admission, starts_at FROM events WHERE organizer_id = @organizer_id AND id = @id;
+
+-- name: ReportSeats :one
+SELECT count(*)::int AS capacity,
+       count(*) FILTER (WHERE status = 'sold')::int AS sold,
+       count(*) FILTER (WHERE status = 'held' AND hold_expires_at > @now::timestamptz)::int AS held
+FROM event_seats WHERE event_id = @event_id;
+
+-- name: ReportTickets :one
+SELECT count(*) FILTER (WHERE status IN ('issued', 'used'))::int AS active,
+       count(*) FILTER (WHERE status = 'used')::int AS used,
+       count(*) FILTER (WHERE status = 'revoked')::int AS revoked
+FROM tickets WHERE event_id = @event_id;
+
+-- name: ReportMoney :one
+SELECT
+    (SELECT coalesce(sum(total_tiyn), 0) FROM orders o WHERE o.event_id = @event_id AND o.paid_at IS NOT NULL)::bigint AS gross,
+    (SELECT count(*) FROM orders o WHERE o.event_id = @event_id AND o.paid_at IS NOT NULL)::int AS paid_orders,
+    (SELECT coalesce(sum(r.amount_tiyn), 0) FROM refunds r JOIN orders o ON o.id = r.order_id
+      WHERE o.event_id = @event_id AND r.status = 'succeeded' AND o.paid_at IS NOT NULL)::bigint AS refunded;
+
+-- name: ReportCategories :many
+-- Продажи по ценовым категориям: действующие билеты по цене на момент покупки.
+SELECT pc.name, pc.price_tiyn,
+       count(s.id)::int AS capacity,
+       count(t.id)::int AS sold,
+       coalesce(sum(i.price_tiyn), 0)::bigint AS revenue
+FROM price_categories pc
+LEFT JOIN event_seats s ON s.price_category_id = pc.id
+LEFT JOIN tickets t ON t.event_seat_id = s.id AND t.status IN ('issued', 'used')
+LEFT JOIN order_items i ON i.id = t.order_item_id
+WHERE pc.event_id = @event_id
+GROUP BY pc.id, pc.name, pc.price_tiyn
+ORDER BY pc.price_tiyn DESC, pc.name;
+
+-- name: ExportTickets :many
+SELECT t.id, s.section, s.row_label, s.seat_label, pc.name AS category, i.price_tiyn,
+       t.status, t.order_id, o.email, t.issued_at, t.used_at
+FROM tickets t
+JOIN event_seats s ON s.id = t.event_seat_id
+JOIN price_categories pc ON pc.id = s.price_category_id
+JOIN order_items i ON i.id = t.order_item_id
+JOIN orders o ON o.id = t.order_id
+WHERE t.event_id = @event_id
+ORDER BY s.section, s.row_label, s.seat_label, t.issued_at;

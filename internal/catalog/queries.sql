@@ -117,7 +117,8 @@ VALUES (@organizer_id, @event_id, @price_category_id, @kind, @section, @row_labe
 SELECT count(*) FROM event_seats WHERE event_id = @event_id;
 
 -- name: GetPublishedEvent :one
--- Публичная страница: только опубликованные события.
+-- Публичная страница: опубликованные события и отменённые после публикации
+-- (покупатель по старой ссылке видит, что событие отменено).
 SELECT e.*, o.slug AS organizer_slug, o.name AS organizer_name,
        v.name AS venue_name, v.address AS venue_address, v.timezone AS venue_timezone,
        v.latitude AS venue_latitude, v.longitude AS venue_longitude,
@@ -126,7 +127,13 @@ FROM events e
 JOIN organizers o ON o.id = e.organizer_id
 JOIN venues v ON v.id = e.venue_id
 LEFT JOIN seat_maps m ON m.id = e.seat_map_id
-WHERE o.slug = @organizer_slug AND e.slug = @event_slug AND e.status = 'published';
+WHERE o.slug = @organizer_slug AND e.slug = @event_slug AND e.status IN ('published', 'cancelled');
 
 -- name: GetOrganizerSlug :one
 SELECT slug FROM organizers WHERE id = @id;
+
+-- name: CancelEvent :one
+-- Отмена события: опубликованное или черновик. Отменённое не меняется.
+UPDATE events SET status = 'cancelled', cancelled_at = now(), updated_at = now()
+WHERE organizer_id = @organizer_id AND id = @id AND status <> 'cancelled'
+RETURNING *;

@@ -68,6 +68,8 @@ func run() error {
 		subscribe(cfg.QueuePrefix, events.PaymentSucceeded, log, book.ConfirmPayment),
 		subscribe(cfg.QueuePrefix, events.OrderPaid, log, tickets.Issue),
 		subscribe(cfg.QueuePrefix, events.RefundRequested, log, pay.Refund),
+		subscribe(cfg.QueuePrefix, events.OrderRefunded, log, book.ApplyRefund),
+		subscribe(cfg.QueuePrefix, events.EventCancelled, log, tickets.HandleEventCancelled),
 	}
 
 	var tasks sync.WaitGroup

@@ -145,3 +145,45 @@ LEFT JOIN tickets t ON t.order_item_id = i.id
 WHERE o.buyer_id = @buyer_id AND o.event_id = @event_id
   AND o.status IN ('paid', 'partially_refunded')
   AND (t.id IS NULL OR t.status <> 'revoked');
+
+-- name: ReleaseRefundedSeats :many
+-- Места возвращённых билетов снова продаются. Возвращает места, чтобы
+-- снять их ключи холдов в Redis.
+UPDATE event_seats s SET status = 'available', hold_order_id = NULL, hold_expires_at = NULL
+FROM tickets t
+WHERE t.id = ANY(@ticket_ids::uuid[]) AND s.id = t.event_seat_id AND s.status = 'sold'
+RETURNING s.id, s.kind, s.section, s.row_label, s.seat_label;
+
+-- name: CountUnrefundedTickets :one
+-- Билеты заказа, деньги за которые ещё не вернулись: возврат успешен или
+-- билет бесплатный и аннулирован.
+SELECT count(*)::int FROM tickets t
+JOIN order_items i ON i.id = t.order_item_id
+WHERE t.order_id = @order_id
+  AND NOT (
+      (t.status = 'revoked' AND i.price_tiyn = 0)
+      OR EXISTS (
+          SELECT 1 FROM refund_items ri JOIN refunds r ON r.id = ri.refund_id
+          WHERE ri.ticket_id = t.id AND r.status = 'succeeded'));
+
+-- name: SetOrderRefundStatus :exec
+UPDATE orders SET status = @status, updated_at = now()
+WHERE id = @id AND status IN ('paid', 'partially_refunded');
+
+-- name: GetEventStatus :one
+SELECT status FROM events WHERE id = @id;
+
+-- name: ListBuyerOrders :many
+-- Заказы покупателя для раздела «Мои билеты»: действующие и завершённые,
+-- без отменённых и истёкших корзин.
+SELECT o.id, o.status, o.total_tiyn, o.created_at, o.expires_at,
+       e.id AS event_id, e.slug AS event_slug, e.title AS event_title, e.starts_at AS event_starts_at,
+       org.slug AS organizer_slug, v.name AS venue_name, v.timezone AS venue_timezone,
+       (SELECT count(*) FROM order_items i WHERE i.order_id = o.id)::int AS items
+FROM orders o
+JOIN events e ON e.id = o.event_id
+JOIN organizers org ON org.id = o.organizer_id
+JOIN venues v ON v.id = e.venue_id
+WHERE o.buyer_id = @buyer_id AND o.status NOT IN ('cancelled', 'expired')
+ORDER BY o.created_at DESC
+LIMIT 100;

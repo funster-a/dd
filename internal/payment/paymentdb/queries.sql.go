@@ -35,7 +35,8 @@ func (q *Queries) GetActivePayment(ctx context.Context, orderID string) (Payment
 
 const getPayableOrder = `-- name: GetPayableOrder :one
 
-SELECT o.id, o.organizer_id, o.status, o.total_tiyn, o.currency, o.expires_at, e.title AS event_title
+SELECT o.id, o.organizer_id, o.status, o.total_tiyn, o.currency, o.expires_at, e.title AS event_title,
+       e.status AS event_status
 FROM orders o JOIN events e ON e.id = o.event_id
 WHERE o.id = $1 AND o.buyer_id = $2
 `
@@ -53,6 +54,7 @@ type GetPayableOrderRow struct {
 	Currency    string
 	ExpiresAt   time.Time
 	EventTitle  string
+	EventStatus string
 }
 
 // Запросы модуля payment (ADR 012). Сгенерировать: make sqlc
@@ -68,6 +70,7 @@ func (q *Queries) GetPayableOrder(ctx context.Context, arg GetPayableOrderParams
 		&i.Currency,
 		&i.ExpiresAt,
 		&i.EventTitle,
+		&i.EventStatus,
 	)
 	return i, err
 }
@@ -96,7 +99,7 @@ func (q *Queries) GetPayment(ctx context.Context, id string) (Payment, error) {
 }
 
 const getRefund = `-- name: GetRefund :one
-SELECT id, organizer_id, payment_id, order_id, status, amount_tiyn, reason, provider_refund_id, created_at, updated_at FROM refunds WHERE payment_id = $1 AND reason = $2
+SELECT id, organizer_id, payment_id, order_id, status, amount_tiyn, reason, provider_refund_id, created_at, updated_at, request_id FROM refunds WHERE payment_id = $1 AND reason = $2
 `
 
 type GetRefundParams struct {
@@ -118,6 +121,53 @@ func (q *Queries) GetRefund(ctx context.Context, arg GetRefundParams) (Refund, e
 		&i.ProviderRefundID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RequestID,
+	)
+	return i, err
+}
+
+const getRefundByRequest = `-- name: GetRefundByRequest :one
+SELECT id, organizer_id, payment_id, order_id, status, amount_tiyn, reason, provider_refund_id, created_at, updated_at, request_id FROM refunds WHERE request_id = $1
+`
+
+func (q *Queries) GetRefundByRequest(ctx context.Context, requestID *string) (Refund, error) {
+	row := q.db.QueryRow(ctx, getRefundByRequest, requestID)
+	var i Refund
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizerID,
+		&i.PaymentID,
+		&i.OrderID,
+		&i.Status,
+		&i.AmountTiyn,
+		&i.Reason,
+		&i.ProviderRefundID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RequestID,
+	)
+	return i, err
+}
+
+const getSucceededPayment = `-- name: GetSucceededPayment :one
+SELECT id, organizer_id, order_id, status, amount_tiyn, currency, provider, provider_payment_id, created_at, updated_at, payment_url FROM payments WHERE order_id = $1 AND status = 'succeeded'
+`
+
+func (q *Queries) GetSucceededPayment(ctx context.Context, orderID string) (Payment, error) {
+	row := q.db.QueryRow(ctx, getSucceededPayment, orderID)
+	var i Payment
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizerID,
+		&i.OrderID,
+		&i.Status,
+		&i.AmountTiyn,
+		&i.Currency,
+		&i.Provider,
+		&i.ProviderPaymentID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.PaymentUrl,
 	)
 	return i, err
 }
@@ -176,7 +226,7 @@ const insertRefund = `-- name: InsertRefund :one
 INSERT INTO refunds (organizer_id, payment_id, order_id, amount_tiyn, reason)
 VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT DO NOTHING
-RETURNING id, organizer_id, payment_id, order_id, status, amount_tiyn, reason, provider_refund_id, created_at, updated_at
+RETURNING id, organizer_id, payment_id, order_id, status, amount_tiyn, reason, provider_refund_id, created_at, updated_at, request_id
 `
 
 type InsertRefundParams struct {
@@ -207,6 +257,73 @@ func (q *Queries) InsertRefund(ctx context.Context, arg InsertRefundParams) (Ref
 		&i.ProviderRefundID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RequestID,
+	)
+	return i, err
+}
+
+const insertRefundItems = `-- name: InsertRefundItems :exec
+INSERT INTO refund_items (refund_id, ticket_id, organizer_id, order_id)
+SELECT $1::uuid, unnest($2::uuid[]), $3::uuid, $4::uuid
+ON CONFLICT DO NOTHING
+`
+
+type InsertRefundItemsParams struct {
+	RefundID    string
+	TicketIds   []string
+	OrganizerID string
+	OrderID     string
+}
+
+func (q *Queries) InsertRefundItems(ctx context.Context, arg InsertRefundItemsParams) error {
+	_, err := q.db.Exec(ctx, insertRefundItems,
+		arg.RefundID,
+		arg.TicketIds,
+		arg.OrganizerID,
+		arg.OrderID,
+	)
+	return err
+}
+
+const insertTicketRefund = `-- name: InsertTicketRefund :one
+INSERT INTO refunds (organizer_id, payment_id, order_id, amount_tiyn, reason, request_id)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (request_id) DO NOTHING
+RETURNING id, organizer_id, payment_id, order_id, status, amount_tiyn, reason, provider_refund_id, created_at, updated_at, request_id
+`
+
+type InsertTicketRefundParams struct {
+	OrganizerID string
+	PaymentID   string
+	OrderID     string
+	AmountTiyn  int64
+	Reason      string
+	RequestID   *string
+}
+
+// Возврат билетов: повтор запроса с тем же request_id не вставит строку.
+func (q *Queries) InsertTicketRefund(ctx context.Context, arg InsertTicketRefundParams) (Refund, error) {
+	row := q.db.QueryRow(ctx, insertTicketRefund,
+		arg.OrganizerID,
+		arg.PaymentID,
+		arg.OrderID,
+		arg.AmountTiyn,
+		arg.Reason,
+		arg.RequestID,
+	)
+	var i Refund
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizerID,
+		&i.PaymentID,
+		&i.OrderID,
+		&i.Status,
+		&i.AmountTiyn,
+		&i.Reason,
+		&i.ProviderRefundID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RequestID,
 	)
 	return i, err
 }
@@ -381,4 +498,22 @@ type SetRefundSucceededParams struct {
 func (q *Queries) SetRefundSucceeded(ctx context.Context, arg SetRefundSucceededParams) error {
 	_, err := q.db.Exec(ctx, setRefundSucceeded, arg.ProviderRefundID, arg.ID)
 	return err
+}
+
+const sumOtherRefunds = `-- name: SumOtherRefunds :one
+SELECT coalesce(sum(amount_tiyn), 0)::bigint FROM refunds
+WHERE payment_id = $1 AND id <> $2 AND status IN ('requested', 'pending', 'succeeded')
+`
+
+type SumOtherRefundsParams struct {
+	PaymentID string
+	ID        string
+}
+
+// Сумма возвратов платежа, кроме этого: успешные и ещё идущие.
+func (q *Queries) SumOtherRefunds(ctx context.Context, arg SumOtherRefundsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, sumOtherRefunds, arg.PaymentID, arg.ID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }

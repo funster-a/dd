@@ -287,3 +287,69 @@ func TestFreeOrder(t *testing.T) {
 		t.Errorf("paid order = %+v, %v; want pending", p, err)
 	}
 }
+
+// Повторная доставка payment.succeeded после возврата не запрашивает
+// второй возврат всего платежа.
+func TestPaymentRedeliveryAfterRefund(t *testing.T) {
+	e := newEnv(t, false, 1, 2, 0)
+	ctx := t.Context()
+	o, err := e.svc.CreateOrder(ctx, e.buyer(t), e.eventID, seatsReq(seat(1, 1)), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev := paid(o, time.Now())
+	if err := e.svc.ConfirmPayment(ctx, ev); err != nil {
+		t.Fatal(err)
+	}
+	e.exec(t, `UPDATE orders SET status = 'refunded' WHERE id = $1`, o.ID)
+	if err := e.svc.ConfirmPayment(ctx, ev); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.events(t, events.RefundRequested, o.ID); n != 0 {
+		t.Errorf("refund requests after redelivery = %d, want 0", n)
+	}
+}
+
+// Событие отменили, пока покупатель платил: билеты не выпускаются, деньги назад.
+func TestConfirmPaymentForCancelledEvent(t *testing.T) {
+	e := newEnv(t, false, 1, 2, 0)
+	ctx := t.Context()
+	o, err := e.svc.CreateOrder(ctx, e.buyer(t), e.eventID, seatsReq(seat(1, 1)), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.exec(t, `UPDATE events SET status = 'cancelled', cancelled_at = now() WHERE id = $1`, e.eventID)
+	if err := e.svc.ConfirmPayment(ctx, paid(o, time.Now())); err != nil {
+		t.Fatal(err)
+	}
+	if s := e.orderStatus(t, o.ID); s != "cancelled" || e.events(t, events.RefundRequested, o.ID) != 1 || e.events(t, events.OrderPaid, o.ID) != 0 {
+		t.Errorf("order = %s; want cancelled with a refund and no tickets", s)
+	}
+}
+
+// Возвращённое место сразу снова продаётся: холд оплаченного заказа в
+// Redis снимается вместе с освобождением места в базе.
+func TestRefundedSeatIsBookableAgain(t *testing.T) {
+	e := newEnv(t, true, 1, 2, 0)
+	ctx := t.Context()
+	o, err := e.svc.CreateOrder(ctx, e.buyer(t), e.eventID, seatsReq(seat(1, 1)), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.ConfirmPayment(ctx, paid(o, time.Now())); err != nil {
+		t.Fatal(err)
+	}
+	var ticketID string
+	if err := e.db.Pool.QueryRow(ctx, `
+		INSERT INTO tickets (organizer_id, event_id, order_id, order_item_id, event_seat_id, status, revoked_at)
+		SELECT organizer_id, $1, order_id, id, event_seat_id, 'revoked', now() FROM order_items WHERE order_id = $2
+		RETURNING id`, e.eventID, o.ID).Scan(&ticketID); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.ApplyRefund(ctx, events.OrderRefundedEvent{OrderID: o.ID, TicketIDs: []string{ticketID}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.CreateOrder(ctx, e.buyer(t), e.eventID, seatsReq(seat(1, 1)), time.Now()); err != nil {
+		t.Errorf("refunded seat must be bookable at once: %v", err)
+	}
+}

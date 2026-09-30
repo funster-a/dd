@@ -19,6 +19,7 @@ COPY . .
 # тегами, нужен только postgres.
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
+    mkdir -p /out/data && \
     go build -trimpath -ldflags="-s -w" -o /out/ ./cmd/api ./cmd/worker ./cmd/fakepsp && \
     go build -modfile=tools.mod -trimpath -ldflags="-s -w" \
       -tags "no_clickhouse no_libsql no_mssql no_mysql no_sqlite3 no_vertica no_ydb" \
@@ -35,6 +36,8 @@ ENTRYPOINT ["/worker"]
 
 FROM gcr.io/distroless/static-debian13:nonroot AS fakepsp
 COPY --from=build /out/fakepsp /fakepsp
+# Каталог состояния мока: пустой том наследует владельца nonroot из образа.
+COPY --from=build --chown=65532:65532 /out/data /data
 EXPOSE 8090
 ENTRYPOINT ["/fakepsp"]
 

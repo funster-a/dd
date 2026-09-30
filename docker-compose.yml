@@ -177,10 +177,14 @@ services:
       target: fakepsp
     environment:
       FAKEPSP_PUBLIC_URL: http://localhost:${FAKEPSP_PORT:-8090}
+      # Мок помнит платежи после перезапуска: возвраты по старым оплатам работают.
+      FAKEPSP_STATE_FILE: /data/fakepsp.json
       PSP_API_KEY: dev-psp-api-key
       PSP_WEBHOOK_SECRET: dev-psp-webhook-secret
     ports:
       - "127.0.0.1:${FAKEPSP_PORT:-8090}:8090"
+    volumes:
+      - fakepsp-data:/data
     healthcheck:
       test: ["CMD", "/fakepsp", "healthcheck"]
       interval: 10s
@@ -227,3 +231,4 @@ volumes:
   prometheus-data:
   grafana-data:
   seaweedfs-data:
+  fakepsp-data:

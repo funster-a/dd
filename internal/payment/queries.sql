@@ -2,7 +2,8 @@
 -- Заказы и события принадлежат другим модулям: здесь их только читают.
 
 -- name: GetPayableOrder :one
-SELECT o.id, o.organizer_id, o.status, o.total_tiyn, o.currency, o.expires_at, e.title AS event_title
+SELECT o.id, o.organizer_id, o.status, o.total_tiyn, o.currency, o.expires_at, e.title AS event_title,
+       e.status AS event_status
 FROM orders o JOIN events e ON e.id = o.event_id
 WHERE o.id = @id AND o.buyer_id = @buyer_id;
 
@@ -69,3 +70,26 @@ UPDATE refunds SET status = 'failed', updated_at = now() WHERE id = @id;
 
 -- name: HasSucceededPayment :one
 SELECT EXISTS (SELECT 1 FROM payments WHERE order_id = @order_id AND status = 'succeeded');
+
+-- name: GetSucceededPayment :one
+SELECT * FROM payments WHERE order_id = @order_id AND status = 'succeeded';
+
+-- name: InsertTicketRefund :one
+-- Возврат билетов: повтор запроса с тем же request_id не вставит строку.
+INSERT INTO refunds (organizer_id, payment_id, order_id, amount_tiyn, reason, request_id)
+VALUES (@organizer_id, @payment_id, @order_id, @amount_tiyn, @reason, @request_id)
+ON CONFLICT (request_id) DO NOTHING
+RETURNING *;
+
+-- name: GetRefundByRequest :one
+SELECT * FROM refunds WHERE request_id = @request_id;
+
+-- name: SumOtherRefunds :one
+-- Сумма возвратов платежа, кроме этого: успешные и ещё идущие.
+SELECT coalesce(sum(amount_tiyn), 0)::bigint FROM refunds
+WHERE payment_id = @payment_id AND id <> @id AND status IN ('requested', 'pending', 'succeeded');
+
+-- name: InsertRefundItems :exec
+INSERT INTO refund_items (refund_id, ticket_id, organizer_id, order_id)
+SELECT @refund_id::uuid, unnest(@ticket_ids::uuid[]), @organizer_id::uuid, @order_id::uuid
+ON CONFLICT DO NOTHING;

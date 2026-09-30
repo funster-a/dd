@@ -60,6 +60,64 @@ func (q *Queries) DemoteAcceptedScan(ctx context.Context, ticketID string) error
 	return err
 }
 
+const exportTickets = `-- name: ExportTickets :many
+SELECT t.id, s.section, s.row_label, s.seat_label, pc.name AS category, i.price_tiyn,
+       t.status, t.order_id, o.email, t.issued_at, t.used_at
+FROM tickets t
+JOIN event_seats s ON s.id = t.event_seat_id
+JOIN price_categories pc ON pc.id = s.price_category_id
+JOIN order_items i ON i.id = t.order_item_id
+JOIN orders o ON o.id = t.order_id
+WHERE t.event_id = $1
+ORDER BY s.section, s.row_label, s.seat_label, t.issued_at
+`
+
+type ExportTicketsRow struct {
+	ID        string
+	Section   string
+	RowLabel  *string
+	SeatLabel string
+	Category  string
+	PriceTiyn int64
+	Status    string
+	OrderID   string
+	Email     string
+	IssuedAt  time.Time
+	UsedAt    *time.Time
+}
+
+func (q *Queries) ExportTickets(ctx context.Context, eventID string) ([]ExportTicketsRow, error) {
+	rows, err := q.db.Query(ctx, exportTickets, eventID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ExportTicketsRow{}
+	for rows.Next() {
+		var i ExportTicketsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Section,
+			&i.RowLabel,
+			&i.SeatLabel,
+			&i.Category,
+			&i.PriceTiyn,
+			&i.Status,
+			&i.OrderID,
+			&i.Email,
+			&i.IssuedAt,
+			&i.UsedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getOrderDelivery = `-- name: GetOrderDelivery :one
 SELECT o.buyer_id, o.email, o.status, e.title, e.starts_at
 FROM orders o JOIN events e ON e.id = o.event_id
@@ -83,6 +141,35 @@ func (q *Queries) GetOrderDelivery(ctx context.Context, id string) (GetOrderDeli
 		&i.Status,
 		&i.Title,
 		&i.StartsAt,
+	)
+	return i, err
+}
+
+const getRefundContext = `-- name: GetRefundContext :one
+
+SELECT o.buyer_id, o.status, e.status AS event_status, e.starts_at, e.refund_deadline_hours
+FROM orders o JOIN events e ON e.id = o.event_id
+WHERE o.id = $1
+`
+
+type GetRefundContextRow struct {
+	BuyerID             string
+	Status              string
+	EventStatus         string
+	StartsAt            time.Time
+	RefundDeadlineHours int32
+}
+
+// Возвраты (ADR 014).
+func (q *Queries) GetRefundContext(ctx context.Context, orderID string) (GetRefundContextRow, error) {
+	row := q.db.QueryRow(ctx, getRefundContext, orderID)
+	var i GetRefundContextRow
+	err := row.Scan(
+		&i.BuyerID,
+		&i.Status,
+		&i.EventStatus,
+		&i.StartsAt,
+		&i.RefundDeadlineHours,
 	)
 	return i, err
 }
@@ -362,6 +449,88 @@ func (q *Queries) ListScannerLinks(ctx context.Context, arg ListScannerLinksPara
 	return items, nil
 }
 
+const lockEventTicketsForCancel = `-- name: LockEventTicketsForCancel :many
+SELECT t.id, t.order_id, t.status, i.price_tiyn
+FROM tickets t JOIN order_items i ON i.id = t.order_item_id
+WHERE t.event_id = $1 AND t.status IN ('issued', 'used')
+ORDER BY t.order_id, t.id
+FOR UPDATE OF t
+`
+
+type LockEventTicketsForCancelRow struct {
+	ID        string
+	OrderID   string
+	Status    string
+	PriceTiyn int64
+}
+
+// Все действующие билеты отменённого события.
+func (q *Queries) LockEventTicketsForCancel(ctx context.Context, eventID string) ([]LockEventTicketsForCancelRow, error) {
+	rows, err := q.db.Query(ctx, lockEventTicketsForCancel, eventID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LockEventTicketsForCancelRow{}
+	for rows.Next() {
+		var i LockEventTicketsForCancelRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrderID,
+			&i.Status,
+			&i.PriceTiyn,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockOrderTickets = `-- name: LockOrderTickets :many
+SELECT t.id, t.status, i.price_tiyn
+FROM tickets t JOIN order_items i ON i.id = t.order_item_id
+WHERE t.order_id = $1 AND t.id = ANY($2::uuid[])
+ORDER BY t.id
+FOR UPDATE OF t
+`
+
+type LockOrderTicketsParams struct {
+	OrderID string
+	Ids     []string
+}
+
+type LockOrderTicketsRow struct {
+	ID        string
+	Status    string
+	PriceTiyn int64
+}
+
+// Билеты заказа под блокировкой: сканирование и возврат одного билета
+// выполняются по очереди.
+func (q *Queries) LockOrderTickets(ctx context.Context, arg LockOrderTicketsParams) ([]LockOrderTicketsRow, error) {
+	rows, err := q.db.Query(ctx, lockOrderTickets, arg.OrderID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LockOrderTicketsRow{}
+	for rows.Next() {
+		var i LockOrderTicketsRow
+		if err := rows.Scan(&i.ID, &i.Status, &i.PriceTiyn); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockTicketForScan = `-- name: LockTicketForScan :one
 SELECT t.id, t.organizer_id, t.event_id, t.status, t.used_at, s.section, s.row_label, s.seat_label
 FROM tickets t JOIN event_seats s ON s.id = t.event_seat_id
@@ -466,6 +635,153 @@ func (q *Queries) MoveTicketUsedAt(ctx context.Context, arg MoveTicketUsedAtPara
 	return err
 }
 
+const reportCategories = `-- name: ReportCategories :many
+SELECT pc.name, pc.price_tiyn,
+       count(s.id)::int AS capacity,
+       count(t.id)::int AS sold,
+       coalesce(sum(i.price_tiyn), 0)::bigint AS revenue
+FROM price_categories pc
+LEFT JOIN event_seats s ON s.price_category_id = pc.id
+LEFT JOIN tickets t ON t.event_seat_id = s.id AND t.status IN ('issued', 'used')
+LEFT JOIN order_items i ON i.id = t.order_item_id
+WHERE pc.event_id = $1
+GROUP BY pc.id, pc.name, pc.price_tiyn
+ORDER BY pc.price_tiyn DESC, pc.name
+`
+
+type ReportCategoriesRow struct {
+	Name      string
+	PriceTiyn int64
+	Capacity  int32
+	Sold      int32
+	Revenue   int64
+}
+
+// Продажи по ценовым категориям: действующие билеты по цене на момент покупки.
+func (q *Queries) ReportCategories(ctx context.Context, eventID string) ([]ReportCategoriesRow, error) {
+	rows, err := q.db.Query(ctx, reportCategories, eventID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReportCategoriesRow{}
+	for rows.Next() {
+		var i ReportCategoriesRow
+		if err := rows.Scan(
+			&i.Name,
+			&i.PriceTiyn,
+			&i.Capacity,
+			&i.Sold,
+			&i.Revenue,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const reportEvent = `-- name: ReportEvent :one
+
+SELECT id, title, status, admission, starts_at FROM events WHERE organizer_id = $1 AND id = $2
+`
+
+type ReportEventParams struct {
+	OrganizerID string
+	ID          string
+}
+
+type ReportEventRow struct {
+	ID        string
+	Title     string
+	Status    string
+	Admission string
+	StartsAt  time.Time
+}
+
+// Отчёты организатора (ADR 014).
+func (q *Queries) ReportEvent(ctx context.Context, arg ReportEventParams) (ReportEventRow, error) {
+	row := q.db.QueryRow(ctx, reportEvent, arg.OrganizerID, arg.ID)
+	var i ReportEventRow
+	err := row.Scan(
+		&i.ID,
+		&i.Title,
+		&i.Status,
+		&i.Admission,
+		&i.StartsAt,
+	)
+	return i, err
+}
+
+const reportMoney = `-- name: ReportMoney :one
+SELECT
+    (SELECT coalesce(sum(total_tiyn), 0) FROM orders o WHERE o.event_id = $1 AND o.paid_at IS NOT NULL)::bigint AS gross,
+    (SELECT count(*) FROM orders o WHERE o.event_id = $1 AND o.paid_at IS NOT NULL)::int AS paid_orders,
+    (SELECT coalesce(sum(r.amount_tiyn), 0) FROM refunds r JOIN orders o ON o.id = r.order_id
+      WHERE o.event_id = $1 AND r.status = 'succeeded' AND o.paid_at IS NOT NULL)::bigint AS refunded
+`
+
+type ReportMoneyRow struct {
+	Gross      int64
+	PaidOrders int32
+	Refunded   int64
+}
+
+func (q *Queries) ReportMoney(ctx context.Context, eventID string) (ReportMoneyRow, error) {
+	row := q.db.QueryRow(ctx, reportMoney, eventID)
+	var i ReportMoneyRow
+	err := row.Scan(&i.Gross, &i.PaidOrders, &i.Refunded)
+	return i, err
+}
+
+const reportSeats = `-- name: ReportSeats :one
+SELECT count(*)::int AS capacity,
+       count(*) FILTER (WHERE status = 'sold')::int AS sold,
+       count(*) FILTER (WHERE status = 'held' AND hold_expires_at > $1::timestamptz)::int AS held
+FROM event_seats WHERE event_id = $2
+`
+
+type ReportSeatsParams struct {
+	Now     time.Time
+	EventID string
+}
+
+type ReportSeatsRow struct {
+	Capacity int32
+	Sold     int32
+	Held     int32
+}
+
+func (q *Queries) ReportSeats(ctx context.Context, arg ReportSeatsParams) (ReportSeatsRow, error) {
+	row := q.db.QueryRow(ctx, reportSeats, arg.Now, arg.EventID)
+	var i ReportSeatsRow
+	err := row.Scan(&i.Capacity, &i.Sold, &i.Held)
+	return i, err
+}
+
+const reportTickets = `-- name: ReportTickets :one
+SELECT count(*) FILTER (WHERE status IN ('issued', 'used'))::int AS active,
+       count(*) FILTER (WHERE status = 'used')::int AS used,
+       count(*) FILTER (WHERE status = 'revoked')::int AS revoked
+FROM tickets WHERE event_id = $1
+`
+
+type ReportTicketsRow struct {
+	Active  int32
+	Used    int32
+	Revoked int32
+}
+
+func (q *Queries) ReportTickets(ctx context.Context, eventID string) (ReportTicketsRow, error) {
+	row := q.db.QueryRow(ctx, reportTickets, eventID)
+	var i ReportTicketsRow
+	err := row.Scan(&i.Active, &i.Used, &i.Revoked)
+	return i, err
+}
+
 const revokeScannerLink = `-- name: RevokeScannerLink :execrows
 UPDATE scanner_links SET revoked_at = now()
 WHERE organizer_id = $1 AND id = $2 AND revoked_at IS NULL
@@ -482,6 +798,16 @@ func (q *Queries) RevokeScannerLink(ctx context.Context, arg RevokeScannerLinkPa
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const revokeTickets = `-- name: RevokeTickets :exec
+UPDATE tickets SET status = 'revoked', revoked_at = now()
+WHERE id = ANY($1::uuid[]) AND status = 'issued'
+`
+
+func (q *Queries) RevokeTickets(ctx context.Context, ids []string) error {
+	_, err := q.db.Exec(ctx, revokeTickets, ids)
+	return err
 }
 
 const scannerLinkExists = `-- name: ScannerLinkExists :one

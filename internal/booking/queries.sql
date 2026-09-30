@@ -145,3 +145,28 @@ LEFT JOIN tickets t ON t.order_item_id = i.id
 WHERE o.buyer_id = @buyer_id AND o.event_id = @event_id
   AND o.status IN ('paid', 'partially_refunded')
   AND (t.id IS NULL OR t.status <> 'revoked');
+
+-- name: ReleaseRefundedSeats :exec
+-- Места возвращённых билетов снова продаются.
+UPDATE event_seats s SET status = 'available'
+FROM tickets t
+WHERE t.id = ANY(@ticket_ids::uuid[]) AND s.id = t.event_seat_id AND s.status = 'sold';
+
+-- name: CountUnrefundedTickets :one
+-- Билеты заказа, деньги за которые ещё не вернулись: возврат успешен или
+-- билет бесплатный и аннулирован.
+SELECT count(*)::int FROM tickets t
+JOIN order_items i ON i.id = t.order_item_id
+WHERE t.order_id = @order_id
+  AND NOT (
+      (t.status = 'revoked' AND i.price_tiyn = 0)
+      OR EXISTS (
+          SELECT 1 FROM refund_items ri JOIN refunds r ON r.id = ri.refund_id
+          WHERE ri.ticket_id = t.id AND r.status = 'succeeded'));
+
+-- name: SetOrderRefundStatus :exec
+UPDATE orders SET status = @status, updated_at = now()
+WHERE id = @id AND status IN ('paid', 'partially_refunded');
+
+-- name: GetEventStatus :one
+SELECT status FROM events WHERE id = @id;

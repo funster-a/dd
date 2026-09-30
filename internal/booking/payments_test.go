@@ -287,3 +287,42 @@ func TestFreeOrder(t *testing.T) {
 		t.Errorf("paid order = %+v, %v; want pending", p, err)
 	}
 }
+
+// Повторная доставка payment.succeeded после возврата не запрашивает
+// второй возврат всего платежа.
+func TestPaymentRedeliveryAfterRefund(t *testing.T) {
+	e := newEnv(t, false, 1, 2, 0)
+	ctx := t.Context()
+	o, err := e.svc.CreateOrder(ctx, e.buyer(t), e.eventID, seatsReq(seat(1, 1)), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev := paid(o, time.Now())
+	if err := e.svc.ConfirmPayment(ctx, ev); err != nil {
+		t.Fatal(err)
+	}
+	e.exec(t, `UPDATE orders SET status = 'refunded' WHERE id = $1`, o.ID)
+	if err := e.svc.ConfirmPayment(ctx, ev); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.events(t, events.RefundRequested, o.ID); n != 0 {
+		t.Errorf("refund requests after redelivery = %d, want 0", n)
+	}
+}
+
+// Событие отменили, пока покупатель платил: билеты не выпускаются, деньги назад.
+func TestConfirmPaymentForCancelledEvent(t *testing.T) {
+	e := newEnv(t, false, 1, 2, 0)
+	ctx := t.Context()
+	o, err := e.svc.CreateOrder(ctx, e.buyer(t), e.eventID, seatsReq(seat(1, 1)), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.exec(t, `UPDATE events SET status = 'cancelled', cancelled_at = now() WHERE id = $1`, e.eventID)
+	if err := e.svc.ConfirmPayment(ctx, paid(o, time.Now())); err != nil {
+		t.Fatal(err)
+	}
+	if s := e.orderStatus(t, o.ID); s != "cancelled" || e.events(t, events.RefundRequested, o.ID) != 1 || e.events(t, events.OrderPaid, o.ID) != 0 {
+		t.Errorf("order = %s; want cancelled with a refund and no tickets", s)
+	}
+}

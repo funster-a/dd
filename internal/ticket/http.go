@@ -22,8 +22,10 @@ import (
 //	GET /orders/{orderID}/tickets — билеты заказа покупателя
 //	GET /tickets/{token}          — билет по ссылке, без входа
 //	GET /tickets/{token}/qr.png   — QR-код билета
+//	POST /orders/{orderID}/refunds — возврат билетов заказа покупателя
 func (s *Service) Register(r chi.Router) {
 	r.With(auth.Require(auth.KindBuyer)).Get("/orders/{orderID}/tickets", s.handleOrderTickets)
+	r.With(auth.Require(auth.KindBuyer), idempotency.Middleware(s.pool)).Post("/orders/{orderID}/refunds", s.handleRefund)
 	r.Get("/tickets/{token}", s.handleTicket)
 	r.Get("/tickets/{token}/qr.png", s.handleQR)
 }
@@ -35,6 +37,23 @@ func (s *Service) handleOrderTickets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, ts)
+}
+
+func (s *Service) handleRefund(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		TicketIDs []string `json:"ticket_ids"`
+	}
+	if err := httpx.DecodeJSON(w, r, &in); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	p, _ := auth.PrincipalFrom(r.Context())
+	req, err := s.RequestRefund(r.Context(), p.SubjectID, chi.URLParam(r, "orderID"), in.TicketIDs, time.Now())
+	if writeError(w, r, err) {
+		return
+	}
+	// 202: билеты аннулированы, деньги возвращаются асинхронно.
+	httpx.WriteJSON(w, http.StatusAccepted, req)
 }
 
 func (s *Service) handleTicket(w http.ResponseWriter, r *http.Request) {
@@ -91,6 +110,10 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) bool {
 		httpx.WriteError(w, http.StatusNotFound, "not_found", "not found")
 		return true
 	}
+	if pe, ok := errors.AsType[*PreconditionError](err); ok {
+		httpx.WriteError(w, http.StatusUnprocessableEntity, pe.Code, pe.Message)
+		return true
+	}
 	if v, ok := errors.AsType[*ValidationError](err); ok {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_"+v.Field, v.Error())
 		return true
@@ -125,15 +148,42 @@ img{width:240px;height:240px;image-rendering:pixelated}.used{color:#b91c1c;font-
 `))
 
 // RegisterOrganizer добавляет в кабинет организатора (/v1/organizer, вход
-// уже проверен) управление ссылками сканера:
+// уже проверен) ссылки сканера и отчёты:
 //
-//	POST   /events/{eventID}/scanners — создать ссылку (токен показывается один раз)
-//	GET    /events/{eventID}/scanners — ссылки события
-//	DELETE /scanners/{scannerID}      — отозвать
+//	POST   /events/{eventID}/scanners           — создать ссылку (токен показывается один раз)
+//	GET    /events/{eventID}/scanners           — ссылки события
+//	DELETE /scanners/{scannerID}                — отозвать
+//	GET    /events/{eventID}/report             — продажи, заполняемость, выручка
+//	GET    /events/{eventID}/report/tickets.csv — список билетов для Excel
 func (s *Service) RegisterOrganizer(r chi.Router) {
 	r.With(idempotency.Middleware(s.pool)).Post("/events/{eventID}/scanners", s.handleCreateScanner)
 	r.Get("/events/{eventID}/scanners", s.handleListScanners)
 	r.Delete("/scanners/{scannerID}", s.handleRevokeScanner)
+	r.Get("/events/{eventID}/report", s.handleReport)
+	r.Get("/events/{eventID}/report/tickets.csv", s.handleExport)
+}
+
+func (s *Service) handleReport(w http.ResponseWriter, r *http.Request) {
+	rep, err := s.Report(r.Context(), organizerID(r), chi.URLParam(r, "eventID"), time.Now())
+	if writeError(w, r, err) {
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	httpx.WriteJSON(w, http.StatusOK, rep)
+}
+
+func (s *Service) handleExport(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "eventID")
+	// Проверка доступа до заголовков: чужое событие отвечает 404, а не пустым файлом.
+	if _, err := s.reportEvent(r.Context(), organizerID(r), id); writeError(w, r, err) {
+		return
+	}
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="tickets-`+id+`.csv"`)
+	w.Header().Set("Cache-Control", "no-store")
+	if err := s.ExportTickets(r.Context(), organizerID(r), id, w); err != nil {
+		httpx.Logger(r.Context()).Error("export tickets", slog.Any("error", err))
+	}
 }
 
 func organizerID(r *http.Request) string {

@@ -249,6 +249,22 @@ func TestTicketHTTP(t *testing.T) {
 	if code != http.StatusOK || !bytes.Contains(body, []byte("Стендап &lt;вечер&gt;")) || !bytes.Contains(body, []byte("ряд 1, место 1")) {
 		t.Errorf("page = %d %s", code, body)
 	}
+	// Возврат билета покупателем: 202, билет сразу аннулирован.
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, srv.URL+"/v1/orders/"+order+"/refunds",
+		strings.NewReader(`{"ticket_ids":["`+ts[0].ID+`"]}`))
+	req.Header.Set("X-Test-Buyer", buyer)
+	req.Header.Set("Idempotency-Key", uuid.NewString())
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Errorf("refund = %d, want 202", resp.StatusCode)
+	}
+	if code, _, body := get("/v1/tickets/"+tok, ""); code != http.StatusOK || !bytes.Contains(body, []byte(`"status":"revoked"`)) {
+		t.Errorf("ticket after refund = %d %s", code, body)
+	}
 	if code, _, _ := get("/v1/tickets/forged", ""); code != http.StatusNotFound {
 		t.Errorf("forged token = %d, want 404", code)
 	}

@@ -165,6 +165,7 @@ type Refund struct {
 	ProviderRefundID *string
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
+	RequestID        *string
 }
 
 type RefundItem struct {

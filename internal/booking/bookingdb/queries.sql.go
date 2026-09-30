@@ -77,6 +77,26 @@ func (q *Queries) CountOrderItems(ctx context.Context, orderID string) (int32, e
 	return column_1, err
 }
 
+const countUnrefundedTickets = `-- name: CountUnrefundedTickets :one
+SELECT count(*)::int FROM tickets t
+JOIN order_items i ON i.id = t.order_item_id
+WHERE t.order_id = $1
+  AND NOT (
+      (t.status = 'revoked' AND i.price_tiyn = 0)
+      OR EXISTS (
+          SELECT 1 FROM refund_items ri JOIN refunds r ON r.id = ri.refund_id
+          WHERE ri.ticket_id = t.id AND r.status = 'succeeded'))
+`
+
+// Билеты заказа, деньги за которые ещё не вернулись: возврат успешен или
+// билет бесплатный и аннулирован.
+func (q *Queries) CountUnrefundedTickets(ctx context.Context, orderID string) (int32, error) {
+	row := q.db.QueryRow(ctx, countUnrefundedTickets, orderID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const expireDueOrders = `-- name: ExpireDueOrders :many
 UPDATE orders SET status = 'expired', updated_at = now()
 WHERE id IN (
@@ -176,6 +196,17 @@ func (q *Queries) GetBuyerOrder(ctx context.Context, arg GetBuyerOrderParams) (O
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const getEventStatus = `-- name: GetEventStatus :one
+SELECT status FROM events WHERE id = $1
+`
+
+func (q *Queries) GetEventStatus(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, getEventStatus, id)
+	var status string
+	err := row.Scan(&status)
+	return status, err
 }
 
 const getPublishedEventStatus = `-- name: GetPublishedEventStatus :one
@@ -628,6 +659,18 @@ func (q *Queries) ReleaseOrderSeats(ctx context.Context, orderID string) ([]Rele
 	return items, nil
 }
 
+const releaseRefundedSeats = `-- name: ReleaseRefundedSeats :exec
+UPDATE event_seats s SET status = 'available'
+FROM tickets t
+WHERE t.id = ANY($1::uuid[]) AND s.id = t.event_seat_id AND s.status = 'sold'
+`
+
+// Места возвращённых билетов снова продаются.
+func (q *Queries) ReleaseRefundedSeats(ctx context.Context, ticketIds []string) error {
+	_, err := q.db.Exec(ctx, releaseRefundedSeats, ticketIds)
+	return err
+}
+
 const releaseSeatsOfOrders = `-- name: ReleaseSeatsOfOrders :exec
 UPDATE event_seats
 SET status = 'available', hold_order_id = NULL, hold_expires_at = NULL
@@ -666,6 +709,21 @@ func (q *Queries) SellOrderSeats(ctx context.Context, orderID string) ([]string,
 		return nil, err
 	}
 	return items, nil
+}
+
+const setOrderRefundStatus = `-- name: SetOrderRefundStatus :exec
+UPDATE orders SET status = $1, updated_at = now()
+WHERE id = $2 AND status IN ('paid', 'partially_refunded')
+`
+
+type SetOrderRefundStatusParams struct {
+	Status string
+	ID     string
+}
+
+func (q *Queries) SetOrderRefundStatus(ctx context.Context, arg SetOrderRefundStatusParams) error {
+	_, err := q.db.Exec(ctx, setOrderRefundStatus, arg.Status, arg.ID)
+	return err
 }
 
 const setOrderStatus = `-- name: SetOrderStatus :one

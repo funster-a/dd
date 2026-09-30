@@ -66,6 +66,8 @@ func (s *Service) StartPayment(ctx context.Context, buyerID, orderID string, now
 		return Payment{}, fmt.Errorf("load order: %w", err)
 	}
 	switch {
+	case o.EventStatus == "cancelled":
+		return Payment{}, &PreconditionError{Code: "event_cancelled", Message: "event is cancelled"}
 	case o.Status != "pending":
 		return Payment{}, &PreconditionError{Code: "order_not_payable", Message: "order is " + o.Status}
 	case !now.Before(o.ExpiresAt):
@@ -209,10 +211,14 @@ func (s *Service) apply(ctx context.Context, tx pgx.Tx, q *paymentdb.Queries, pr
 	})
 }
 
-// Refund возвращает всю сумму платежа (обработчик события refund.requested).
-// Повторная доставка события не создаёт второй возврат и не возвращает
-// деньги дважды: провайдер получает тот же ключ идемпотентности.
+// Refund — обработчик события refund.requested. Без билетов возвращается
+// весь платёж неоформленного заказа (опоздавшая оплата), с билетами —
+// их стоимость (ADR 014). Повторная доставка события не создаёт второй
+// возврат и не возвращает деньги дважды: провайдер получает тот же ключ.
 func (s *Service) Refund(ctx context.Context, ev events.RefundRequestedEvent) error {
+	if len(ev.TicketIDs) > 0 {
+		return s.refundTickets(ctx, ev)
+	}
 	p, err := s.q.GetPayment(ctx, ev.PaymentID)
 	if err != nil {
 		return fmt.Errorf("load payment %s: %w", ev.PaymentID, err)

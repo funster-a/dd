@@ -17,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/funster-a/dd/internal/booking"
+	"github.com/funster-a/dd/internal/catalog"
 	"github.com/funster-a/dd/internal/fakepsp"
 	"github.com/funster-a/dd/internal/payment"
 	"github.com/funster-a/dd/internal/platform/db/dbtest"
@@ -95,6 +96,8 @@ func newFlow(t *testing.T) *flow {
 		subscribe(prefix, events.PaymentSucceeded, log, f.book.ConfirmPayment),
 		subscribe(prefix, events.OrderPaid, log, f.tickets.Issue),
 		subscribe(prefix, events.RefundRequested, log, f.pay.Refund),
+		subscribe(prefix, events.OrderRefunded, log, f.book.ApplyRefund),
+		subscribe(prefix, events.EventCancelled, log, f.tickets.HandleEventCancelled),
 	} {
 		wg.Go(func() { mq.Consume(ctx, conn, s.cfg, log, s.handler) })
 	}
@@ -123,7 +126,8 @@ func deleteQueues(conn *mq.Conn, prefix string) {
 		return
 	}
 	defer func() { _ = ch.Close() }()
-	for _, topic := range []string{events.PaymentSucceeded, events.OrderPaid, events.RefundRequested} {
+	for _, topic := range []string{events.PaymentSucceeded, events.OrderPaid, events.RefundRequested,
+		events.OrderRefunded, events.EventCancelled} {
 		_, _ = ch.QueueDelete(prefix+topic, false, false, false)
 		_, _ = ch.QueueDelete(prefix+topic+".dead", false, false, false)
 	}
@@ -287,5 +291,111 @@ func TestFreeTicketsFlow(t *testing.T) {
 	})
 	if _, err := f.pay.StartPayment(ctx, buyer, o.ID, time.Now()); err == nil {
 		t.Error("payment started for a free paid order")
+	}
+}
+
+// buyPaid покупает места и ждёт выпуска билетов.
+func (f *flow) buyPaid(t *testing.T, buyer string, seats ...string) (booking.Order, payment.Payment, []ticket.Ticket) {
+	t.Helper()
+	ctx := t.Context()
+	o := f.order(t, buyer, seats...)
+	p, err := f.pay.StartPayment(ctx, buyer, o.ID, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := f.psp.Decide(ctx, providerID(p), fakepsp.ActionSucceed); err != nil {
+		t.Fatal(err)
+	}
+	var ts []ticket.Ticket
+	eventually(t, "tickets", func() bool {
+		ts, err = f.tickets.ForOrder(ctx, buyer, o.ID)
+		return err == nil && len(ts) == len(seats)
+	})
+	return o, p, ts
+}
+
+func (f *flow) orderStatus(t *testing.T, id string) string {
+	t.Helper()
+	var s string
+	if err := f.db.Pool.QueryRow(context.Background(), `SELECT status FROM orders WHERE id = $1`, id).Scan(&s); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// Покупатель возвращает билеты по одному: деньги за каждый возвращаются,
+// места снова продаются, заказ становится частично, затем полностью
+// возвращённым.
+func TestBuyerRefundFlow(t *testing.T) {
+	f := newFlow(t)
+	ctx := t.Context()
+	buyer := f.buyer(t)
+	o, p, ts := f.buyPaid(t, buyer, "1", "2")
+
+	req, err := f.tickets.RequestRefund(ctx, buyer, o.ID, []string{ts[0].ID}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.AmountTiyn != 500000 {
+		t.Errorf("refund amount = %d, want 500000", req.AmountTiyn)
+	}
+	eventually(t, "partial refund", func() bool {
+		return f.psp.Refunded(providerID(p)) == 500000 && f.orderStatus(t, o.ID) == "partially_refunded"
+	})
+	// Место возвращённого билета снова продаётся.
+	if _, err := f.book.CreateOrder(ctx, f.buyer(t), f.eventID, booking.OrderRequest{
+		Seats: []booking.SeatRef{{Section: "Партер", Row: "1", Seat: ts[0].Seat}}, Email: "next@example.com",
+	}, time.Now()); err != nil {
+		t.Errorf("refunded seat is not for sale again: %v", err)
+	}
+	if _, err := f.tickets.RequestRefund(ctx, buyer, o.ID, []string{ts[0].ID}, time.Now()); err == nil {
+		t.Error("the same ticket was refunded twice")
+	}
+
+	if _, err := f.tickets.RequestRefund(ctx, buyer, o.ID, []string{ts[1].ID}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "full refund", func() bool {
+		return f.psp.Refunded(providerID(p)) == o.TotalTiyn && f.orderStatus(t, o.ID) == "refunded"
+	})
+	var n int
+	if err := f.db.Pool.QueryRow(ctx, `SELECT count(*) FROM refunds WHERE order_id = $1 AND status = 'succeeded'`, o.ID).Scan(&n); err != nil || n != 2 {
+		t.Errorf("succeeded refunds = %d, %v; want 2", n, err)
+	}
+}
+
+// Организатор отменяет событие: билеты аннулируются, всем покупателям деньги
+// возвращаются полностью, в том числе за уже частично возвращённый заказ.
+func TestEventCancelledFlow(t *testing.T) {
+	f := newFlow(t)
+	ctx := t.Context()
+	a, b := f.buyer(t), f.buyer(t)
+	oa, pa, tsa := f.buyPaid(t, a, "1", "2")
+	ob, pb, _ := f.buyPaid(t, b, "3")
+	if _, err := f.tickets.RequestRefund(ctx, a, oa.ID, []string{tsa[0].ID}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "partial refund", func() bool { return f.orderStatus(t, oa.ID) == "partially_refunded" })
+
+	var org string
+	if err := f.db.Pool.QueryRow(ctx, `SELECT organizer_id FROM events WHERE id = $1`, f.eventID).Scan(&org); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := catalog.NewService(f.db.Pool).CancelEvent(ctx, org, f.eventID); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "refunds for the cancelled event", func() bool {
+		return f.psp.Refunded(providerID(pa)) == oa.TotalTiyn && f.psp.Refunded(providerID(pb)) == ob.TotalTiyn &&
+			f.orderStatus(t, oa.ID) == "refunded" && f.orderStatus(t, ob.ID) == "refunded"
+	})
+	var active int
+	if err := f.db.Pool.QueryRow(ctx, `SELECT count(*) FROM tickets WHERE event_id = $1 AND status <> 'revoked'`, f.eventID).Scan(&active); err != nil || active != 0 {
+		t.Errorf("active tickets after cancellation = %d, %v", active, err)
+	}
+	// Покупать и платить за отменённое событие нельзя.
+	if _, err := f.book.CreateOrder(ctx, f.buyer(t), f.eventID, booking.OrderRequest{
+		Seats: []booking.SeatRef{{Section: "Партер", Row: "1", Seat: "4"}}, Email: "x@example.com",
+	}, time.Now()); err == nil {
+		t.Error("order for a cancelled event")
 	}
 }

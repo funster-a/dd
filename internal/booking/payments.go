@@ -30,12 +30,25 @@ func (s *Service) ConfirmPayment(ctx context.Context, ev events.PaymentSucceeded
 			return fmt.Errorf("lock order %s: %w", ev.OrderID, err)
 		}
 		switch {
-		case o.Status == "paid":
-			// Повтор события. Заказ оплачивает одна попытка: у заказа одна
-			// действующая попытка оплаты и одна успешная (индексы в payments).
+		case o.PaidAt != nil:
+			// Повтор события для оплаченного заказа — в том числе после
+			// возврата части или всех билетов. Заказ оплачивает одна попытка:
+			// у заказа одна действующая и одна успешная (индексы в payments).
 			return nil
 		case o.Status != "pending":
 			return s.requestRefund(ctx, tx, ev, o.Status)
+		}
+		eventStatus, err := q.GetEventStatus(ctx, o.EventID)
+		if err != nil {
+			return fmt.Errorf("load event: %w", err)
+		}
+		switch {
+		case eventStatus == "cancelled":
+			// Событие отменили, пока покупатель платил: билеты не выпускаются.
+			if _, err := s.closeOrder(ctx, q, o.ID, o.ExpiresAt, ev.PaidAt, "cancelled"); err != nil {
+				return err
+			}
+			return s.requestRefund(ctx, tx, ev, "event cancelled")
 		case !ev.PaidAt.Before(o.ExpiresAt) || ev.AmountTiyn != o.TotalTiyn:
 			if ev.AmountTiyn != o.TotalTiyn {
 				s.log.ErrorContext(ctx, "paid amount differs from order total", slog.String("order_id", o.ID),

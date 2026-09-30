@@ -426,6 +426,72 @@ func (q *Queries) InsertOrderItems(ctx context.Context, arg InsertOrderItemsPara
 	return err
 }
 
+const listBuyerOrders = `-- name: ListBuyerOrders :many
+SELECT o.id, o.status, o.total_tiyn, o.created_at, o.expires_at,
+       e.id AS event_id, e.slug AS event_slug, e.title AS event_title, e.starts_at AS event_starts_at,
+       org.slug AS organizer_slug, v.name AS venue_name, v.timezone AS venue_timezone,
+       (SELECT count(*) FROM order_items i WHERE i.order_id = o.id)::int AS items
+FROM orders o
+JOIN events e ON e.id = o.event_id
+JOIN organizers org ON org.id = o.organizer_id
+JOIN venues v ON v.id = e.venue_id
+WHERE o.buyer_id = $1 AND o.status NOT IN ('cancelled', 'expired')
+ORDER BY o.created_at DESC
+LIMIT 100
+`
+
+type ListBuyerOrdersRow struct {
+	ID            string
+	Status        string
+	TotalTiyn     int64
+	CreatedAt     time.Time
+	ExpiresAt     time.Time
+	EventID       string
+	EventSlug     string
+	EventTitle    string
+	EventStartsAt time.Time
+	OrganizerSlug string
+	VenueName     string
+	VenueTimezone string
+	Items         int32
+}
+
+// Заказы покупателя для раздела «Мои билеты»: действующие и завершённые,
+// без отменённых и истёкших корзин.
+func (q *Queries) ListBuyerOrders(ctx context.Context, buyerID string) ([]ListBuyerOrdersRow, error) {
+	rows, err := q.db.Query(ctx, listBuyerOrders, buyerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListBuyerOrdersRow{}
+	for rows.Next() {
+		var i ListBuyerOrdersRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Status,
+			&i.TotalTiyn,
+			&i.CreatedAt,
+			&i.ExpiresAt,
+			&i.EventID,
+			&i.EventSlug,
+			&i.EventTitle,
+			&i.EventStartsAt,
+			&i.OrganizerSlug,
+			&i.VenueName,
+			&i.VenueTimezone,
+			&i.Items,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOrderItems = `-- name: ListOrderItems :many
 SELECT i.event_seat_id, s.kind, s.section, s.row_label, s.seat_label, i.price_tiyn
 FROM order_items i JOIN event_seats s ON s.id = i.event_seat_id
@@ -659,16 +725,47 @@ func (q *Queries) ReleaseOrderSeats(ctx context.Context, orderID string) ([]Rele
 	return items, nil
 }
 
-const releaseRefundedSeats = `-- name: ReleaseRefundedSeats :exec
-UPDATE event_seats s SET status = 'available'
+const releaseRefundedSeats = `-- name: ReleaseRefundedSeats :many
+UPDATE event_seats s SET status = 'available', hold_order_id = NULL, hold_expires_at = NULL
 FROM tickets t
 WHERE t.id = ANY($1::uuid[]) AND s.id = t.event_seat_id AND s.status = 'sold'
+RETURNING s.id, s.kind, s.section, s.row_label, s.seat_label
 `
 
-// Места возвращённых билетов снова продаются.
-func (q *Queries) ReleaseRefundedSeats(ctx context.Context, ticketIds []string) error {
-	_, err := q.db.Exec(ctx, releaseRefundedSeats, ticketIds)
-	return err
+type ReleaseRefundedSeatsRow struct {
+	ID        string
+	Kind      string
+	Section   string
+	RowLabel  *string
+	SeatLabel string
+}
+
+// Места возвращённых билетов снова продаются. Возвращает места, чтобы
+// снять их ключи холдов в Redis.
+func (q *Queries) ReleaseRefundedSeats(ctx context.Context, ticketIds []string) ([]ReleaseRefundedSeatsRow, error) {
+	rows, err := q.db.Query(ctx, releaseRefundedSeats, ticketIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReleaseRefundedSeatsRow{}
+	for rows.Next() {
+		var i ReleaseRefundedSeatsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.Section,
+			&i.RowLabel,
+			&i.SeatLabel,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const releaseSeatsOfOrders = `-- name: ReleaseSeatsOfOrders :exec

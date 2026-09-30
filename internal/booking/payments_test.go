@@ -326,3 +326,30 @@ func TestConfirmPaymentForCancelledEvent(t *testing.T) {
 		t.Errorf("order = %s; want cancelled with a refund and no tickets", s)
 	}
 }
+
+// Возвращённое место сразу снова продаётся: холд оплаченного заказа в
+// Redis снимается вместе с освобождением места в базе.
+func TestRefundedSeatIsBookableAgain(t *testing.T) {
+	e := newEnv(t, true, 1, 2, 0)
+	ctx := t.Context()
+	o, err := e.svc.CreateOrder(ctx, e.buyer(t), e.eventID, seatsReq(seat(1, 1)), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.ConfirmPayment(ctx, paid(o, time.Now())); err != nil {
+		t.Fatal(err)
+	}
+	var ticketID string
+	if err := e.db.Pool.QueryRow(ctx, `
+		INSERT INTO tickets (organizer_id, event_id, order_id, order_item_id, event_seat_id, status, revoked_at)
+		SELECT organizer_id, $1, order_id, id, event_seat_id, 'revoked', now() FROM order_items WHERE order_id = $2
+		RETURNING id`, e.eventID, o.ID).Scan(&ticketID); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.ApplyRefund(ctx, events.OrderRefundedEvent{OrderID: o.ID, TicketIDs: []string{ticketID}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.CreateOrder(ctx, e.buyer(t), e.eventID, seatsReq(seat(1, 1)), time.Now()); err != nil {
+		t.Errorf("refunded seat must be bookable at once: %v", err)
+	}
+}

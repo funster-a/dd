@@ -14,14 +14,20 @@ import (
 // продаются, заказ становится partially_refunded или refunded — только
 // после успешного возврата денег (spec.md, ADR 014). Повтор ничего не меняет.
 func (s *Service) ApplyRefund(ctx context.Context, ev events.OrderRefundedEvent) error {
-	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+	var released []string
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		q := s.q.WithTx(tx)
 		o, err := q.LockOrder(ctx, ev.OrderID)
 		if err != nil {
 			return fmt.Errorf("lock order %s: %w", ev.OrderID, err)
 		}
-		if err := q.ReleaseRefundedSeats(ctx, ev.TicketIDs); err != nil {
+		seats, err := q.ReleaseRefundedSeats(ctx, ev.TicketIDs)
+		if err != nil {
 			return fmt.Errorf("release seats: %w", err)
+		}
+		released = released[:0]
+		for _, r := range seats {
+			released = append(released, holdKey(o.EventID, r.Section, r.RowLabel, r.SeatLabel))
 		}
 		if o.Status != "paid" && o.Status != "partially_refunded" {
 			return nil
@@ -36,4 +42,11 @@ func (s *Service) ApplyRefund(ctx context.Context, ev events.OrderRefundedEvent)
 		}
 		return q.SetOrderRefundStatus(ctx, bookingdb.SetOrderRefundStatusParams{ID: o.ID, Status: status})
 	})
+	if err != nil {
+		return err
+	}
+	// Холд оплаченного заказа живёт в Redis до конца TTL. Без снятия ключа
+	// возвращённое место выглядело бы свободным, но не бронировалось бы.
+	s.releaseKeys(ctx, released, ev.OrderID)
+	return nil
 }

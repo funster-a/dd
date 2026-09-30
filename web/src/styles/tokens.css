@@ -1,0 +1,114 @@
+/*
+ * Дизайн-токены «Партера» (ADR 015). Язык — афиша и журнал: тёплая бумага,
+ * чернила, один яркий акцент. Моноширинный шрифт — для мест, времени и цен,
+ * как на корешке билета.
+ */
+:root {
+  --paper: #f3efe6;
+  --paper-2: #ebe5d8;
+  --paper-3: #e1d9c8;
+  --ink: #16140f;
+  --ink-2: #57524a;
+  --ink-3: #8b8578;
+  --line: #d8d0bf;
+  --line-strong: #b9b09c;
+  --accent: #ff4d1f;
+  --accent-ink: #ffffff;
+  --accent-soft: #ffe2d8;
+  --ok: #1f7a4d;
+  --ok-soft: #dcefe3;
+  --warn: #a86a12;
+  --warn-soft: #f6e7cc;
+  --danger: #c0321d;
+
+  /* Категории цен на схеме зала: приглушённые, различимые и в тёмной теме. */
+  --cat-1: #ff4d1f;
+  --cat-2: #1e6f6a;
+  --cat-3: #c8961e;
+  --cat-4: #6d4a8a;
+  --cat-5: #3e5a8a;
+  --cat-6: #8a5a3e;
+
+  --font-sans: 'Onest Variable', 'Onest', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-serif: 'Playfair Display', Georgia, serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-md: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: clamp(1.25rem, 1.1rem + 0.6vw, 1.5rem);
+  --text-2xl: clamp(1.6rem, 1.3rem + 1.3vw, 2.25rem);
+  --text-3xl: clamp(2.2rem, 1.6rem + 2.8vw, 3.75rem);
+  --text-4xl: clamp(2.8rem, 1.8rem + 5vw, 6.25rem);
+
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 16px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 72px;
+
+  --page: 1200px;
+  --gutter: clamp(16px, 4vw, 40px);
+  --shadow: 0 1px 0 rgba(22, 20, 15, 0.04), 0 12px 32px -18px rgba(22, 20, 15, 0.35);
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --paper: #121110;
+    --paper-2: #1b1a17;
+    --paper-3: #26241f;
+    --ink: #f1ece2;
+    --ink-2: #b4ad9f;
+    --ink-3: #7f796d;
+    --line: #2f2c26;
+    --line-strong: #48443b;
+    --accent: #ff6a3d;
+    --accent-ink: #16140f;
+    --accent-soft: #3a1d13;
+    --ok: #57c28b;
+    --ok-soft: #13291e;
+    --warn: #e0a54a;
+    --warn-soft: #2d2213;
+    --danger: #ff7a66;
+    --cat-2: #3fa59d;
+    --cat-4: #a07bc0;
+    --cat-5: #7b98c8;
+    --shadow: 0 1px 0 rgba(0, 0, 0, 0.3), 0 16px 40px -20px rgba(0, 0, 0, 0.8);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme='dark'] {
+  --paper: #121110;
+  --paper-2: #1b1a17;
+  --paper-3: #26241f;
+  --ink: #f1ece2;
+  --ink-2: #b4ad9f;
+  --ink-3: #7f796d;
+  --line: #2f2c26;
+  --line-strong: #48443b;
+  --accent: #ff6a3d;
+  --accent-ink: #16140f;
+  --accent-soft: #3a1d13;
+  --ok: #57c28b;
+  --ok-soft: #13291e;
+  --warn: #e0a54a;
+  --warn-soft: #2d2213;
+  --danger: #ff7a66;
+  --cat-2: #3fa59d;
+  --cat-4: #a07bc0;
+  --cat-5: #7b98c8;
+  --shadow: 0 1px 0 rgba(0, 0, 0, 0.3), 0 16px 40px -20px rgba(0, 0, 0, 0.8);
+  color-scheme: dark;
+}

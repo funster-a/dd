@@ -26,8 +26,18 @@ func (s *Service) AdminRoutes() http.Handler {
 // /v1/public и не требуют входа.
 func (s *Service) PublicRoutes() http.Handler {
 	r := chi.NewRouter()
+	r.Get("/events", s.handleUpcoming)
 	r.Get("/events/{organizerSlug}/{eventSlug}", s.handlePublicEvent)
 	return r
+}
+
+func (s *Service) handleUpcoming(w http.ResponseWriter, r *http.Request) {
+	list, err := s.ListUpcoming(r.Context(), time.Now())
+	if writeError(w, r, err) {
+		return
+	}
+	w.Header().Set("Cache-Control", "public, max-age=30")
+	httpx.WriteJSON(w, http.StatusOK, list)
 }
 
 func (s *Service) handlePublicEvent(w http.ResponseWriter, r *http.Request) {

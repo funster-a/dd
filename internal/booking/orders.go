@@ -526,3 +526,37 @@ func deref(s *string) string {
 	}
 	return *s
 }
+
+// OrderSummary — заказ в разделе «Мои билеты».
+type OrderSummary struct {
+	ID            string    `json:"id"`
+	Status        string    `json:"status"`
+	TotalTiyn     int64     `json:"total_tiyn"`
+	Items         int32     `json:"items"`
+	CreatedAt     time.Time `json:"created_at"`
+	ExpiresAt     time.Time `json:"expires_at"`
+	EventID       string    `json:"event_id"`
+	EventSlug     string    `json:"event_slug"`
+	EventTitle    string    `json:"event_title"`
+	EventStartsAt time.Time `json:"event_starts_at"`
+	OrganizerSlug string    `json:"organizer_slug"`
+	Venue         string    `json:"venue"`
+	Timezone      string    `json:"timezone"`
+}
+
+// ListOrders возвращает заказы покупателя, новые сверху.
+func (s *Service) ListOrders(ctx context.Context, buyerID string) ([]OrderSummary, error) {
+	rows, err := s.q.ListBuyerOrders(ctx, buyerID)
+	if err != nil {
+		return nil, fmt.Errorf("list orders: %w", err)
+	}
+	out := make([]OrderSummary, len(rows))
+	for i, r := range rows {
+		out[i] = OrderSummary{
+			ID: r.ID, Status: r.Status, TotalTiyn: r.TotalTiyn, Items: r.Items, CreatedAt: r.CreatedAt, ExpiresAt: r.ExpiresAt,
+			EventID: r.EventID, EventSlug: r.EventSlug, EventTitle: r.EventTitle, EventStartsAt: r.EventStartsAt,
+			OrganizerSlug: r.OrganizerSlug, Venue: r.VenueName, Timezone: r.VenueTimezone,
+		}
+	}
+	return out, nil
+}

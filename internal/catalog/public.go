@@ -154,3 +154,46 @@ func (s *Service) invalidatePublic(ctx context.Context, organizerID, eventSlug s
 func publicKey(organizerSlug, eventSlug string) string {
 	return "catalog:public-event:" + organizerSlug + "/" + eventSlug
 }
+
+// UpcomingEvent — событие в афише на главной.
+type UpcomingEvent struct {
+	ID            string    `json:"id"`
+	OrganizerSlug string    `json:"organizer_slug"`
+	OrganizerName string    `json:"organizer_name"`
+	Slug          string    `json:"slug"`
+	Title         string    `json:"title"`
+	StartsAt      time.Time `json:"starts_at"`
+	AgeRating     string    `json:"age_rating"`
+	Admission     string    `json:"admission"`
+	Venue         string    `json:"venue"`
+	Timezone      string    `json:"timezone"`
+	CoverImageURL string    `json:"cover_image_url"`
+	// MinPriceTiyn — самая низкая цена; null у события без билетов.
+	MinPriceTiyn *int64 `json:"min_price_tiyn"`
+}
+
+// upcomingLimit — сколько событий в афише.
+const upcomingLimit = 60
+
+// ListUpcoming возвращает ближайшие опубликованные события.
+func (s *Service) ListUpcoming(ctx context.Context, now time.Time) ([]UpcomingEvent, error) {
+	rows, err := s.q.ListUpcomingEvents(ctx, catalogdb.ListUpcomingEventsParams{Now: now, MaxRows: upcomingLimit})
+	if err != nil {
+		return nil, fmt.Errorf("list upcoming events: %w", err)
+	}
+	out := make([]UpcomingEvent, len(rows))
+	for i, r := range rows {
+		e := UpcomingEvent{
+			ID: r.ID, OrganizerSlug: r.OrganizerSlug, OrganizerName: r.OrganizerName, Slug: r.Slug, Title: r.Title,
+			StartsAt: r.StartsAt, AgeRating: r.AgeRating, Admission: r.Admission, Venue: r.VenueName, Timezone: r.VenueTimezone,
+		}
+		if r.MinPriceTiyn >= 0 {
+			e.MinPriceTiyn = &r.MinPriceTiyn
+		}
+		if s.store != nil && r.CoverImageKey != nil {
+			e.CoverImageURL = s.store.URL(*r.CoverImageKey)
+		}
+		out[i] = e
+	}
+	return out, nil
+}

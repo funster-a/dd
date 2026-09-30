@@ -137,3 +137,16 @@ SELECT slug FROM organizers WHERE id = @id;
 UPDATE events SET status = 'cancelled', cancelled_at = now(), updated_at = now()
 WHERE organizer_id = @organizer_id AND id = @id AND status <> 'cancelled'
 RETURNING *;
+
+-- name: ListUpcomingEvents :many
+-- Афиша на главной: опубликованные события, которые ещё не закончились.
+SELECT e.id, e.slug, e.title, e.starts_at, e.age_rating, e.admission, e.cover_image_key,
+       o.slug AS organizer_slug, o.name AS organizer_name,
+       v.name AS venue_name, v.timezone AS venue_timezone,
+       coalesce((SELECT min(pc.price_tiyn) FROM price_categories pc WHERE pc.event_id = e.id), -1)::bigint AS min_price_tiyn
+FROM events e
+JOIN organizers o ON o.id = e.organizer_id
+JOIN venues v ON v.id = e.venue_id
+WHERE e.status = 'published' AND e.ends_at > @now::timestamptz
+ORDER BY e.starts_at, e.id
+LIMIT @max_rows;

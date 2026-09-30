@@ -2,7 +2,7 @@
 
 Платформа для организаторов мероприятий: организатор заводит событие и схему зала и продаёт билеты со своего сайта. Дипломный проект.
 
-Сейчас готовы вход по одноразовому коду, кабинет организатора (площадки, схемы залов, события с ценами и обложками, публикация), публичная страница события и бронирование мест с холдом на 10 минут, оплата через платёжного провайдера (в MVP — его мок) электронные билеты с QR-кодом, бесплатные мероприятия, API контроля входа со ссылками сканера, возвраты, отмена события и отчёты организатора. Следующий этап — фронтенд: сайт покупателя, кабинет организатора и экран сканера.
+Сейчас готовы вход по одноразовому коду, кабинет организатора (площадки, схемы залов, события с ценами и обложками, публикация), публичная страница события и бронирование мест с холдом на 10 минут, оплата через платёжного провайдера (в MVP — его мок) электронные билеты с QR-кодом, бесплатные мероприятия, API контроля входа со ссылками сканера, возвраты, отмена события и отчёты организатора, сайт покупателя: афиша, схема зала, оформление, оплата, билеты и возвраты. Следующий этап — кабинет организатора и экран сканера в вебе.
 
 - Правила работы и стек — [`CLAUDE.md`](CLAUDE.md)
 - Спецификация — [`docs/spec.md`](docs/spec.md)
@@ -14,9 +14,10 @@
 |---|---|---|
 | Docker с Compose v2 | Docker 24+, Compose 2.24+ | инфраструктура и запуск проекта |
 | Go | 1.27.1 | локальная разработка; с Go 1.21+ нужная версия скачается сама по `go.mod` |
+| Node.js | 22.12+ (в CI и Docker — 24) | разработка фронтенда в `web/` |
 | make | любая | команды разработки |
 
-Для одного только запуска в Docker Go и make не нужны.
+Для одного только запуска в Docker Go, Node.js и make не нужны.
 
 ## Быстрый старт: весь проект в Docker
 
@@ -26,7 +27,9 @@ cd dd
 docker compose up -d --build --wait
 ```
 
-Команда собирает образы и поднимает PostgreSQL, Redis, RabbitMQ, SeaweedFS, Prometheus, Grafana и мок платёжного провайдера. Затем применяет миграции и запускает api и worker. Она завершается, когда все сервисы здоровы.
+Команда собирает образы и поднимает PostgreSQL, Redis, RabbitMQ, SeaweedFS, Prometheus, Grafana и мок платёжного провайдера. Затем применяет миграции и запускает api, worker и сайт. Она завершается, когда все сервисы здоровы.
+
+Сайт покупателя открывается на http://localhost:8000. Афиша пуста, пока организатор не опубликует событие (раздел [API](#api)). Код входа для покупателя приходит в лог api: `docker compose logs api | grep one-time`.
 
 Проверка:
 
@@ -50,6 +53,7 @@ docker compose logs worker
 
 | Сервис | Адрес | Доступ |
 |---|---|---|
+| Сайт покупателя | http://localhost:8000 | вход по телефону, код в логе api |
 | api | http://localhost:8080 | — |
 | RabbitMQ, панель управления | http://localhost:15672 | `dd` / `dd` |
 | Prometheus | http://localhost:9090 | — |
@@ -78,6 +82,18 @@ make run-fakepsp     # мок платёжного провайдера на :80
 ```
 
 Если api из Docker уже запущен, он занимает порт 8080. Остановите его (`docker compose stop api`) или запустите локальный на другом порту: `make run HTTP_ADDR=:8081`.
+
+Сайт в режиме разработки: Vite с горячей перезагрузкой проксирует `/v1` в api на `:8080` (другой адрес — `API_URL=http://localhost:8081 npm run dev`):
+
+```sh
+cd web
+npm ci
+npm run dev          # http://localhost:5173
+npm test             # юнит-тесты (vitest)
+npm run typecheck    # vue-tsc
+```
+
+Чтобы ссылки на билеты и возврат после оплаты вели на Vite, запустите api и worker с `PUBLIC_BASE_URL=http://localhost:5173`.
 
 Разовые переопределения передавайте аргументом make (`make run LOG_LEVEL=debug`), а не префиксом перед командой. Значения из `.env` для make сильнее переменных окружения.
 
@@ -113,7 +129,7 @@ make run-fakepsp     # мок платёжного провайдера на :80
 | `DATABASE_URL` | `postgres://dd:dd@localhost:5432/dd?sslmode=disable` | PostgreSQL |
 | `REDIS_ADDR` | `localhost:6379` | Redis |
 | `RABBITMQ_URL` | `amqp://dd:dd@localhost:5672/` | RabbitMQ |
-| `PUBLIC_BASE_URL` | `http://localhost:8080` | адрес платформы для браузера: ссылки на билеты, возврат после оплаты |
+| `PUBLIC_BASE_URL` | `http://localhost:8080` | адрес сайта для браузера: ссылки на билеты, возврат после оплаты. В Docker — адрес сайта `http://localhost:8000` |
 | `PSP_URL` | `http://localhost:8090` | API платёжного провайдера (мок `fakepsp`) |
 | `PSP_API_KEY`, `PSP_WEBHOOK_SECRET` | `dev-psp-api-key`, `dev-psp-webhook-secret` | ключ API и секрет подписи вебхуков; значения только для мока |
 | `PAYMENT_CALLBACK_URL` | `PUBLIC_BASE_URL` + `/v1/payments/webhooks/fakepsp` | куда провайдер шлёт вебхуки |
@@ -174,6 +190,7 @@ curl -X POST localhost:8080/v1/admin/organizers \
 Публичная страница события — без входа, только опубликованные события:
 
 ```sh
+curl localhost:8080/v1/public/events       # афиша: ближайшие опубликованные события с минимальной ценой
 curl localhost:8080/v1/public/events/standup-club/<event-slug>
 ```
 
@@ -187,6 +204,7 @@ curl -X POST localhost:8080/v1/events/<event-id>/orders \
   -H "Authorization: Bearer <buyer-token>" -H "Idempotency-Key: $(uuidgen)" \
   -d '{"seats":[{"section":"Партер","row":"1","seat":"3"}],"general":[{"section":"Фан-зона","quantity":2}],"email":"me@example.com"}'
 curl localhost:8080/v1/orders/<order-id> -H "Authorization: Bearer <buyer-token>"
+curl localhost:8080/v1/me/orders -H "Authorization: Bearer <buyer-token>"      # заказы покупателя для «Моих билетов»
 curl -X POST localhost:8080/v1/orders/<order-id>/cancel \
   -H "Authorization: Bearer <buyer-token>" -H "Idempotency-Key: $(uuidgen)"
 ```
@@ -252,7 +270,8 @@ internal/platform/ общий код: config, db, redis, mq, outbox, events, htt
 internal/fakepsp/ логика мока провайдера (для cmd/fakepsp и тестов)
 migrations/       goose-миграции
 docs/             спецификация и ADR
-web/, loadtest/   фронтенд на Vue и сценарии k6 (появятся позже)
+web/              сайт покупателя: Vue, TypeScript, Vite; в Docker — nginx (ADR 015)
+loadtest/         сценарии k6 (появятся позже)
 ```
 
 - **Логи** пишутся в JSON через `log/slog`. У каждой строки есть поле `service`, у строк запроса — `request_id` (заголовок `X-Request-ID`).
@@ -266,7 +285,8 @@ GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) запу
 - **Build** — `go mod tidy -diff`, сборка;
 - **Lint** — golangci-lint v2.14.0;
 - **Test** — миграции против PostgreSQL: `up`, `reset` с проверкой, что в базе ничего не осталось, снова `up`; затем все тесты с `-race`, включая тесты инвариантов схемы и интеграционные с RabbitMQ;
-- **Compose** — `docker compose up --build --wait` с нуля, проверка api и доставки сообщения до worker.
+- **Web** — `npm ci`, проверка типов `vue-tsc`, юнит-тесты vitest, сборка Vite;
+- **Compose** — `docker compose up --build --wait` с нуля, проверка api, доставки сообщения до worker, раздачи сайта, прокси `/v1` и заголовка CSP.
 
 Интеграционные тесты запускаются, только если заданы переменные `DATABASE_TEST_URL` (PostgreSQL), `REDIS_TEST_ADDR`, `RABBITMQ_TEST_URL` и `S3_TEST_ENDPOINT`, иначе пропускаются. `make test-integration` задаёт их сама. Тесты базы создают для себя временную базу `dd_test_*`, применяют к ней миграции и удаляют её после теста, поэтому рабочая база не засоряется.
 

@@ -1,0 +1,12 @@
+{
+  "name": "Партер · контроль входа",
+  "short_name": "Вход",
+  "description": "Сканер билетов для контролёров",
+  "start_url": "/scan",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0c0b0a",
+  "theme_color": "#0c0b0a",
+  "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

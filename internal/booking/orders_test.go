@@ -476,3 +476,38 @@ func TestFreeEntryEventHasNoOrders(t *testing.T) {
 		t.Errorf("err = %v, want free_entry", err)
 	}
 }
+
+func TestListOrders(t *testing.T) {
+	e := newEnv(t, false, 1, 3, 0)
+	ctx := t.Context()
+	buyer := e.buyer(t)
+	first, err := e.svc.CreateOrder(ctx, buyer, e.eventID, seatsReq(seat(1, 1)), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.ConfirmPayment(ctx, paid(first, time.Now())); err != nil {
+		t.Fatal(err)
+	}
+	second, err := e.svc.CreateOrder(ctx, buyer, e.eventID, seatsReq(seat(1, 2), seat(1, 3)), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Заказ другого покупателя в список не попадает.
+	if _, err := e.svc.CreateOrder(ctx, e.buyer(t), e.eventID, seatsReq(seat(1, 1)), time.Now()); err == nil {
+		t.Fatal("sold seat was booked by another buyer")
+	}
+	list, err := e.svc.ListOrders(ctx, buyer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 || list[0].ID != second.ID || list[0].Items != 2 || list[1].Status != "paid" || list[0].EventTitle != "Show" {
+		t.Errorf("orders = %+v", list)
+	}
+	// Отменённая корзина в списке не показывается.
+	if _, err := e.svc.CancelOrder(ctx, buyer, second.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if list, _ := e.svc.ListOrders(ctx, buyer); len(list) != 1 {
+		t.Errorf("orders after cancel = %d, want 1", len(list))
+	}
+}

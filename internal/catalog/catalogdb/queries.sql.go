@@ -765,6 +765,73 @@ func (q *Queries) ListSectionPrices(ctx context.Context, arg ListSectionPricesPa
 	return items, nil
 }
 
+const listUpcomingEvents = `-- name: ListUpcomingEvents :many
+SELECT e.id, e.slug, e.title, e.starts_at, e.age_rating, e.admission, e.cover_image_key,
+       o.slug AS organizer_slug, o.name AS organizer_name,
+       v.name AS venue_name, v.timezone AS venue_timezone,
+       coalesce((SELECT min(pc.price_tiyn) FROM price_categories pc WHERE pc.event_id = e.id), -1)::bigint AS min_price_tiyn
+FROM events e
+JOIN organizers o ON o.id = e.organizer_id
+JOIN venues v ON v.id = e.venue_id
+WHERE e.status = 'published' AND e.ends_at > $1::timestamptz
+ORDER BY e.starts_at, e.id
+LIMIT $2
+`
+
+type ListUpcomingEventsParams struct {
+	Now     time.Time
+	MaxRows int32
+}
+
+type ListUpcomingEventsRow struct {
+	ID            string
+	Slug          string
+	Title         string
+	StartsAt      time.Time
+	AgeRating     string
+	Admission     string
+	CoverImageKey *string
+	OrganizerSlug string
+	OrganizerName string
+	VenueName     string
+	VenueTimezone string
+	MinPriceTiyn  int64
+}
+
+// Афиша на главной: опубликованные события, которые ещё не закончились.
+func (q *Queries) ListUpcomingEvents(ctx context.Context, arg ListUpcomingEventsParams) ([]ListUpcomingEventsRow, error) {
+	rows, err := q.db.Query(ctx, listUpcomingEvents, arg.Now, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUpcomingEventsRow{}
+	for rows.Next() {
+		var i ListUpcomingEventsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Slug,
+			&i.Title,
+			&i.StartsAt,
+			&i.AgeRating,
+			&i.Admission,
+			&i.CoverImageKey,
+			&i.OrganizerSlug,
+			&i.OrganizerName,
+			&i.VenueName,
+			&i.VenueTimezone,
+			&i.MinPriceTiyn,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listVenues = `-- name: ListVenues :many
 SELECT id, organizer_id, name, address, timezone, created_at, updated_at, latitude, longitude FROM venues
 WHERE organizer_id = $1

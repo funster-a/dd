@@ -1,4 +1,4 @@
-# Локальный запуск проекта: инфраструктура, миграции, api и worker.
+# Локальный запуск проекта: инфраструктура, миграции, api, worker и сайт.
 # Значения по умолчанию подходят для локального запуска; переопределяются через .env.
 name: dd
 
@@ -9,7 +9,8 @@ x-app-env: &app-env
   DATABASE_URL: postgres://${POSTGRES_USER:-dd}:${POSTGRES_PASSWORD:-dd}@postgres:5432/${POSTGRES_DB:-dd}?sslmode=disable
   REDIS_ADDR: redis:6379
   RABBITMQ_URL: amqp://${RABBITMQ_USER:-dd}:${RABBITMQ_PASSWORD:-dd}@rabbitmq:5672/
-  PUBLIC_BASE_URL: http://localhost:${API_PORT:-8080}
+  # Адрес сайта для браузера: ссылки на билеты и возврат после оплаты.
+  PUBLIC_BASE_URL: http://localhost:${WEB_PORT:-8000}
   # Мок платёжного провайдера (ADR 012); ключи — только для разработки.
   PSP_URL: http://fakepsp:8090
   PSP_API_KEY: dev-psp-api-key
@@ -204,6 +205,19 @@ services:
       migrate:
         condition: service_completed_successfully
     stop_grace_period: 20s
+
+  # Сайт покупателя (ADR 015): nginx со сборкой Vue, /v1 проксирует в api.
+  web:
+    build:
+      context: ./web
+    environment:
+      API_UPSTREAM: http://api:8080
+      MEDIA_ORIGIN: http://localhost:${S3_PORT:-8333}
+    ports:
+      - "127.0.0.1:${WEB_PORT:-8000}:80"
+    depends_on:
+      api:
+        condition: service_healthy
 
 configs:
   seaweedfs-s3:

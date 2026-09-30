@@ -19,6 +19,7 @@ import (
 //	POST /events/{eventID}/orders       — заказ покупателя
 //	GET  /orders/{orderID}              — заказ покупателя
 //	POST /orders/{orderID}/cancel       — отмена неоплаченного заказа
+//	GET  /me/orders                     — заказы покупателя
 func (s *Service) Register(r chi.Router) {
 	r.Get("/events/{eventID}/availability", s.handleAvailability)
 	r.Group(func(r chi.Router) {
@@ -26,6 +27,7 @@ func (s *Service) Register(r chi.Router) {
 		idem := idempotency.Middleware(s.pool)
 		r.With(idem).Post("/events/{eventID}/orders", s.handleCreateOrder)
 		r.Get("/orders/{orderID}", s.handleGetOrder)
+		r.Get("/me/orders", s.handleListOrders)
 		r.With(idem).Post("/orders/{orderID}/cancel", s.handleCancelOrder)
 	})
 }
@@ -62,6 +64,14 @@ func (s *Service) handleGetOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, o)
+}
+
+func (s *Service) handleListOrders(w http.ResponseWriter, r *http.Request) {
+	list, err := s.ListOrders(r.Context(), buyerID(r))
+	if writeError(w, r, err) {
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, list)
 }
 
 func (s *Service) handleCancelOrder(w http.ResponseWriter, r *http.Request) {

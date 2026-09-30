@@ -186,3 +186,28 @@ func TestPublicEventHTTP(t *testing.T) {
 		t.Errorf("headers = %v", rec.Header())
 	}
 }
+
+func TestListUpcoming(t *testing.T) {
+	e, _, orgSlug := newPublicEnv(t)
+	ctx := t.Context()
+	pub := e.draft(t)
+	e.ready(t, pub)
+	if _, err := e.svc.Publish(ctx, e.org, pub.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	_ = e.draft(t) // черновик в афишу не попадает
+	list, err := e.svc.ListUpcoming(ctx, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].ID != pub.ID || list[0].OrganizerSlug != orgSlug || list[0].CoverImageURL == "" {
+		t.Fatalf("upcoming = %+v", list)
+	}
+	if list[0].MinPriceTiyn == nil || *list[0].MinPriceTiyn <= 0 {
+		t.Errorf("min price = %v", list[0].MinPriceTiyn)
+	}
+	// Прошедшие события уходят из афиши.
+	if later, _ := e.svc.ListUpcoming(ctx, time.Now().Add(60*24*time.Hour)); len(later) != 0 {
+		t.Errorf("finished events in upcoming: %d", len(later))
+	}
+}

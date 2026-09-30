@@ -272,6 +272,10 @@ func TestMediaUpload(t *testing.T) {
 	if err != nil || *got.CoverImageKey != img.Key || *got.CoverVideoKey != vid.Key {
 		t.Fatalf("SetMedia() = %+v, %v", got, err)
 	}
+	// Кабинет показывает превью по публичным адресам хранилища.
+	if p := e.svc.withMediaURLs(got); p.CoverImageURL != e.store.URL(img.Key) || p.CoverVideoURL != e.store.URL(vid.Key) {
+		t.Errorf("media URLs = %q, %q", p.CoverImageURL, p.CoverVideoURL)
+	}
 }
 
 func TestPublish(t *testing.T) {

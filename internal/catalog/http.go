@@ -68,6 +68,7 @@ func (s *Service) OrganizerRoutes(extra ...func(chi.Router)) http.Handler {
 	}
 	idem := idempotency.Middleware(s.pool)
 
+	r.Get("/profile", s.handleProfile)
 	r.Get("/venues", s.handleListVenues)
 	r.With(idem).Post("/venues", s.handleCreateVenue)
 	r.Get("/venues/{venueID}", s.handleGetVenue)
@@ -90,6 +91,14 @@ func (s *Service) OrganizerRoutes(extra ...func(chi.Router)) http.Handler {
 	return r
 }
 
+func (s *Service) handleProfile(w http.ResponseWriter, r *http.Request) {
+	p, err := s.GetProfile(r.Context(), organizerID(r))
+	if writeError(w, r, err) {
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, p)
+}
+
 func (s *Service) handleCreateEvent(w http.ResponseWriter, r *http.Request) {
 	var in EventInput
 	if !decode(w, r, &in) {
@@ -99,7 +108,7 @@ func (s *Service) handleCreateEvent(w http.ResponseWriter, r *http.Request) {
 	if writeError(w, r, err) {
 		return
 	}
-	httpx.WriteJSON(w, http.StatusCreated, e)
+	httpx.WriteJSON(w, http.StatusCreated, s.withMediaURLs(e))
 }
 
 func (s *Service) handleUpdateEvent(w http.ResponseWriter, r *http.Request) {
@@ -111,7 +120,7 @@ func (s *Service) handleUpdateEvent(w http.ResponseWriter, r *http.Request) {
 	if writeError(w, r, err) {
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, e)
+	httpx.WriteJSON(w, http.StatusOK, s.withMediaURLs(e))
 }
 
 func (s *Service) handleGetEvent(w http.ResponseWriter, r *http.Request) {
@@ -119,13 +128,16 @@ func (s *Service) handleGetEvent(w http.ResponseWriter, r *http.Request) {
 	if writeError(w, r, err) {
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, e)
+	httpx.WriteJSON(w, http.StatusOK, s.withMediaURLs(e))
 }
 
 func (s *Service) handleListEvents(w http.ResponseWriter, r *http.Request) {
 	es, err := s.ListEvents(r.Context(), organizerID(r))
 	if writeError(w, r, err) {
 		return
+	}
+	for i := range es {
+		es[i] = s.withMediaURLs(es[i])
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"events": es})
 }
@@ -173,7 +185,7 @@ func (s *Service) handleSetMedia(w http.ResponseWriter, r *http.Request) {
 	if writeError(w, r, err) {
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, e)
+	httpx.WriteJSON(w, http.StatusOK, s.withMediaURLs(e))
 }
 
 func (s *Service) handleCancel(w http.ResponseWriter, r *http.Request) {
@@ -181,7 +193,7 @@ func (s *Service) handleCancel(w http.ResponseWriter, r *http.Request) {
 	if writeError(w, r, err) {
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, e)
+	httpx.WriteJSON(w, http.StatusOK, s.withMediaURLs(e))
 }
 
 func (s *Service) handlePublish(w http.ResponseWriter, r *http.Request) {
@@ -189,6 +201,7 @@ func (s *Service) handlePublish(w http.ResponseWriter, r *http.Request) {
 	if writeError(w, r, err) {
 		return
 	}
+	res.Event = s.withMediaURLs(res.Event)
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
 

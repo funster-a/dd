@@ -167,3 +167,149 @@ export interface LoginResponse {
   expires_at: string
   principal: { kind: string; subject_id: string }
 }
+
+// Кабинет организатора (ADR 007, 009, 013, 014).
+
+export type EventStatus = 'draft' | 'published' | 'cancelled'
+
+export interface OrgVenue {
+  id: string
+  name: string
+  address: string
+  timezone: string
+  latitude: number | null
+  longitude: number | null
+  created_at: string
+  updated_at: string
+}
+
+export interface VenueInput {
+  name: string
+  address: string
+  timezone: string
+  latitude: number | null
+  longitude: number | null
+}
+
+export interface OrgSeatMap {
+  id: string
+  venue_id: string
+  name: string
+  layout: Layout
+  seat_count: number
+  created_at: string
+}
+
+export interface OrgEvent {
+  id: string
+  venue_id: string
+  admission: 'ticketed' | 'free_entry'
+  seat_map_id: string | null
+  slug: string
+  title: string
+  description: string
+  age_rating: string
+  status: EventStatus
+  starts_at: string
+  ends_at: string
+  sales_start_at: string | null
+  sales_end_at: string | null
+  max_tickets_per_buyer: number
+  refund_deadline_hours: number
+  cover_image_key: string | null
+  cover_video_key: string | null
+  cover_image_url?: string
+  cover_video_url?: string
+  published_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface EventInput {
+  venue_id: string
+  admission: 'ticketed' | 'free_entry'
+  seat_map_id: string
+  slug: string
+  title: string
+  description: string
+  age_rating: string
+  starts_at: string
+  ends_at: string
+  sales_start_at: string | null
+  sales_end_at: string | null
+  max_tickets_per_buyer: number
+  refund_deadline_hours: number
+}
+
+export interface PriceInput {
+  name: string
+  price_tiyn: number
+  sections: string[]
+}
+
+export interface UploadTarget {
+  key: string
+  upload_url: string
+  method: string
+  headers: Record<string, string>
+  expires_at: string
+}
+
+export interface EventReport {
+  event: { id: string; title: string; status: EventStatus; admission: string; starts_at: string }
+  seats: { capacity: number; sold: number; held: number; available: number; occupancy_permille: number }
+  tickets: { active: number; used: number; refunded: number }
+  money: {
+    paid_orders: number
+    gross_tiyn: number
+    refunded_tiyn: number
+    net_tiyn: number
+    average_order_tiyn: number
+    currency: string
+  }
+  categories: { name: string; price_tiyn: number; capacity: number; sold: number; revenue_tiyn: number }[]
+  generated_at: string
+}
+
+export interface ScannerLink {
+  id: string
+  event_id: string
+  name: string
+  created_at: string
+  revoked_at: string | null
+  url?: string
+  token?: string
+}
+
+// Сканер контролёра.
+
+export interface ManifestTicket {
+  id: string
+  status: 'issued' | 'used' | 'revoked'
+  section: string
+  row: string | null
+  seat: string
+}
+
+export interface Manifest {
+  event: { id: string; title: string; starts_at: string; ends_at: string; venue: string; timezone: string }
+  tickets: ManifestTicket[]
+  generated_at: string
+}
+
+export type ScanOutcome = 'accepted' | 'duplicate' | 'revoked' | 'invalid' | 'wrong_event'
+
+export interface ScanResult {
+  client_scan_id: string
+  result: ScanOutcome
+  first_scanned_at?: string
+  section?: string
+  row?: string | null
+  seat?: string
+}
+
+export interface OrgProfile {
+  id: string
+  name: string
+  slug: string
+}

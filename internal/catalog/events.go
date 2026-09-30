@@ -65,9 +65,13 @@ type Event struct {
 	RefundDeadlineHours int32      `json:"refund_deadline_hours"`
 	CoverImageKey       *string    `json:"cover_image_key"`
 	CoverVideoKey       *string    `json:"cover_video_key"`
-	PublishedAt         *time.Time `json:"published_at"`
-	CreatedAt           time.Time  `json:"created_at"`
-	UpdatedAt           time.Time  `json:"updated_at"`
+	// Публичные адреса обложек для превью в кабинете; ключи выше — для
+	// SetMedia.
+	CoverImageURL string     `json:"cover_image_url,omitempty"`
+	CoverVideoURL string     `json:"cover_video_url,omitempty"`
+	PublishedAt   *time.Time `json:"published_at"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
 // PreconditionError — действие невозможно в текущем состоянии события
@@ -280,6 +284,20 @@ func eventWriteError(err error, op string) error {
 		return &ValidationError{Field: "seat_map_id", Message: "venue or seat map not found, or the seat map belongs to another venue"}
 	}
 	return fmt.Errorf("%s: %w", op, err)
+}
+
+// withMediaURLs дополняет событие адресами обложек в хранилище.
+func (s *Service) withMediaURLs(e Event) Event {
+	if s.store == nil {
+		return e
+	}
+	if e.CoverImageKey != nil {
+		e.CoverImageURL = s.store.URL(*e.CoverImageKey)
+	}
+	if e.CoverVideoKey != nil {
+		e.CoverVideoURL = s.store.URL(*e.CoverVideoKey)
+	}
+	return e
 }
 
 func eventFrom(e catalogdb.Event) Event {

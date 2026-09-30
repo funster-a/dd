@@ -12,10 +12,12 @@ const scroller = ref<HTMLElement | null>(null)
 
 // На узком экране схема сначала вписывается в ширину целиком, дальше
 // покупатель увеличивает нужный сектор; при смене масштаба центр остаётся.
-onMounted(() => {
+function fit() {
   const w = scroller.value ? scroller.value.clientWidth - 32 : props.map.width
   zoom.value = Math.max(MIN_ZOOM, Math.min(1, w / props.map.width))
-})
+}
+onMounted(fit)
+watch(() => props.map.width, fit)
 watch(zoom, async (z, old) => {
   const el = scroller.value
   if (!el) return

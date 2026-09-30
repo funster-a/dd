@@ -401,6 +401,24 @@ func (q *Queries) GetEventForUpdate(ctx context.Context, arg GetEventForUpdatePa
 	return i, err
 }
 
+const getOrganizerProfile = `-- name: GetOrganizerProfile :one
+SELECT id, name, slug FROM organizers WHERE id = $1
+`
+
+type GetOrganizerProfileRow struct {
+	ID   string
+	Name string
+	Slug string
+}
+
+// Кабинет: название и адрес организатора для шапки и публичных ссылок.
+func (q *Queries) GetOrganizerProfile(ctx context.Context, id string) (GetOrganizerProfileRow, error) {
+	row := q.db.QueryRow(ctx, getOrganizerProfile, id)
+	var i GetOrganizerProfileRow
+	err := row.Scan(&i.ID, &i.Name, &i.Slug)
+	return i, err
+}
+
 const getOrganizerSlug = `-- name: GetOrganizerSlug :one
 SELECT slug FROM organizers WHERE id = $1
 `

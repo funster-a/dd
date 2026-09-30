@@ -129,6 +129,10 @@ JOIN venues v ON v.id = e.venue_id
 LEFT JOIN seat_maps m ON m.id = e.seat_map_id
 WHERE o.slug = @organizer_slug AND e.slug = @event_slug AND e.status IN ('published', 'cancelled');
 
+-- name: GetOrganizerProfile :one
+-- Кабинет: название и адрес организатора для шапки и публичных ссылок.
+SELECT id, name, slug FROM organizers WHERE id = @id;
+
 -- name: GetOrganizerSlug :one
 SELECT slug FROM organizers WHERE id = @id;
 

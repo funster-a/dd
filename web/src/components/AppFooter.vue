@@ -9,12 +9,20 @@
         <p class="eyebrow">Покупателям</p>
         <p>Вход по номеру телефона, без паролей.</p>
         <p>Вернуть билет можно в кабинете до срока, указанного на странице события.</p>
+        <p class="eyebrow footer__org">Организаторам</p>
+        <p><RouterLink to="/org">Кабинет организатора →</RouterLink></p>
       </div>
     </div>
   </footer>
 </template>
 
 <style scoped>
+.footer__org {
+  margin-top: var(--space-3);
+}
+.footer a {
+  color: var(--ink);
+}
 .footer {
   margin-top: var(--space-8);
   border-top: 1px solid var(--line);

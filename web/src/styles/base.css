@@ -212,3 +212,70 @@ p {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Знак «Партера» — корешок билета с вырезами; для кабинета и сканера. */
+.brand-mark {
+  position: relative;
+  display: inline-block;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: var(--mark, var(--ink));
+  flex: none;
+}
+.brand-mark::before,
+.brand-mark::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  margin-left: -4px;
+  border-radius: 50%;
+  background: var(--mark-bg, var(--paper));
+}
+.brand-mark::before {
+  top: -4px;
+}
+.brand-mark::after {
+  bottom: -4px;
+}
+
+/* Чип статуса: черновик, в продаже, отменено. */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 99px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--paper-3);
+  color: var(--ink-2);
+}
+.chip::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.chip--published {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+.chip--cancelled {
+  background: color-mix(in srgb, var(--danger) 14%, var(--paper));
+  color: var(--danger);
+}
+.chip--draft {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.btn--danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}

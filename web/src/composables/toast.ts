@@ -13,6 +13,7 @@ export function useToast() {
   function show(text: string, tone: ToastItem['tone'] = 'info') {
     const id = ++seq
     items.push({ id, text, tone })
+    if (items.length > 3) items.splice(0, items.length - 3)
     setTimeout(() => {
       const i = items.findIndex((t) => t.id === id)
       if (i >= 0) items.splice(i, 1)

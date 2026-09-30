@@ -1,7 +1,7 @@
 -- Запросы модуля booking (ADR 011). Сгенерировать: make sqlc
 
 -- name: GetBookableEvent :one
-SELECT id, organizer_id, status, starts_at, sales_start_at, sales_end_at, max_tickets_per_buyer
+SELECT id, organizer_id, status, admission, starts_at, sales_start_at, sales_end_at, max_tickets_per_buyer
 FROM events WHERE id = @id;
 
 -- name: LockPendingOrder :one
@@ -135,3 +135,13 @@ SELECT count(*)::int FROM order_items WHERE order_id = @order_id;
 UPDATE orders SET status = 'paid', paid_at = @paid_at::timestamptz, updated_at = now()
 WHERE id = @id AND status = 'pending'
 RETURNING *;
+
+-- name: CountBuyerTickets :one
+-- Сколько билетов покупатель уже купил на событие: места оплаченных заказов,
+-- кроме возвращённых билетов.
+SELECT count(*)::int FROM order_items i
+JOIN orders o ON o.id = i.order_id
+LEFT JOIN tickets t ON t.order_item_id = i.id
+WHERE o.buyer_id = @buyer_id AND o.event_id = @event_id
+  AND o.status IN ('paid', 'partially_refunded')
+  AND (t.id IS NULL OR t.status <> 'revoked');

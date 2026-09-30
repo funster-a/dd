@@ -30,7 +30,9 @@ const publicTTL = 10 * time.Minute
 // секунду и отдаётся отдельно (модуль booking).
 type PublicEvent struct {
 	// ID — идентификатор для бронирования и занятости мест (модуль booking).
-	ID                  string          `json:"id"`
+	ID string `json:"id"`
+	// Admission — ticketed или free_entry (свободный вход, билеты не нужны).
+	Admission           string          `json:"admission"`
 	OrganizerSlug       string          `json:"organizer_slug"`
 	OrganizerName       string          `json:"organizer_name"`
 	Slug                string          `json:"slug"`
@@ -47,7 +49,8 @@ type PublicEvent struct {
 	CoverVideoURL       *string         `json:"cover_video_url"`
 	Venue               PublicVenue     `json:"venue"`
 	Prices              []PriceCategory `json:"prices"`
-	Layout              Layout          `json:"layout"`
+	// Layout — схема зала; null у события со свободным входом.
+	Layout *Layout `json:"layout"`
 }
 
 // PublicVenue — площадка на публичной странице.
@@ -99,9 +102,12 @@ func (s *Service) buildPublicEvent(ctx context.Context, organizerSlug, eventSlug
 	if err != nil {
 		return nil, fmt.Errorf("load public event: %w", err)
 	}
-	var layout Layout
-	if err := json.Unmarshal(e.SeatMapLayout, &layout); err != nil {
-		return nil, fmt.Errorf("decode layout: %w", err)
+	var layout *Layout
+	if e.SeatMapLayout != nil {
+		layout = &Layout{}
+		if err := json.Unmarshal(e.SeatMapLayout, layout); err != nil {
+			return nil, fmt.Errorf("decode layout: %w", err)
+		}
 	}
 	prices, err := s.GetPrices(ctx, e.OrganizerID, e.ID)
 	if err != nil {
@@ -109,6 +115,7 @@ func (s *Service) buildPublicEvent(ctx context.Context, organizerSlug, eventSlug
 	}
 	pe := PublicEvent{
 		ID:            e.ID,
+		Admission:     e.Admission,
 		OrganizerSlug: e.OrganizerSlug, OrganizerName: e.OrganizerName,
 		Slug: e.Slug, Title: e.Title, Description: e.Description, AgeRating: e.AgeRating,
 		StartsAt: e.StartsAt, EndsAt: e.EndsAt, SalesStartAt: e.SalesStartAt, SalesEndAt: e.SalesEndAt,

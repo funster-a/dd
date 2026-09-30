@@ -176,12 +176,15 @@ func TestTicketToken(t *testing.T) {
 		t.Fatalf("Parse(Token) = %s, %v", got, ok)
 	}
 	b := []byte(tok)
-	b[len(b)-1] ^= 1
+	b[len(b)-1] ^= 1 // меняет только «лишние» биты последнего символа
+	flipped := []byte(tok)
+	flipped[5] ^= 1
 	for name, bad := range map[string]string{
-		"tampered":  string(b),
-		"other key": NewSigner("key-two-1234567890").Token(id),
-		"garbage":   "not-a-token",
-		"empty":     "",
+		"non-canonical": string(b),
+		"tampered":      string(flipped),
+		"other key":     NewSigner("key-two-1234567890").Token(id),
+		"garbage":       "not-a-token",
+		"empty":         "",
 	} {
 		if _, ok := s.Parse(bad); ok {
 			t.Errorf("%s token accepted", name)

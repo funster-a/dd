@@ -47,9 +47,15 @@ func (s *Service) handlePublicEvent(w http.ResponseWriter, r *http.Request) {
 // OrganizerRoutes — кабинет организатора, монтируется под /v1/organizer.
 // Организатор берётся только из сессии (ADR 006): идентификаторы в URL
 // ищутся в пределах его данных, чужие записи отвечают 404.
-func (s *Service) OrganizerRoutes() http.Handler {
+//
+// extra добавляет в кабинет маршруты других модулей (например, ссылки
+// сканера из ticket): catalog их не знает, только монтирует.
+func (s *Service) OrganizerRoutes(extra ...func(chi.Router)) http.Handler {
 	r := chi.NewRouter()
 	r.Use(auth.Require(auth.KindOrganizer))
+	for _, register := range extra {
+		register(r)
+	}
 	idem := idempotency.Middleware(s.pool)
 
 	r.Get("/venues", s.handleListVenues)

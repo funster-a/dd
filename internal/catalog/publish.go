@@ -18,7 +18,8 @@ type PublishResult struct {
 }
 
 // Publish проверяет готовность черновика и одной транзакцией генерирует
-// места из схемы зала (ADR 005) и переводит событие в published.
+// места из схемы зала (ADR 005) и переводит событие в published. У события
+// со свободным входом мест нет: публикуется только страница.
 //
 // Строка события блокируется (FOR UPDATE), поэтому одновременные публикации
 // выполняются по очереди: вторая увидит status = published и получит 409,
@@ -41,27 +42,13 @@ func (s *Service) Publish(ctx context.Context, organizerID, eventID string, now 
 			return &PreconditionError{Code: "starts_in_past", Message: "event must start in the future"}
 		}
 
-		layout, err := eventLayout(ctx, q, organizerID, ev.SeatMapID)
-		if err != nil {
-			return err
+		var n int64
+		if ev.SeatMapID != nil {
+			if n, err = s.generateSeats(ctx, q, organizerID, eventID, *ev.SeatMapID); err != nil {
+				return err
+			}
 		}
-		links, err := q.ListSectionPrices(ctx, catalogdb.ListSectionPricesParams{OrganizerID: organizerID, EventID: eventID})
-		if err != nil {
-			return fmt.Errorf("list section prices: %w", err)
-		}
-		priceOf := make(map[string]string, len(links))
-		for _, l := range links {
-			priceOf[l.Section] = l.PriceCategoryID
-		}
-
-		seats, err := seatRows(organizerID, eventID, layout, priceOf)
-		if err != nil {
-			return err
-		}
-		n, err := q.InsertEventSeats(ctx, seats)
-		if err != nil {
-			return fmt.Errorf("insert event seats: %w", err)
-		}
+		// Свободный вход: мест и билетов нет, публикуется только страница.
 		if err := q.MarkEventPublished(ctx, catalogdb.MarkEventPublishedParams{OrganizerID: organizerID, ID: eventID}); err != nil {
 			return fmt.Errorf("mark published: %w", err)
 		}
@@ -73,6 +60,32 @@ func (s *Service) Publish(ctx context.Context, organizerID, eventID string, now 
 		return nil
 	})
 	return res, err
+}
+
+// generateSeats создаёт места события из схемы зала по привязке секторов
+// к ценам и возвращает их число.
+func (s *Service) generateSeats(ctx context.Context, q *catalogdb.Queries, organizerID, eventID, seatMapID string) (int64, error) {
+	layout, err := eventLayout(ctx, q, organizerID, seatMapID)
+	if err != nil {
+		return 0, err
+	}
+	links, err := q.ListSectionPrices(ctx, catalogdb.ListSectionPricesParams{OrganizerID: organizerID, EventID: eventID})
+	if err != nil {
+		return 0, fmt.Errorf("list section prices: %w", err)
+	}
+	priceOf := make(map[string]string, len(links))
+	for _, l := range links {
+		priceOf[l.Section] = l.PriceCategoryID
+	}
+	seats, err := seatRows(organizerID, eventID, layout, priceOf)
+	if err != nil {
+		return 0, err
+	}
+	n, err := q.InsertEventSeats(ctx, seats)
+	if err != nil {
+		return 0, fmt.Errorf("insert event seats: %w", err)
+	}
+	return n, nil
 }
 
 // seatRows разворачивает схему в строки мест. Виртуальные места входной

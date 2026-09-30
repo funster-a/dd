@@ -152,6 +152,19 @@ func (s *Service) CreateOrder(ctx context.Context, buyerID, eventID string, req 
 	if err := checkSales(ev, now, count); err != nil {
 		return Order{}, err
 	}
+	// Лимит — на покупателя за всё событие, с учётом уже купленных билетов:
+	// перекупщик не наберёт билеты несколькими заказами.
+	bought, err := s.q.CountBuyerTickets(ctx, bookingdb.CountBuyerTicketsParams{BuyerID: buyerID, EventID: eventID})
+	if err != nil {
+		return Order{}, fmt.Errorf("count bought tickets: %w", err)
+	}
+	if left := int(ev.MaxTicketsPerBuyer) - int(bought); count > left {
+		return Order{}, &PreconditionError{
+			Code: "ticket_limit_exceeded",
+			Message: fmt.Sprintf("at most %d tickets per buyer for this event, %d already bought",
+				ev.MaxTicketsPerBuyer, bought),
+		}
+	}
 
 	orderID := uuid.Must(uuid.NewV7()).String()
 	prevID := ""
@@ -187,6 +200,11 @@ func (s *Service) CreateOrder(ctx context.Context, buyerID, eventID string, req 
 		return Order{}, err
 	}
 
+	if res.free {
+		// Места уже проданы: холды в Redis больше не нужны.
+		s.releaseKeys(ctx, keys, orderID)
+		res.generalKeys = nil
+	}
 	if s.holds != nil {
 		// Виртуальные места выбирает база; их холды попадают в Redis после.
 		if len(res.generalKeys) > 0 {
@@ -209,6 +227,9 @@ func checkSales(ev bookingdb.GetBookableEventRow, now time.Time, count int) erro
 	default:
 		return ErrNotFound
 	}
+	if ev.Admission == "free_entry" {
+		return &PreconditionError{Code: "free_entry", Message: "event has free entry, no tickets are needed"}
+	}
 	if ev.SalesStartAt != nil && now.Before(*ev.SalesStartAt) {
 		return &PreconditionError{Code: "sales_not_started", Message: "sales have not started yet"}
 	}
@@ -222,7 +243,7 @@ func checkSales(ev bookingdb.GetBookableEventRow, now time.Time, count int) erro
 	if count > int(ev.MaxTicketsPerBuyer) {
 		return &PreconditionError{
 			Code:    "ticket_limit_exceeded",
-			Message: fmt.Sprintf("at most %d tickets per order", ev.MaxTicketsPerBuyer),
+			Message: fmt.Sprintf("at most %d tickets per buyer for this event", ev.MaxTicketsPerBuyer),
 		}
 	}
 	return nil
@@ -230,6 +251,7 @@ func checkSales(ev bookingdb.GetBookableEventRow, now time.Time, count int) erro
 
 type createResult struct {
 	order       Order
+	free        bool // бесплатный заказ оформлен сразу
 	generalKeys []string
 	prevID      string
 	prevKeys    []string
@@ -316,6 +338,13 @@ func (s *Service) createTx(ctx context.Context, ev bookingdb.GetBookableEventRow
 		o, err := q.SetOrderTotal(ctx, bookingdb.SetOrderTotalParams{ID: orderID, TotalTiyn: total})
 		if err != nil {
 			return fmt.Errorf("set order total: %w", err)
+		}
+		if total == 0 {
+			// Бесплатные билеты: платить нечего, заказ оформляется сразу.
+			if o, err = s.completeFree(ctx, tx, q, orderID, now); err != nil {
+				return err
+			}
+			res.free = true
 		}
 		if err := q.InsertOrderItems(ctx, bookingdb.InsertOrderItemsParams{
 			OrganizerID: ev.OrganizerID, EventID: ev.ID, OrderID: orderID, SeatIds: seatIDs, Prices: prices,

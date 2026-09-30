@@ -10,6 +10,56 @@ import (
 	"time"
 )
 
+const createScannerLink = `-- name: CreateScannerLink :one
+
+INSERT INTO scanner_links (organizer_id, event_id, name, token_hash)
+VALUES ($1, $2, $3, $4)
+RETURNING id, event_id, name, created_at, revoked_at
+`
+
+type CreateScannerLinkParams struct {
+	OrganizerID string
+	EventID     string
+	Name        string
+	TokenHash   []byte
+}
+
+type CreateScannerLinkRow struct {
+	ID        string
+	EventID   string
+	Name      string
+	CreatedAt time.Time
+	RevokedAt *time.Time
+}
+
+// Контроль входа (ADR 013).
+func (q *Queries) CreateScannerLink(ctx context.Context, arg CreateScannerLinkParams) (CreateScannerLinkRow, error) {
+	row := q.db.QueryRow(ctx, createScannerLink,
+		arg.OrganizerID,
+		arg.EventID,
+		arg.Name,
+		arg.TokenHash,
+	)
+	var i CreateScannerLinkRow
+	err := row.Scan(
+		&i.ID,
+		&i.EventID,
+		&i.Name,
+		&i.CreatedAt,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
+const demoteAcceptedScan = `-- name: DemoteAcceptedScan :exec
+UPDATE ticket_scans SET result = 'duplicate' WHERE ticket_id = $1 AND result = 'accepted'
+`
+
+func (q *Queries) DemoteAcceptedScan(ctx context.Context, ticketID string) error {
+	_, err := q.db.Exec(ctx, demoteAcceptedScan, ticketID)
+	return err
+}
+
 const getOrderDelivery = `-- name: GetOrderDelivery :one
 SELECT o.buyer_id, o.email, o.status, e.title, e.starts_at
 FROM orders o JOIN events e ON e.id = o.event_id
@@ -33,6 +83,82 @@ func (q *Queries) GetOrderDelivery(ctx context.Context, id string) (GetOrderDeli
 		&i.Status,
 		&i.Title,
 		&i.StartsAt,
+	)
+	return i, err
+}
+
+const getScanByClient = `-- name: GetScanByClient :one
+SELECT sc.result, sc.ticket_id, t.used_at, s.section, s.row_label, s.seat_label
+FROM ticket_scans sc
+JOIN tickets t ON t.id = sc.ticket_id
+JOIN event_seats s ON s.id = t.event_seat_id
+WHERE sc.scanner_link_id = $1 AND sc.client_scan_id = $2
+`
+
+type GetScanByClientParams struct {
+	ScannerLinkID string
+	ClientScanID  string
+}
+
+type GetScanByClientRow struct {
+	Result    string
+	TicketID  string
+	UsedAt    *time.Time
+	Section   string
+	RowLabel  *string
+	SeatLabel string
+}
+
+func (q *Queries) GetScanByClient(ctx context.Context, arg GetScanByClientParams) (GetScanByClientRow, error) {
+	row := q.db.QueryRow(ctx, getScanByClient, arg.ScannerLinkID, arg.ClientScanID)
+	var i GetScanByClientRow
+	err := row.Scan(
+		&i.Result,
+		&i.TicketID,
+		&i.UsedAt,
+		&i.Section,
+		&i.RowLabel,
+		&i.SeatLabel,
+	)
+	return i, err
+}
+
+const getScannerByTokenHash = `-- name: GetScannerByTokenHash :one
+SELECT l.id, l.organizer_id, l.event_id, l.name, l.revoked_at,
+       e.title, e.starts_at, e.ends_at, v.name AS venue_name, v.timezone AS venue_timezone
+FROM scanner_links l
+JOIN events e ON e.id = l.event_id
+JOIN venues v ON v.id = e.venue_id
+WHERE l.token_hash = $1
+`
+
+type GetScannerByTokenHashRow struct {
+	ID            string
+	OrganizerID   string
+	EventID       string
+	Name          string
+	RevokedAt     *time.Time
+	Title         string
+	StartsAt      time.Time
+	EndsAt        time.Time
+	VenueName     string
+	VenueTimezone string
+}
+
+func (q *Queries) GetScannerByTokenHash(ctx context.Context, tokenHash []byte) (GetScannerByTokenHashRow, error) {
+	row := q.db.QueryRow(ctx, getScannerByTokenHash, tokenHash)
+	var i GetScannerByTokenHashRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizerID,
+		&i.EventID,
+		&i.Name,
+		&i.RevokedAt,
+		&i.Title,
+		&i.StartsAt,
+		&i.EndsAt,
+		&i.VenueName,
+		&i.VenueTimezone,
 	)
 	return i, err
 }
@@ -83,6 +209,34 @@ func (q *Queries) GetTicket(ctx context.Context, id string) (GetTicketRow, error
 		&i.VenueTimezone,
 	)
 	return i, err
+}
+
+const insertScan = `-- name: InsertScan :exec
+INSERT INTO ticket_scans (organizer_id, ticket_id, device_id, scanned_at, result, scanner_link_id, client_scan_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+`
+
+type InsertScanParams struct {
+	OrganizerID   string
+	TicketID      string
+	DeviceID      string
+	ScannedAt     time.Time
+	Result        string
+	ScannerLinkID string
+	ClientScanID  string
+}
+
+func (q *Queries) InsertScan(ctx context.Context, arg InsertScanParams) error {
+	_, err := q.db.Exec(ctx, insertScan,
+		arg.OrganizerID,
+		arg.TicketID,
+		arg.DeviceID,
+		arg.ScannedAt,
+		arg.Result,
+		arg.ScannerLinkID,
+		arg.ClientScanID,
+	)
+	return err
 }
 
 const issueTickets = `-- name: IssueTickets :many
@@ -161,4 +315,187 @@ func (q *Queries) ListOrderTickets(ctx context.Context, orderID string) ([]ListO
 		return nil, err
 	}
 	return items, nil
+}
+
+const listScannerLinks = `-- name: ListScannerLinks :many
+SELECT id, event_id, name, created_at, revoked_at FROM scanner_links
+WHERE organizer_id = $1 AND event_id = $2
+ORDER BY created_at
+`
+
+type ListScannerLinksParams struct {
+	OrganizerID string
+	EventID     string
+}
+
+type ListScannerLinksRow struct {
+	ID        string
+	EventID   string
+	Name      string
+	CreatedAt time.Time
+	RevokedAt *time.Time
+}
+
+func (q *Queries) ListScannerLinks(ctx context.Context, arg ListScannerLinksParams) ([]ListScannerLinksRow, error) {
+	rows, err := q.db.Query(ctx, listScannerLinks, arg.OrganizerID, arg.EventID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListScannerLinksRow{}
+	for rows.Next() {
+		var i ListScannerLinksRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.EventID,
+			&i.Name,
+			&i.CreatedAt,
+			&i.RevokedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockTicketForScan = `-- name: LockTicketForScan :one
+SELECT t.id, t.organizer_id, t.event_id, t.status, t.used_at, s.section, s.row_label, s.seat_label
+FROM tickets t JOIN event_seats s ON s.id = t.event_seat_id
+WHERE t.id = $1
+FOR UPDATE OF t
+`
+
+type LockTicketForScanRow struct {
+	ID          string
+	OrganizerID string
+	EventID     string
+	Status      string
+	UsedAt      *time.Time
+	Section     string
+	RowLabel    *string
+	SeatLabel   string
+}
+
+func (q *Queries) LockTicketForScan(ctx context.Context, id string) (LockTicketForScanRow, error) {
+	row := q.db.QueryRow(ctx, lockTicketForScan, id)
+	var i LockTicketForScanRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizerID,
+		&i.EventID,
+		&i.Status,
+		&i.UsedAt,
+		&i.Section,
+		&i.RowLabel,
+		&i.SeatLabel,
+	)
+	return i, err
+}
+
+const manifestTickets = `-- name: ManifestTickets :many
+SELECT t.id, t.status, s.section, s.row_label, s.seat_label
+FROM tickets t JOIN event_seats s ON s.id = t.event_seat_id
+WHERE t.event_id = $1
+ORDER BY t.id
+`
+
+type ManifestTicketsRow struct {
+	ID        string
+	Status    string
+	Section   string
+	RowLabel  *string
+	SeatLabel string
+}
+
+// Все билеты события для проверки без сети: id, статус и место.
+func (q *Queries) ManifestTickets(ctx context.Context, eventID string) ([]ManifestTicketsRow, error) {
+	rows, err := q.db.Query(ctx, manifestTickets, eventID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ManifestTicketsRow{}
+	for rows.Next() {
+		var i ManifestTicketsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Status,
+			&i.Section,
+			&i.RowLabel,
+			&i.SeatLabel,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const markTicketUsed = `-- name: MarkTicketUsed :exec
+UPDATE tickets SET status = 'used', used_at = $1::timestamptz WHERE id = $2 AND status = 'issued'
+`
+
+type MarkTicketUsedParams struct {
+	UsedAt time.Time
+	ID     string
+}
+
+func (q *Queries) MarkTicketUsed(ctx context.Context, arg MarkTicketUsedParams) error {
+	_, err := q.db.Exec(ctx, markTicketUsed, arg.UsedAt, arg.ID)
+	return err
+}
+
+const moveTicketUsedAt = `-- name: MoveTicketUsedAt :exec
+UPDATE tickets SET used_at = $1::timestamptz WHERE id = $2 AND status = 'used'
+`
+
+type MoveTicketUsedAtParams struct {
+	UsedAt time.Time
+	ID     string
+}
+
+func (q *Queries) MoveTicketUsedAt(ctx context.Context, arg MoveTicketUsedAtParams) error {
+	_, err := q.db.Exec(ctx, moveTicketUsedAt, arg.UsedAt, arg.ID)
+	return err
+}
+
+const revokeScannerLink = `-- name: RevokeScannerLink :execrows
+UPDATE scanner_links SET revoked_at = now()
+WHERE organizer_id = $1 AND id = $2 AND revoked_at IS NULL
+`
+
+type RevokeScannerLinkParams struct {
+	OrganizerID string
+	ID          string
+}
+
+func (q *Queries) RevokeScannerLink(ctx context.Context, arg RevokeScannerLinkParams) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeScannerLink, arg.OrganizerID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const scannerLinkExists = `-- name: ScannerLinkExists :one
+SELECT EXISTS (SELECT 1 FROM scanner_links WHERE organizer_id = $1 AND id = $2)
+`
+
+type ScannerLinkExistsParams struct {
+	OrganizerID string
+	ID          string
+}
+
+func (q *Queries) ScannerLinkExists(ctx context.Context, arg ScannerLinkExistsParams) (bool, error) {
+	row := q.db.QueryRow(ctx, scannerLinkExists, arg.OrganizerID, arg.ID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }

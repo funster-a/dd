@@ -20,15 +20,19 @@ func NewSigner(key string) Signer { return Signer{key: []byte(key)} }
 
 const macLen = 16
 
+// tokenEncoding строгий: у каждого билета ровно одно написание токена
+// (нестрогий base64 принимает разные значения «лишних» битов последнего символа).
+var tokenEncoding = base64.RawURLEncoding.Strict()
+
 // Token возвращает токен билета: base64url(16 байт id + 16 байт подписи).
 func (s Signer) Token(ticketID string) string {
 	id := uuid.MustParse(ticketID)
-	return base64.RawURLEncoding.EncodeToString(append(id[:], s.mac(id[:])...))
+	return tokenEncoding.EncodeToString(append(id[:], s.mac(id[:])...))
 }
 
 // Parse проверяет токен и возвращает id билета.
 func (s Signer) Parse(token string) (string, bool) {
-	b, err := base64.RawURLEncoding.DecodeString(token)
+	b, err := tokenEncoding.DecodeString(token)
 	if err != nil || len(b) != 16+macLen {
 		return "", false
 	}

@@ -20,7 +20,7 @@ type Event struct {
 	ID                  string
 	OrganizerID         string
 	VenueID             string
-	SeatMapID           string
+	SeatMapID           *string
 	Slug                string
 	Title               string
 	Description         string
@@ -38,6 +38,7 @@ type Event struct {
 	AgeRating           string
 	CoverImageKey       *string
 	CoverVideoKey       *string
+	Admission           string
 }
 
 type EventSeat struct {
@@ -50,7 +51,7 @@ type EventSeat struct {
 	RowLabel        *string
 	SeatLabel       string
 	Status          string
-	HoldOrderID     pgtype.UUID
+	HoldOrderID     *string
 	HoldExpiresAt   *time.Time
 	Version         int32
 }
@@ -173,6 +174,16 @@ type RefundItem struct {
 	OrderID     string
 }
 
+type ScannerLink struct {
+	ID          string
+	OrganizerID string
+	EventID     string
+	Name        string
+	TokenHash   []byte
+	CreatedAt   time.Time
+	RevokedAt   *time.Time
+}
+
 type SeatMap struct {
 	ID          string
 	OrganizerID string
@@ -197,13 +208,15 @@ type Ticket struct {
 }
 
 type TicketScan struct {
-	ID          string
-	OrganizerID string
-	TicketID    string
-	DeviceID    string
-	ScannedAt   time.Time
-	ReceivedAt  time.Time
-	Result      string
+	ID            string
+	OrganizerID   string
+	TicketID      string
+	DeviceID      string
+	ScannedAt     time.Time
+	ReceivedAt    time.Time
+	Result        string
+	ScannerLinkID string
+	ClientScanID  string
 }
 
 type Venue struct {

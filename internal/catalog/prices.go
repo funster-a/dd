@@ -44,7 +44,10 @@ func (s *Service) SetPrices(ctx context.Context, organizerID, eventID string, in
 		if err := requireDraft(ev.Status); err != nil {
 			return err
 		}
-		layout, err := eventLayout(ctx, q, organizerID, ev.SeatMapID)
+		if ev.SeatMapID == nil {
+			return &PreconditionError{Code: "free_entry", Message: "free-entry event has no tickets and no prices"}
+		}
+		layout, err := eventLayout(ctx, q, organizerID, *ev.SeatMapID)
 		if err != nil {
 			return err
 		}

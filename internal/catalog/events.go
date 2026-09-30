@@ -29,7 +29,10 @@ const (
 
 // EventInput — данные события от организатора.
 type EventInput struct {
-	VenueID             string     `json:"venue_id"`
+	VenueID string `json:"venue_id"`
+	// Admission — ticketed (билеты по схеме зала) или free_entry (свободный
+	// вход без билетов). По умолчанию ticketed.
+	Admission           string     `json:"admission"`
 	SeatMapID           string     `json:"seat_map_id"`
 	Slug                string     `json:"slug"`
 	Title               string     `json:"title"`
@@ -47,7 +50,8 @@ type EventInput struct {
 type Event struct {
 	ID                  string     `json:"id"`
 	VenueID             string     `json:"venue_id"`
-	SeatMapID           string     `json:"seat_map_id"`
+	Admission           string     `json:"admission"`
+	SeatMapID           *string    `json:"seat_map_id"`
 	Slug                string     `json:"slug"`
 	Title               string     `json:"title"`
 	Description         string     `json:"description"`
@@ -82,7 +86,7 @@ func (s *Service) CreateEvent(ctx context.Context, organizerID string, in EventI
 		return Event{}, err
 	}
 	e, err := s.q.CreateEvent(ctx, catalogdb.CreateEventParams{
-		OrganizerID: organizerID, VenueID: in.VenueID, SeatMapID: in.SeatMapID,
+		OrganizerID: organizerID, VenueID: in.VenueID, SeatMapID: in.seatMap(), Admission: in.Admission,
 		Slug: in.Slug, Title: in.Title, Description: in.Description, AgeRating: in.AgeRating,
 		StartsAt: in.StartsAt, EndsAt: in.EndsAt, SalesStartAt: in.SalesStartAt, SalesEndAt: in.SalesEndAt,
 		MaxTicketsPerBuyer: in.MaxTicketsPerBuyer, RefundDeadlineHours: *in.RefundDeadlineHours,
@@ -111,7 +115,7 @@ func (s *Service) UpdateEvent(ctx context.Context, organizerID, id string, in Ev
 			return err
 		}
 		e, err := q.UpdateDraftEvent(ctx, catalogdb.UpdateDraftEventParams{
-			OrganizerID: organizerID, ID: id, VenueID: in.VenueID, SeatMapID: in.SeatMapID,
+			OrganizerID: organizerID, ID: id, VenueID: in.VenueID, SeatMapID: in.seatMap(), Admission: in.Admission,
 			Slug: in.Slug, Title: in.Title, Description: in.Description, AgeRating: in.AgeRating,
 			StartsAt: in.StartsAt, EndsAt: in.EndsAt, SalesStartAt: in.SalesStartAt, SalesEndAt: in.SalesEndAt,
 			MaxTicketsPerBuyer: in.MaxTicketsPerBuyer, RefundDeadlineHours: *in.RefundDeadlineHours,
@@ -119,7 +123,7 @@ func (s *Service) UpdateEvent(ctx context.Context, organizerID, id string, in Ev
 		if err != nil {
 			return eventWriteError(err, "update event")
 		}
-		if cur.SeatMapID != e.SeatMapID {
+		if deref(cur.SeatMapID) != deref(e.SeatMapID) {
 			// Цены привязаны к секторам прежней схемы.
 			if err := q.DeleteEventPrices(ctx, catalogdb.DeleteEventPricesParams{OrganizerID: organizerID, EventID: id}); err != nil {
 				return fmt.Errorf("reset prices: %w", err)
@@ -170,8 +174,20 @@ func (in EventInput) normalize() (EventInput, error) {
 	if in.VenueID == "" {
 		return in, &ValidationError{Field: "venue_id", Message: "is required"}
 	}
-	if in.SeatMapID == "" {
-		return in, &ValidationError{Field: "seat_map_id", Message: "is required"}
+	if in.Admission == "" {
+		in.Admission = AdmissionTicketed
+	}
+	switch in.Admission {
+	case AdmissionTicketed:
+		if in.SeatMapID == "" {
+			return in, &ValidationError{Field: "seat_map_id", Message: "is required for a ticketed event"}
+		}
+	case AdmissionFreeEntry:
+		if in.SeatMapID != "" {
+			return in, &ValidationError{Field: "seat_map_id", Message: "must be empty for a free-entry event"}
+		}
+	default:
+		return in, &ValidationError{Field: "admission", Message: "must be ticketed or free_entry"}
 	}
 	in.Slug = strings.TrimSpace(in.Slug)
 	if len(in.Slug) < 3 || len(in.Slug) > 63 || !slugPattern.MatchString(in.Slug) {
@@ -222,6 +238,26 @@ func (in EventInput) normalize() (EventInput, error) {
 	return in, nil
 }
 
+// Виды входа на событие.
+const (
+	AdmissionTicketed  = "ticketed"
+	AdmissionFreeEntry = "free_entry" // свободный вход: без билетов и схемы зала
+)
+
+func (in EventInput) seatMap() *string {
+	if in.SeatMapID == "" {
+		return nil
+	}
+	return &in.SeatMapID
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
 func utcPtr(t *time.Time) *time.Time {
 	if t == nil {
 		return nil
@@ -248,7 +284,7 @@ func eventWriteError(err error, op string) error {
 
 func eventFrom(e catalogdb.Event) Event {
 	return Event{
-		ID: e.ID, VenueID: e.VenueID, SeatMapID: e.SeatMapID, Slug: e.Slug, Title: e.Title,
+		ID: e.ID, VenueID: e.VenueID, Admission: e.Admission, SeatMapID: e.SeatMapID, Slug: e.Slug, Title: e.Title,
 		Description: e.Description, AgeRating: e.AgeRating, Status: e.Status,
 		StartsAt: e.StartsAt, EndsAt: e.EndsAt, SalesStartAt: e.SalesStartAt, SalesEndAt: e.SalesEndAt,
 		MaxTicketsPerBuyer: e.MaxTicketsPerBuyer, RefundDeadlineHours: e.RefundDeadlineHours,

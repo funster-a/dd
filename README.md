@@ -146,6 +146,7 @@ npm run typecheck    # vue-tsc
 | `PAYMENT_CALLBACK_URL` | `PUBLIC_BASE_URL` + `/v1/payments/webhooks/fakepsp` | куда провайдер шлёт вебхуки |
 | `TICKET_SIGNING_KEY` | ключ для разработки | секрет подписи ссылок на билеты, от 16 символов |
 | `QUEUE_PREFIX` | `dd.` | префикс очередей событий между модулями |
+| `BOOKING_STRATEGY` | `redis` | стратегия захвата мест: `redis`, `pessimistic`, `optimistic` (ADR 017) |
 
 Значения по умолчанию совпадают с `docker-compose.yml`. Все переменные проверяются при старте. Неверное значение, например `LOG_LEVEL=loud` или `REDIS_ADDR=redis` без порта, останавливает процесс с понятной ошибкой. Пароли в текст ошибок не попадают.
 
@@ -283,7 +284,8 @@ internal/fakepsp/ логика мока провайдера (для cmd/fakepsp
 migrations/       goose-миграции
 docs/             спецификация и ADR
 web/              сайт покупателя, кабинет организатора (/org) и сканер (/scan): Vue, TypeScript, Vite; в Docker — nginx (ADR 015, 016)
-loadtest/         сценарии k6 (появятся позже)
+loadtest/         нагрузочный эксперимент: сценарий k6 и скрипты прогона (ADR 017)
+cmd/loadseed/     подготовка данных эксперимента, проверка инварианта, отчёт
 ```
 
 - **Логи** пишутся в JSON через `log/slog`. У каждой строки есть поле `service`, у строк запроса — `request_id` (заголовок `X-Request-ID`).
@@ -306,6 +308,28 @@ GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) запу
 
 - **схема:** 50 транзакций одновременно выпускают билет на одно место, и выпуск удаётся ровно у одной (`migrations/schema_test.go`);
 - **бронирование:** 200 покупателей одновременно берут одно место, покупатели берут пересекающиеся наборы мест, входная зона продаётся сверх вместимости. Каждый сценарий проходит и с Redis, и без него (`internal/booking/orders_test.go`).
+
+## Нагрузочный эксперимент
+
+Сравнение трёх стратегий захвата места при конкурентном доступе (spec.md, «Инженерное ядро»; ADR 017). Результаты, таблицы и графики — в [`docs/experiments/2026-10-booking-strategies`](docs/experiments/2026-10-booking-strategies/).
+
+Стратегия выбирается переменной `BOOKING_STRATEGY` у api:
+- `redis` — по умолчанию, продуктовая;
+- `pessimistic` и `optimistic` — только для эксперимента.
+
+Повторить серию (нужны `make infra-up`, `make migrate-up` и Docker — k6 запускается образом `grafana/k6`):
+
+```sh
+./loadtest/run.sh                                   # 3 стратегии × 500/2000/5000 × 3 повтора × 2 сценария
+STRATEGIES=redis LEVELS=500 REPEATS=1 ./loadtest/run.sh   # быстрый прогон
+./loadtest/redis-failure.sh                         # отказ Redis в середине прогона
+go run ./cmd/loadseed report -dir loadtest/results/raw/<серия> -out docs/experiments/<папка>
+```
+
+Что делает серия:
+- перед каждым прогоном создаётся свежее событие с залом на 1000 мест; покупатели с сессиями создаются один раз на всю серию;
+- после прогона `loadseed check` проверяет инвариант по данным: ни одно место не попало в два заказа;
+- сырые данные лежат в `loadtest/results/raw/`, их нет в git; `loadseed report` собирает из них CSV, таблицы и графики.
 
 ## Если что-то не работает
 

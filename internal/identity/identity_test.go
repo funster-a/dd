@@ -354,3 +354,29 @@ func TestNormalizeAddress(t *testing.T) {
 		}
 	}
 }
+
+// Сидер нагрузочного эксперимента выдаёт сессии без кода: покупатель тот же,
+// что при обычном входе, сессия проходит проверку.
+func TestIssueBuyerSession(t *testing.T) {
+	e := newEnv(t)
+	ctx := t.Context()
+	phone := randomPhone()
+	token, err := e.svc.IssueBuyerSession(ctx, phone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := e.svc.Authenticate(ctx, token)
+	if err != nil || sess.Kind != auth.KindBuyer || sess.SubjectID == "" {
+		t.Fatalf("Authenticate() = %+v, %v", sess, err)
+	}
+	again, err := e.svc.IssueBuyerSession(ctx, phone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s2, _ := e.svc.Authenticate(ctx, again); s2.SubjectID != sess.SubjectID {
+		t.Errorf("second session for the same phone: buyer %s, want %s", s2.SubjectID, sess.SubjectID)
+	}
+	if _, err := e.svc.IssueBuyerSession(ctx, "not a phone"); !errors.Is(err, ErrInvalidAddress) {
+		t.Errorf("bad phone: err = %v", err)
+	}
+}

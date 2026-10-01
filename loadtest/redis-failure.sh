@@ -10,6 +10,7 @@ N=${N:-2000}
 REPEATS=${REPEATS:-3}
 POOL=${POOL:-32}
 DOWN_AFTER_MS=${DOWN_AFTER_MS:-300}
+LABEL=${LABEL:-redis-down}
 K6_IMAGE=${K6_IMAGE:-grafana/k6:latest}
 OUT=${OUT:-loadtest/results/raw/redis-failure}
 DATA=loadtest/.data
@@ -34,7 +35,7 @@ kill -0 $API_PID 2>/dev/null || { echo "api did not start, see $OUT/api.log" >&2
 attempts() { curl -fs localhost:8080/metrics | awk '/^dd_booking_attempts_total/{s+=$2} END{print s+0}'; }
 
 for rep in $(seq 1 "$REPEATS"); do
-  dir="$OUT/hall__redis-down__${N}__${rep}"
+  dir="$OUT/hall__${LABEL}__${N}__${rep}"
   mkdir -p "$dir"
   "$DATA/loadseed" event -out "$dir/event.json"
   curl -fs localhost:8080/metrics >"$dir/metrics-before.txt"

@@ -114,7 +114,12 @@ func loadRuns(dir string) ([]runResult, error) {
 		if err := readJSON(filepath.Join(p, "check.json"), &r.Check); err != nil {
 			return nil, fmt.Errorf("%s: %w", e.Name(), err)
 		}
-		if r.Server, err = serverDelta(filepath.Join(p, "metrics-before.txt"), filepath.Join(p, "metrics-after.txt"), r.Strategy); err != nil {
+		// Прогоны с отказом Redis обслуживает стратегия redis.
+		metricsStrategy := r.Strategy
+		if strings.HasPrefix(r.Strategy, "redis-down") {
+			metricsStrategy = "redis"
+		}
+		if r.Server, err = serverDelta(filepath.Join(p, "metrics-before.txt"), filepath.Join(p, "metrics-after.txt"), metricsStrategy); err != nil {
 			return nil, fmt.Errorf("%s: %w", e.Name(), err)
 		}
 		runs = append(runs, r)

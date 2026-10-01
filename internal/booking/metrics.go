@@ -28,7 +28,7 @@ func newHoldMetrics(reg prometheus.Registerer) *holdMetrics {
 		duration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "dd_booking_attempt_seconds",
 			Help:    "Время попытки оформить заказ на места.",
-			Buckets: []float64{.001, .0025, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10},
+			Buckets: []float64{.001, .0025, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 15, 20, 30, 60},
 		}, []string{"strategy", "result"}),
 	}
 	reg.MustRegister(m.attempts, m.retries, m.duration)

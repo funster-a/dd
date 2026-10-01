@@ -40,6 +40,9 @@ type Config struct {
 	Payment PaymentConfig
 	// TicketSigningKey — секрет подписи ссылок на билеты.
 	TicketSigningKey string
+	// BookingStrategy — стратегия захвата мест (ADR 017): redis (по
+	// умолчанию), pessimistic или optimistic. Значение проверяет booking.
+	BookingStrategy string
 }
 
 // PaymentConfig — параметры платёжного провайдера. Значения по умолчанию
@@ -92,6 +95,7 @@ func Load() (Config, error) {
 		CallbackURL:   getenv("PAYMENT_CALLBACK_URL", cfg.PublicBaseURL+"/v1/payments/webhooks/fakepsp"),
 	}
 	cfg.TicketSigningKey = getenv("TICKET_SIGNING_KEY", "dev-ticket-signing-key-change-me")
+	cfg.BookingStrategy = getenv("BOOKING_STRATEGY", "redis")
 
 	var errs []error
 

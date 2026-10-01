@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/funster-a/dd/internal/booking"
 	"github.com/funster-a/dd/internal/catalog"
@@ -85,7 +86,15 @@ func run() error {
 		closeDeps()
 		return err
 	}
-	book := booking.NewService(pool, rdb, log)
+	strategy, err := booking.ParseStrategy(cfg.BookingStrategy)
+	if err != nil {
+		closeDeps()
+		return err
+	}
+	if strategy != booking.StrategyRedis {
+		log.Warn("booking strategy for experiments, not for production", slog.String("strategy", string(strategy)))
+	}
+	book := booking.NewService(pool, rdb, log, booking.WithStrategy(strategy))
 	pay := payment.NewService(pool,
 		payment.NewPSPClient(cfg.Payment.ProviderURL, cfg.Payment.APIKey, cfg.Payment.WebhookSecret),
 		payment.Config{ReturnURL: cfg.PublicBaseURL + "/payment/return", CallbackURL: cfg.Payment.CallbackURL}, log)
@@ -96,6 +105,9 @@ func run() error {
 	r := chi.NewRouter()
 	r.Use(httpx.RequestID(log))
 	r.Get("/healthz", httpx.Healthz)
+	// Метрики Prometheus (ADR 017). Наружу не публикуются: nginx проксирует
+	// только /v1, порт api открыт лишь внутри сети Compose.
+	r.Handle("/metrics", promhttp.Handler())
 	r.Get("/readyz", httpx.Readyz(map[string]httpx.Check{
 		"postgres": pool.Ping,
 		"redis":    func(ctx context.Context) error { return rdb.Ping(ctx).Err() },

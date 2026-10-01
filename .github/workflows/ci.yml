@@ -160,6 +160,7 @@ jobs:
           curl -fsS http://127.0.0.1:8080/healthz
           curl -fsS http://127.0.0.1:8080/readyz
           curl -fsS http://127.0.0.1:8090/healthz
+          curl -fsS http://127.0.0.1:8080/metrics | grep -q '^go_goroutines'
       - name: web serves the SPA and proxies the API
         run: |
           curl -fsS http://127.0.0.1:8000/ | grep -q '<div id="app">'

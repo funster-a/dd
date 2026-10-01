@@ -166,3 +166,20 @@ func (s *Service) known(ctx context.Context, kind auth.Kind, address string) (bo
 		return false, ErrInvalidAddress
 	}
 }
+
+// IssueBuyerSession выдаёт сессию покупателю с номером phone без кода
+// подтверждения. Только для доверенных инструментов, запускаемых рядом с
+// базой: сидер нагрузочного эксперимента создаёт тысячи покупателей
+// (ADR 017). Через HTTP этот путь недоступен.
+func (s *Service) IssueBuyerSession(ctx context.Context, phone string) (string, error) {
+	phone, err := NormalizeAddress(auth.KindBuyer, phone)
+	if err != nil {
+		return "", err
+	}
+	id, err := s.q.UpsertBuyerByPhone(ctx, phone)
+	if err != nil {
+		return "", fmt.Errorf("upsert buyer: %w", err)
+	}
+	token, _, err := s.sessions.create(ctx, auth.Principal{Kind: auth.KindBuyer, SubjectID: id})
+	return token, err
+}

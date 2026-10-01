@@ -358,6 +358,49 @@ func (q *Queries) HoldSeats(ctx context.Context, arg HoldSeatsParams) ([]HoldSea
 	return items, nil
 }
 
+const holdSeatsIfVersion = `-- name: HoldSeatsIfVersion :many
+UPDATE event_seats s
+SET status = 'held', hold_order_id = $1::uuid, hold_expires_at = $2::timestamptz
+FROM (SELECT unnest($3::uuid[]) AS id, unnest($4::integer[]) AS version) v
+WHERE s.id = v.id AND s.version = v.version
+RETURNING s.id
+`
+
+type HoldSeatsIfVersionParams struct {
+	OrderID   string
+	ExpiresAt time.Time
+	Ids       []string
+	Versions  []int32
+}
+
+// Холд, только если версия строки не изменилась с момента чтения. Версию
+// увеличивает триггер. Вернулось меньше строк — кто-то успел раньше:
+// транзакция откатывается и попытка повторяется.
+func (q *Queries) HoldSeatsIfVersion(ctx context.Context, arg HoldSeatsIfVersionParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, holdSeatsIfVersion,
+		arg.OrderID,
+		arg.ExpiresAt,
+		arg.Ids,
+		arg.Versions,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const insertOrder = `-- name: InsertOrder :one
 INSERT INTO orders (id, organizer_id, event_id, buyer_id, email, total_tiyn, expires_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -680,6 +723,69 @@ func (q *Queries) MarkOrderPaid(ctx context.Context, arg MarkOrderPaidParams) (O
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const readSeatsForHold = `-- name: ReadSeatsForHold :many
+SELECT s.id, s.section, s.row_label, s.seat_label, s.status, s.hold_expires_at, s.version, p.price_tiyn
+FROM event_seats s
+JOIN price_categories p ON p.id = s.price_category_id
+WHERE s.event_id = $1 AND s.kind = 'seat'
+  AND (s.section, s.row_label, s.seat_label) IN (
+      SELECT unnest($2::text[]), unnest($3::text[]), unnest($4::text[]))
+`
+
+type ReadSeatsForHoldParams struct {
+	EventID    string
+	Sections   []string
+	Rows       []string
+	SeatLabels []string
+}
+
+type ReadSeatsForHoldRow struct {
+	ID            string
+	Section       string
+	RowLabel      *string
+	SeatLabel     string
+	Status        string
+	HoldExpiresAt *time.Time
+	Version       int32
+	PriceTiyn     int64
+}
+
+// Оптимистичная стратегия (ADR 017): места читаются без блокировки вместе с
+// версией строки; решение «свободно ли» принимает приложение.
+func (q *Queries) ReadSeatsForHold(ctx context.Context, arg ReadSeatsForHoldParams) ([]ReadSeatsForHoldRow, error) {
+	rows, err := q.db.Query(ctx, readSeatsForHold,
+		arg.EventID,
+		arg.Sections,
+		arg.Rows,
+		arg.SeatLabels,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadSeatsForHoldRow{}
+	for rows.Next() {
+		var i ReadSeatsForHoldRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Section,
+			&i.RowLabel,
+			&i.SeatLabel,
+			&i.Status,
+			&i.HoldExpiresAt,
+			&i.Version,
+			&i.PriceTiyn,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const releaseOrderSeats = `-- name: ReleaseOrderSeats :many

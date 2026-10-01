@@ -90,6 +90,10 @@ services:
 
   prometheus:
     image: prom/prometheus:v3.14.0
+    # Метрики api (ADR 017): попытки захвата мест, отказы, повторы, задержка.
+    configs:
+      - source: prometheus-config
+        target: /etc/prometheus/prometheus.yml
     ports:
       - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
     volumes:
@@ -228,6 +232,17 @@ configs:
          "actions": ["Admin", "Read", "List", "Tagging", "Write"]},
         {"name": "anonymous", "actions": ["Read:${S3_BUCKET:-dd-media}"]}
       ]}
+  prometheus-config:
+    content: |
+      global:
+        scrape_interval: 5s
+      scrape_configs:
+        - job_name: prometheus
+          static_configs:
+            - targets: ["localhost:9090"]
+        - job_name: api
+          static_configs:
+            - targets: ["api:8080"]
   grafana-datasources:
     content: |
       apiVersion: 1

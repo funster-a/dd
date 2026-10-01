@@ -28,12 +28,14 @@ type k6Summary struct {
 	Won       float64            `json:"won"`
 	Taken     float64            `json:"taken"`
 	Failed    float64            `json:"failed"`
+	FailedNet float64            `json:"failed_network"`
 	Attempts  float64            `json:"attempts"`
 	AttemptMS map[string]float64 `json:"attempt_ms"`
 	WonAtMS   map[string]float64 `json:"won_at_ms"`
 }
 
 type checkResult struct {
+	ActiveOrders int `json:"active_orders"`
 	DoubleBooked int `json:"double_booked"`
 	Mismatched   int `json:"mismatched"`
 	OrderItems   int `json:"order_items"`
@@ -279,7 +281,10 @@ func writeCSV(path string, runs []runResult) error {
 
 var strategyNames = []string{"pessimistic", "optimistic", "redis"}
 
-func strategyOrder(s string) int { return slices.Index(strategyNames, s) }
+// Порядок в таблицах: три стратегии, затем прогоны с отказом Redis.
+var tableOrder = []string{"pessimistic", "optimistic", "redis", "redis-down-nobreaker", "redis-down"}
+
+func strategyOrder(s string) int { return slices.Index(tableOrder, s) }
 
 // stat — среднее и разброс по повторам.
 type stat struct{ Mean, Min, Max float64 }
@@ -306,6 +311,8 @@ type group struct {
 	SrvP95, SrvP99     stat
 	Throughput         stat
 	Won, Failed        stat
+	FailedNet          stat
+	ServerOrders       stat // заказы, созданные на сервере
 	RedisShare         stat // доля отказов, отсечённых Redis
 	RetriesPerAttempt  stat
 	DoubleBooked       int
@@ -340,6 +347,8 @@ func aggregate(runs []runResult) []group {
 		g.Throughput = pick(runResult.throughput)
 		g.Won = pick(func(r runResult) float64 { return r.K6.Won })
 		g.Failed = pick(func(r runResult) float64 { return r.K6.Failed })
+		g.FailedNet = pick(func(r runResult) float64 { return r.K6.FailedNet })
+		g.ServerOrders = pick(func(r runResult) float64 { return float64(r.Check.ActiveOrders) })
 		g.RedisShare = pick(func(r runResult) float64 {
 			if t := r.Server.TakenRedis + r.Server.TakenDB; t > 0 {
 				return r.Server.TakenRedis / t
@@ -364,7 +373,10 @@ func aggregate(runs []runResult) []group {
 	return out
 }
 
-var strategyRu = map[string]string{"pessimistic": "Пессимистичная", "optimistic": "Оптимистичная", "redis": "Redis + БД"}
+var strategyRu = map[string]string{
+	"pessimistic": "Пессимистичная", "optimistic": "Оптимистичная", "redis": "Redis + БД",
+	"redis-down-nobreaker": "Без предохранителя", "redis-down": "С предохранителем",
+}
 
 func tables(groups []group) string {
 	var b strings.Builder
@@ -382,11 +394,20 @@ func tables(groups []group) string {
 	b.WriteString("\n### Зал на 1000 мест (hall)\n\n")
 	b.WriteString("| Стратегия | Покупателей | Прогонов | Продано мест | Захватов в секунду | Двойных броней | Ошибок | p95, мс | p99, мс | Захват на сервере p95, мс | Отсечено Redis | Повторов на попытку |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
 	for _, g := range groups {
-		if g.Scenario != "hall" {
+		if g.Scenario != "hall" || strings.HasPrefix(g.Strategy, "redis-down") {
 			continue
 		}
 		fmt.Fprintf(&b, "| %s | %d | %d | %.0f | %.0f | %d | %.0f | %s | %s | %s | %.0f%% | %.2f |\n",
 			strategyRu[g.Strategy], g.VUs, g.Runs, g.Won.Mean, g.Throughput.Mean, g.DoubleBooked+g.Mismatched, g.Failed.Mean, ms(g.E2EP95), ms(g.E2EP99), ms(g.SrvP95), g.RedisShare.Mean*100, g.RetriesPerAttempt.Mean)
+	}
+	b.WriteString("\n### Отказ Redis в середине прогона (hall, стратегия Redis + БД)\n\n")
+	b.WriteString("| Вариант | Покупателей | Прогонов | Успех увидели покупатели | Заказов создано на сервере | Ошибок | из них без ответа | p50, мс | p99, мс | Двойных броней |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
+	for _, g := range groups {
+		if !strings.HasPrefix(g.Strategy, "redis-down") {
+			continue
+		}
+		fmt.Fprintf(&b, "| %s | %d | %d | %.0f | %.0f | %.0f | %.0f | %s | %s | %d |\n",
+			strategyRu[g.Strategy], g.VUs, g.Runs, g.Won.Mean, g.ServerOrders.Mean, g.Failed.Mean, g.FailedNet.Mean, ms(g.E2EP50), ms(g.E2EP99), g.DoubleBooked+g.Mismatched)
 	}
 	return b.String()
 }

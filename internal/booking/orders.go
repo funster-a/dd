@@ -41,7 +41,10 @@ func NewService(pool *pgxpool.Pool, rdb goredis.Scripter, log *slog.Logger, opts
 		o(s)
 	}
 	if rdb != nil && s.strategy == StrategyRedis {
-		s.holds = &holdStore{rdb: rdb}
+		s.holds = &holdStore{rdb: rdb, onOpen: func(err error) {
+			s.metrics.gateOpened.Inc()
+			s.log.Warn("redis holds disabled, booking through database only", slog.Duration("for", breakerCooldown), slog.Any("error", err))
+		}}
 	}
 	return s
 }
@@ -207,7 +210,7 @@ func (s *Service) createOrder(ctx context.Context, buyerID, eventID string, req 
 		switch {
 		case err != nil:
 			// База держит инвариант сама; без Redis просто нет фильтра.
-			s.log.WarnContext(ctx, "redis holds unavailable, booking through database only", slog.Any("error", err))
+			// Выключение фильтра логирует holdStore — один раз, а не на каждый запрос.
 		case n > 0:
 			st.rejectBy = "redis"
 			return Order{}, &ConflictError{Code: "seat_taken", Message: "seat " + req.Seats[n-1].String() + " is taken"}

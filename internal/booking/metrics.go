@@ -13,6 +13,8 @@ type holdMetrics struct {
 	attempts *prometheus.CounterVec
 	retries  *prometheus.CounterVec
 	duration *prometheus.HistogramVec
+	// gateOpened — сколько раз фильтр Redis выключался после ошибки.
+	gateOpened prometheus.Counter
 }
 
 func newHoldMetrics(reg prometheus.Registerer) *holdMetrics {
@@ -30,8 +32,12 @@ func newHoldMetrics(reg prometheus.Registerer) *holdMetrics {
 			Help:    "Время попытки оформить заказ на места.",
 			Buckets: []float64{.001, .0025, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 15, 20, 30, 60},
 		}, []string{"strategy", "result"}),
+		gateOpened: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "dd_booking_redis_gate_opened_total",
+			Help: "Сколько раз фильтр холдов в Redis выключался после ошибки Redis.",
+		}),
 	}
-	reg.MustRegister(m.attempts, m.retries, m.duration)
+	reg.MustRegister(m.attempts, m.retries, m.duration, m.gateOpened)
 	return m
 }
 

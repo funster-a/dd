@@ -28,17 +28,26 @@ type Service struct {
 	holds *holdStore // nil — без Redis, только база
 	log   *slog.Logger
 	group singleflight.Group
+
+	strategy Strategy
+	metrics  *holdMetrics
 }
 
 // NewService создаёт сервис бронирования. rdb может быть nil: тогда холды
 // держит только база, а корректность от этого не меняется.
-func NewService(pool *pgxpool.Pool, rdb goredis.Scripter, log *slog.Logger) *Service {
-	s := &Service{pool: pool, q: bookingdb.New(pool), log: log}
-	if rdb != nil {
+func NewService(pool *pgxpool.Pool, rdb goredis.Scripter, log *slog.Logger, opts ...Option) *Service {
+	s := &Service{pool: pool, q: bookingdb.New(pool), log: log, strategy: StrategyRedis, metrics: defaultMetrics}
+	for _, o := range opts {
+		o(s)
+	}
+	if rdb != nil && s.strategy == StrategyRedis {
 		s.holds = &holdStore{rdb: rdb}
 	}
 	return s
 }
+
+// Strategy — стратегия захвата мест этого сервиса.
+func (s *Service) Strategy() Strategy { return s.strategy }
 
 // SeatRef — место с рядом, указанное позицией на схеме зала.
 type SeatRef struct {
@@ -135,6 +144,20 @@ func (r *OrderRequest) normalize() (int, error) {
 // Redis: проигравшие конкуренты за популярное место отсекаются там и не
 // нагружают PostgreSQL. Отказ Redis не останавливает продажу.
 func (s *Service) CreateOrder(ctx context.Context, buyerID, eventID string, req OrderRequest, now time.Time) (Order, error) {
+	var st attempt
+	start := time.Now()
+	o, err := s.createOrder(ctx, buyerID, eventID, req, now, &st)
+	s.metrics.observe(s.strategy, &st, err, time.Since(start))
+	return o, err
+}
+
+// attempt — что случилось с одной попыткой захвата: для метрик эксперимента.
+type attempt struct {
+	retries  int    // повторы оптимистичной стратегии
+	rejectBy string // кто отказал: redis или db
+}
+
+func (s *Service) createOrder(ctx context.Context, buyerID, eventID string, req OrderRequest, now time.Time, st *attempt) (Order, error) {
 	if uuid.Validate(eventID) != nil {
 		return Order{}, ErrNotFound
 	}
@@ -186,6 +209,7 @@ func (s *Service) CreateOrder(ctx context.Context, buyerID, eventID string, req 
 			// База держит инвариант сама; без Redis просто нет фильтра.
 			s.log.WarnContext(ctx, "redis holds unavailable, booking through database only", slog.Any("error", err))
 		case n > 0:
+			st.rejectBy = "redis"
 			return Order{}, &ConflictError{Code: "seat_taken", Message: "seat " + req.Seats[n-1].String() + " is taken"}
 		default:
 			claimed = true
@@ -193,7 +217,23 @@ func (s *Service) CreateOrder(ctx context.Context, buyerID, eventID string, req 
 	}
 
 	res, err := s.createTx(ctx, ev, buyerID, orderID, req, now)
+	// Оптимистичная стратегия: конфликт версий — перечитать и попробовать снова.
+	for errors.Is(err, errVersionConflict) && st.retries < optimisticAttempts-1 {
+		st.retries++
+		select {
+		case <-ctx.Done():
+			return Order{}, ctx.Err()
+		case <-time.After(backoff(st.retries)):
+		}
+		res, err = s.createTx(ctx, ev, buyerID, orderID, req, now)
+	}
+	if errors.Is(err, errVersionConflict) {
+		err = &ConflictError{Code: "seat_taken", Message: "seats are being booked concurrently, retry"}
+	}
 	if err != nil {
+		if c, ok := errors.AsType[*ConflictError](err); ok && c.Code == "seat_taken" {
+			st.rejectBy = "db"
+		}
 		if claimed {
 			s.releaseKeys(ctx, keys, orderID)
 		}
@@ -307,7 +347,17 @@ func (s *Service) createTx(ctx context.Context, ev bookingdb.GetBookableEventRow
 				p.Rows = append(p.Rows, r.Row)
 				p.SeatLabels = append(p.SeatLabels, r.Seat)
 			}
-			held, err := q.HoldSeats(ctx, p)
+			var held []bookingdb.HoldSeatsRow
+			var err error
+			if s.strategy == StrategyOptimistic {
+				held, err = holdSeatsOptimistic(ctx, q, p)
+			} else {
+				// redis и pessimistic: SELECT … FOR UPDATE в порядке id.
+				held, err = q.HoldSeats(ctx, p)
+			}
+			if errors.Is(err, errVersionConflict) {
+				return err
+			}
 			if err != nil {
 				return fmt.Errorf("hold seats: %w", err)
 			}

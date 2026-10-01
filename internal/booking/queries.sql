@@ -30,6 +30,26 @@ WHERE s.id = target.id AND p.id = s.price_category_id
   AND (s.status = 'available' OR (s.status = 'held' AND s.hold_expires_at <= @now::timestamptz))
 RETURNING s.id, s.section, s.row_label, s.seat_label, p.price_tiyn;
 
+-- name: ReadSeatsForHold :many
+-- Оптимистичная стратегия (ADR 017): места читаются без блокировки вместе с
+-- версией строки; решение «свободно ли» принимает приложение.
+SELECT s.id, s.section, s.row_label, s.seat_label, s.status, s.hold_expires_at, s.version, p.price_tiyn
+FROM event_seats s
+JOIN price_categories p ON p.id = s.price_category_id
+WHERE s.event_id = @event_id AND s.kind = 'seat'
+  AND (s.section, s.row_label, s.seat_label) IN (
+      SELECT unnest(@sections::text[]), unnest(@rows::text[]), unnest(@seat_labels::text[]));
+
+-- name: HoldSeatsIfVersion :many
+-- Холд, только если версия строки не изменилась с момента чтения. Версию
+-- увеличивает триггер. Вернулось меньше строк — кто-то успел раньше:
+-- транзакция откатывается и попытка повторяется.
+UPDATE event_seats s
+SET status = 'held', hold_order_id = @order_id::uuid, hold_expires_at = @expires_at::timestamptz
+FROM (SELECT unnest(@ids::uuid[]) AS id, unnest(@versions::integer[]) AS version) v
+WHERE s.id = v.id AND s.version = v.version
+RETURNING s.id;
+
 -- name: HoldGeneral :many
 -- Холд любых свободных виртуальных мест входной зоны. SKIP LOCKED: параллельные
 -- покупатели берут разные строки и не ждут друг друга.

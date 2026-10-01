@@ -20,6 +20,12 @@ DATA=loadtest/.data
 mkdir -p "$OUT" "$DATA"
 export DATABASE_URL="${DATABASE_URL:-postgres://dd:dd@localhost:5432/dd?sslmode=disable}&pool_max_conns=$POOL"
 
+
+# Порт api должен быть свободен: иначе readyz ответит чужой процесс и серия
+# молча пройдёт не на той стратегии (так однажды и случилось).
+port_busy() { (exec 3<>/dev/tcp/127.0.0.1/8080) 2>/dev/null; }
+if port_busy; then echo "port 8080 is busy: stop the other api first" >&2; exit 1; fi
+
 go build -o "$DATA/api" ./cmd/api
 go build -o "$DATA/loadseed" ./cmd/loadseed
 
@@ -37,8 +43,14 @@ start_api() {
   stop_api
   BOOKING_STRATEGY=$1 LOG_LEVEL=warn "$DATA/api" >"$OUT/api-$1.log" 2>&1 &
   API_PID=$!
-  for _ in $(seq 1 50); do curl -fs localhost:8080/readyz >/dev/null && return; sleep 0.2; done
-  echo "api did not start" >&2; exit 1
+  for _ in $(seq 1 50); do
+    if curl -fs localhost:8080/readyz >/dev/null; then
+      kill -0 "$API_PID" 2>/dev/null && return
+      break
+    fi
+    sleep 0.2
+  done
+  echo "api did not start, see $OUT/api-$1.log" >&2; exit 1
 }
 
 cat >"$OUT/env.json" <<JSON
@@ -60,6 +72,10 @@ for strategy in $STRATEGIES; do
           -e VUS="$n" -e SCENARIO="$scenario" -e EVENT="/work/$dir/event.json" -e BUYERS="/work/$DATA/buyers.json" \
           -e SUMMARY="/work/$dir/summary.json" "$K6_IMAGE" run --quiet loadtest/booking.js >"$dir/k6.log" 2>&1 || true
         curl -fs localhost:8080/metrics >"$dir/metrics-after.txt"
+        # Попытки должны быть записаны именно этой стратегией.
+        if ! grep -q "^dd_booking_attempts_total{.*strategy=\"$strategy\"" "$dir/metrics-after.txt"; then
+          echo "run $dir was not served by strategy $strategy" >&2; exit 1
+        fi
         event=$(python3 -c "import json;print(json.load(open('$dir/event.json'))['event_id'])")
         if "$DATA/loadseed" check -event "$event" -out "$dir/check.json"; then verdict=ok; else verdict=VIOLATED; fi
         printf '%-9s %-12s %5s #%s  %s  %s\n' "$scenario" "$strategy" "$n" "$rep" "$verdict" "$(tail -1 "$dir/k6.log" | cut -c1-110)"

@@ -450,7 +450,7 @@ func (q *Queries) ListScannerLinks(ctx context.Context, arg ListScannerLinksPara
 }
 
 const lockEventTicketsForCancel = `-- name: LockEventTicketsForCancel :many
-SELECT t.id, t.order_id, t.status, i.price_tiyn
+SELECT t.id, t.order_id, t.status, i.price_tiyn, i.fee_tiyn
 FROM tickets t JOIN order_items i ON i.id = t.order_item_id
 WHERE t.event_id = $1 AND t.status IN ('issued', 'used')
 ORDER BY t.order_id, t.id
@@ -462,6 +462,7 @@ type LockEventTicketsForCancelRow struct {
 	OrderID   string
 	Status    string
 	PriceTiyn int64
+	FeeTiyn   int64
 }
 
 // Все действующие билеты отменённого события.
@@ -479,6 +480,7 @@ func (q *Queries) LockEventTicketsForCancel(ctx context.Context, eventID string)
 			&i.OrderID,
 			&i.Status,
 			&i.PriceTiyn,
+			&i.FeeTiyn,
 		); err != nil {
 			return nil, err
 		}
@@ -491,7 +493,7 @@ func (q *Queries) LockEventTicketsForCancel(ctx context.Context, eventID string)
 }
 
 const lockOrderTickets = `-- name: LockOrderTickets :many
-SELECT t.id, t.status, i.price_tiyn
+SELECT t.id, t.status, i.price_tiyn, i.fee_tiyn
 FROM tickets t JOIN order_items i ON i.id = t.order_item_id
 WHERE t.order_id = $1 AND t.id = ANY($2::uuid[])
 ORDER BY t.id
@@ -507,6 +509,7 @@ type LockOrderTicketsRow struct {
 	ID        string
 	Status    string
 	PriceTiyn int64
+	FeeTiyn   int64
 }
 
 // Билеты заказа под блокировкой: сканирование и возврат одного билета
@@ -520,7 +523,12 @@ func (q *Queries) LockOrderTickets(ctx context.Context, arg LockOrderTicketsPara
 	items := []LockOrderTicketsRow{}
 	for rows.Next() {
 		var i LockOrderTicketsRow
-		if err := rows.Scan(&i.ID, &i.Status, &i.PriceTiyn); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.Status,
+			&i.PriceTiyn,
+			&i.FeeTiyn,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -718,9 +726,14 @@ func (q *Queries) ReportEvent(ctx context.Context, arg ReportEventParams) (Repor
 
 const reportMoney = `-- name: ReportMoney :one
 SELECT
-    (SELECT coalesce(sum(total_tiyn), 0) FROM orders o WHERE o.event_id = $1 AND o.paid_at IS NOT NULL)::bigint AS gross,
+    (SELECT coalesce(sum(i.price_tiyn), 0) FROM order_items i JOIN orders o ON o.id = i.order_id
+      WHERE o.event_id = $1 AND o.paid_at IS NOT NULL)::bigint AS gross,
     (SELECT count(*) FROM orders o WHERE o.event_id = $1 AND o.paid_at IS NOT NULL)::int AS paid_orders,
-    (SELECT coalesce(sum(r.amount_tiyn), 0) FROM refunds r JOIN orders o ON o.id = r.order_id
+    (SELECT coalesce(sum(i.price_tiyn), 0) FROM refund_items ri
+      JOIN refunds r ON r.id = ri.refund_id
+      JOIN tickets t ON t.id = ri.ticket_id
+      JOIN order_items i ON i.id = t.order_item_id
+      JOIN orders o ON o.id = r.order_id
       WHERE o.event_id = $1 AND r.status = 'succeeded' AND o.paid_at IS NOT NULL)::bigint AS refunded
 `
 
@@ -730,6 +743,8 @@ type ReportMoneyRow struct {
 	Refunded   int64
 }
 
+// Деньги организатора — цены билетов. Сервисный сбор платит покупатель
+// платформе (ADR 019), в выручку и возвраты организатора он не входит.
 func (q *Queries) ReportMoney(ctx context.Context, eventID string) (ReportMoneyRow, error) {
 	row := q.db.QueryRow(ctx, reportMoney, eventID)
 	var i ReportMoneyRow

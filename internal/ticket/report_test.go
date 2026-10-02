@@ -32,11 +32,15 @@ func TestReport(t *testing.T) {
 	e.exec(t, `UPDATE event_seats SET status = 'available' WHERE id = $1`, e.seats[1])
 	var payment string
 	if err := e.db.Pool.QueryRow(ctx, `INSERT INTO payments (organizer_id, order_id, status, amount_tiyn, provider, provider_payment_id)
-		VALUES ($1, $2, 'succeeded', 1000000, 'fakepsp', 'pay_1') RETURNING id`, e.org, o1).Scan(&payment); err != nil {
+		VALUES ($1, $2, 'succeeded', 1050000, 'fakepsp', 'pay_1') RETURNING id`, e.org, o1).Scan(&payment); err != nil {
 		t.Fatal(err)
 	}
-	e.exec(t, `INSERT INTO refunds (organizer_id, payment_id, order_id, status, amount_tiyn, reason) VALUES ($1, $2, $3, 'succeeded', 500000, 'buyer_request')`,
-		e.org, payment, o1)
+	var refund string
+	if err := e.db.Pool.QueryRow(ctx, `INSERT INTO refunds (organizer_id, payment_id, order_id, status, amount_tiyn, reason)
+		VALUES ($1, $2, $3, 'succeeded', 500000, 'buyer_request') RETURNING id`, e.org, payment, o1).Scan(&refund); err != nil {
+		t.Fatal(err)
+	}
+	e.exec(t, `INSERT INTO refund_items (refund_id, ticket_id, organizer_id, order_id) VALUES ($1, $2, $3, $4)`, refund, ts[1].ID, e.org, o1)
 	// Email с формулой: в CSV она не должна выполниться.
 	e.exec(t, `UPDATE orders SET email = '=HYPERLINK("x")@evil.kz' WHERE id = $1`, o2)
 
@@ -50,8 +54,10 @@ func TestReport(t *testing.T) {
 	if r.Tickets.Active != 2 || r.Tickets.Used != 1 || r.Tickets.Refunded != 1 {
 		t.Errorf("tickets = %+v", r.Tickets)
 	}
+	// Выручка организатора — цены билетов: сервисный сбор покупатель платит
+	// платформе, в отчёт организатора он не входит (ADR 019).
 	if r.Money.PaidOrders != 2 || r.Money.GrossTiyn != 1500000 || r.Money.RefundedTiyn != 500000 || r.Money.NetTiyn != 1000000 {
-		t.Errorf("money = %+v", r.Money)
+		t.Errorf("money = %+v, want ticket prices without the service fee", r.Money)
 	}
 	if len(r.Categories) != 1 || r.Categories[0].Sold != 2 || r.Categories[0].RevenueTiyn != 1000000 || r.Categories[0].Capacity != 3 {
 		t.Errorf("categories = %+v", r.Categories)

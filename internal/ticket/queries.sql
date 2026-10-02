@@ -103,7 +103,7 @@ WHERE o.id = @order_id;
 -- name: LockOrderTickets :many
 -- Билеты заказа под блокировкой: сканирование и возврат одного билета
 -- выполняются по очереди.
-SELECT t.id, t.status, i.price_tiyn
+SELECT t.id, t.status, i.price_tiyn, i.fee_tiyn
 FROM tickets t JOIN order_items i ON i.id = t.order_item_id
 WHERE t.order_id = @order_id AND t.id = ANY(@ids::uuid[])
 ORDER BY t.id
@@ -115,7 +115,7 @@ WHERE id = ANY(@ids::uuid[]) AND status = 'issued';
 
 -- name: LockEventTicketsForCancel :many
 -- Все действующие билеты отменённого события.
-SELECT t.id, t.order_id, t.status, i.price_tiyn
+SELECT t.id, t.order_id, t.status, i.price_tiyn, i.fee_tiyn
 FROM tickets t JOIN order_items i ON i.id = t.order_item_id
 WHERE t.event_id = @event_id AND t.status IN ('issued', 'used')
 ORDER BY t.order_id, t.id
@@ -139,10 +139,17 @@ SELECT count(*) FILTER (WHERE status IN ('issued', 'used'))::int AS active,
 FROM tickets WHERE event_id = @event_id;
 
 -- name: ReportMoney :one
+-- Деньги организатора — цены билетов. Сервисный сбор платит покупатель
+-- платформе (ADR 019), в выручку и возвраты организатора он не входит.
 SELECT
-    (SELECT coalesce(sum(total_tiyn), 0) FROM orders o WHERE o.event_id = @event_id AND o.paid_at IS NOT NULL)::bigint AS gross,
+    (SELECT coalesce(sum(i.price_tiyn), 0) FROM order_items i JOIN orders o ON o.id = i.order_id
+      WHERE o.event_id = @event_id AND o.paid_at IS NOT NULL)::bigint AS gross,
     (SELECT count(*) FROM orders o WHERE o.event_id = @event_id AND o.paid_at IS NOT NULL)::int AS paid_orders,
-    (SELECT coalesce(sum(r.amount_tiyn), 0) FROM refunds r JOIN orders o ON o.id = r.order_id
+    (SELECT coalesce(sum(i.price_tiyn), 0) FROM refund_items ri
+      JOIN refunds r ON r.id = ri.refund_id
+      JOIN tickets t ON t.id = ri.ticket_id
+      JOIN order_items i ON i.id = t.order_item_id
+      JOIN orders o ON o.id = r.order_id
       WHERE o.event_id = @event_id AND r.status = 'succeeded' AND o.paid_at IS NOT NULL)::bigint AS refunded;
 
 -- name: ReportCategories :many

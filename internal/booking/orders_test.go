@@ -511,3 +511,69 @@ func TestListOrders(t *testing.T) {
 		t.Errorf("orders after cancel = %d, want 1", len(list))
 	}
 }
+
+func TestServiceFeeRounding(t *testing.T) {
+	tests := []struct {
+		price int64
+		bps   int32
+		want  int64
+	}{
+		{500_000, 500, 25_000}, // 5 000 ₸ → 250 ₸
+		{0, 500, 0},            // бесплатный билет без сбора
+		{500_000, 0, 0},        // сбор выключен
+		{999, 500, 50},         // 49,95 тиына → 50, половина вверх
+		{989, 500, 49},         // 49,45 → 49
+		{10, 500, 1},           // 0,5 → 1
+	}
+	for _, tt := range tests {
+		if got := ServiceFee(tt.price, tt.bps); got != tt.want {
+			t.Errorf("ServiceFee(%d, %d) = %d, want %d", tt.price, tt.bps, got, tt.want)
+		}
+	}
+}
+
+// Сервисный сбор считается на каждый платный билет, входит в сумму заказа и
+// записывается в позиции: смена ставки не меняет уже созданные заказы.
+func TestServiceFee(t *testing.T) {
+	e := newEnv(t, false, 2, 4, 10)
+	ctx := t.Context()
+	now := time.Now()
+	e.svc = NewService(e.db.Pool, nil, quietLog(), WithServiceFee(500))
+
+	req := seatsReq(seat(1, 1), seat(1, 2))
+	req.General = []GeneralRef{{Section: "Фан-зона", Quantity: 1}}
+	buyer := e.buyer(t)
+	o, err := e.svc.CreateOrder(ctx, buyer, e.eventID, req, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantFee := 2*ServiceFee(partPrice, 500) + ServiceFee(fanPrice, 500)
+	if o.FeeTiyn != wantFee || o.TotalTiyn != 2*partPrice+fanPrice+wantFee {
+		t.Fatalf("order total = %d, fee = %d; want fee %d on top of prices", o.TotalTiyn, o.FeeTiyn, wantFee)
+	}
+	for _, it := range o.Items {
+		if it.FeeTiyn != ServiceFee(it.PriceTiyn, 500) {
+			t.Errorf("item %+v: fee = %d", it, it.FeeTiyn)
+		}
+	}
+	if a := e.availability(t); a.ServiceFeeBps != 500 {
+		t.Errorf("availability service_fee_bps = %d, want 500", a.ServiceFeeBps)
+	}
+
+	// Новая ставка действует только на новые заказы.
+	e.svc = NewService(e.db.Pool, nil, quietLog(), WithServiceFee(700))
+	got, err := e.svc.GetOrder(ctx, buyer, o.ID, now)
+	if err != nil || got.FeeTiyn != wantFee || got.TotalTiyn != o.TotalTiyn {
+		t.Errorf("order after the rate change = %+v, %v", got, err)
+	}
+
+	// Бесплатные билеты: сбора нет, заказ оформляется сразу.
+	e.exec(t, `UPDATE price_categories SET price_tiyn = 0 WHERE event_id = $1`, e.eventID)
+	free, err := e.svc.CreateOrder(ctx, e.buyer(t), e.eventID, seatsReq(seat(2, 1)), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if free.Status != "paid" || free.TotalTiyn != 0 || free.FeeTiyn != 0 {
+		t.Errorf("free order = %+v, want paid with no fee", free)
+	}
+}

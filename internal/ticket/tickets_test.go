@@ -86,6 +86,10 @@ func newEnv(t *testing.T) *env {
 }
 
 // order создаёт заказ со статусом status на места seats.
+// testFee — сервисный сбор 5 % с билета за 5 000 ₸ (ADR 019).
+const testFee int64 = 25000
+
+// order создаёт заказ с билетами по 5 000 ₸ и сервисным сбором testFee.
 func (e *env) order(t *testing.T, status string, seats ...string) (orderID, buyerID string) {
 	t.Helper()
 	ctx := t.Context()
@@ -101,12 +105,12 @@ func (e *env) order(t *testing.T, status string, seats ...string) (orderID, buye
 	}
 	if err := p.QueryRow(ctx, `INSERT INTO orders (organizer_id, event_id, buyer_id, status, email, total_tiyn, expires_at, paid_at)
 		VALUES ($1, $2, $3, $4, 'buyer@example.com', $5, now() + interval '10 minutes', $6) RETURNING id`,
-		e.org, e.event, buyerID, status, int64(len(seats))*500000, paidAt).Scan(&orderID); err != nil {
+		e.org, e.event, buyerID, status, int64(len(seats))*(500000+testFee), paidAt).Scan(&orderID); err != nil {
 		t.Fatal(err)
 	}
 	for _, s := range seats {
-		if _, err := p.Exec(ctx, `INSERT INTO order_items (organizer_id, event_id, order_id, event_seat_id, price_tiyn)
-			VALUES ($1, $2, $3, $4, 500000)`, e.org, e.event, orderID, s); err != nil {
+		if _, err := p.Exec(ctx, `INSERT INTO order_items (organizer_id, event_id, order_id, event_seat_id, price_tiyn, fee_tiyn)
+			VALUES ($1, $2, $3, $4, 500000, $5)`, e.org, e.event, orderID, s, testFee); err != nil {
 			t.Fatal(err)
 		}
 	}

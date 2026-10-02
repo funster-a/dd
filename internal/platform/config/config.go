@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -43,6 +44,9 @@ type Config struct {
 	// BookingStrategy — стратегия захвата мест (ADR 017): redis (по
 	// умолчанию), pessimistic или optimistic. Значение проверяет booking.
 	BookingStrategy string
+	// ServiceFeeBps — сервисный сбор с покупателя в сотых долях процента
+	// (ADR 019): 500 = 5 %, бизнес-решение 2026-10-02.
+	ServiceFeeBps int32
 }
 
 // PaymentConfig — параметры платёжного провайдера. Значения по умолчанию
@@ -150,6 +154,15 @@ func Load() (Config, error) {
 	}
 	// DATABASE_URL разбирает pgx при создании пула: он принимает и URL,
 	// и формат key=value, а пароль в ошибках скрывает.
+
+	fee, err := strconv.ParseInt(getenv("SERVICE_FEE_BPS", "500"), 10, 32)
+	switch {
+	case err != nil:
+		errs = append(errs, fmt.Errorf("SERVICE_FEE_BPS: %w", err))
+	case fee < 0 || fee > 3000:
+		errs = append(errs, errors.New("SERVICE_FEE_BPS: must be between 0 and 3000 (0-30 %)"))
+	}
+	cfg.ServiceFeeBps = int32(fee) //nolint:gosec // проверено выше
 
 	return cfg, errors.Join(errs...)
 }

@@ -9,7 +9,7 @@ import (
 
 func TestLoadDefaults(t *testing.T) {
 	for _, k := range []string{"HTTP_ADDR", "LOG_LEVEL", "SHUTDOWN_TIMEOUT", "DATABASE_URL", "REDIS_ADDR", "RABBITMQ_URL",
-		"PUBLIC_BASE_URL", "PAYMENT_CALLBACK_URL"} {
+		"PUBLIC_BASE_URL", "PAYMENT_CALLBACK_URL", "SERVICE_FEE_BPS"} {
 		t.Setenv(k, "")
 	}
 
@@ -28,6 +28,9 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.Payment.CallbackURL != "http://localhost:8080/v1/payments/webhooks/fakepsp" {
 		t.Errorf("Payment.CallbackURL = %q, want derived from PUBLIC_BASE_URL", cfg.Payment.CallbackURL)
+	}
+	if cfg.ServiceFeeBps != 500 {
+		t.Errorf("ServiceFeeBps = %d, want 500 (5 %%)", cfg.ServiceFeeBps)
 	}
 }
 
@@ -61,6 +64,9 @@ func TestLoadInvalid(t *testing.T) {
 		"base url no host":  {"PUBLIC_BASE_URL": "http://"},
 		"psp not url":       {"PSP_URL": "fakepsp:8090"},
 		"short ticket key":  {"TICKET_SIGNING_KEY": "short"},
+		"fee not number":    {"SERVICE_FEE_BPS": "5%"},
+		"fee negative":      {"SERVICE_FEE_BPS": "-1"},
+		"fee too high":      {"SERVICE_FEE_BPS": "3001"},
 	}
 	for name, env := range tests {
 		t.Run(name, func(t *testing.T) {

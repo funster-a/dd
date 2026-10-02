@@ -2,13 +2,13 @@ package booking
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strconv"
-	"sync/atomic"
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
+
+	"github.com/funster-a/dd/internal/platform/redis"
 )
 
 // holdStore — холды мест в Redis (ADR 011). Ключ места живёт ровно столько,
@@ -22,11 +22,8 @@ import (
 // таймаутов. Без этого эксперимент с отказом Redis показал очередь из
 // запросов, ждущих по 3–4 секунды каждый, и обрывы по таймауту сервера.
 type holdStore struct {
-	rdb goredis.Scripter
-	// openUntil — до какого момента (UnixNano) фильтр выключен.
-	openUntil atomic.Int64
-	// onOpen вызывается, когда фильтр выключается (для метрик и логов).
-	onOpen func(err error)
+	rdb  goredis.Scripter
+	gate *redis.Gate
 }
 
 const (
@@ -37,24 +34,12 @@ const (
 	breakerCooldown = 5 * time.Second
 )
 
-// errGateOpen — фильтр выключен после недавней ошибки Redis.
-var errGateOpen = errors.New("redis holds disabled after a recent failure")
+func newHoldStore(rdb goredis.Scripter, onOpen func(error)) *holdStore {
+	return &holdStore{rdb: rdb, gate: &redis.Gate{Timeout: redisCallTimeout, Cooldown: breakerCooldown, OnOpen: onOpen}}
+}
 
-// call выполняет вызов Redis с коротким таймаутом и выключает фильтр при
-// ошибке. Отмена самого запроса фильтр не выключает: Redis тут ни при чём.
 func (h *holdStore) call(ctx context.Context, f func(context.Context) error) error {
-	if time.Now().UnixNano() < h.openUntil.Load() {
-		return errGateOpen
-	}
-	cctx, cancel := context.WithTimeout(ctx, redisCallTimeout)
-	defer cancel()
-	err := f(cctx)
-	if err != nil && ctx.Err() == nil {
-		if prev := h.openUntil.Swap(time.Now().Add(breakerCooldown).UnixNano()); prev < time.Now().UnixNano() && h.onOpen != nil {
-			h.onOpen(err)
-		}
-	}
-	return err
+	return h.gate.Do(ctx, f)
 }
 
 // Ключи одного события — в одном слоте Redis Cluster благодаря {eventID}:

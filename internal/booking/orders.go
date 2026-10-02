@@ -41,10 +41,10 @@ func NewService(pool *pgxpool.Pool, rdb goredis.Scripter, log *slog.Logger, opts
 		o(s)
 	}
 	if rdb != nil && s.strategy == StrategyRedis {
-		s.holds = &holdStore{rdb: rdb, onOpen: func(err error) {
+		s.holds = newHoldStore(rdb, func(err error) {
 			s.metrics.gateOpened.Inc()
 			s.log.Warn("redis holds disabled, booking through database only", slog.Duration("for", breakerCooldown), slog.Any("error", err))
-		}}
+		})
 	}
 	return s
 }

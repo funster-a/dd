@@ -19,6 +19,7 @@ import type {
   OrderSummary,
   Payment,
   PublicEvent,
+  QueueStatus,
   SeatRef,
   Ticket,
   TicketView,
@@ -129,6 +130,8 @@ export const api = {
     body: { seats: SeatRef[]; general: { section: string; quantity: number }[]; email: string },
     key: string,
   ) => request<Order>(`/v1/events/${eventId}/orders`, { method: 'POST', body, idempotencyKey: key }),
+  // Встать в очередь ожидания или узнать своё место: повтор место не меняет.
+  joinQueue: (eventId: string) => request<QueueStatus>(`/v1/events/${eventId}/queue`, { method: 'POST' }),
   order: (id: string) => request<Order>(`/v1/orders/${id}`),
   cancelOrder: (id: string, key: string) =>
     request<Order>(`/v1/orders/${id}/cancel`, { method: 'POST', idempotencyKey: key }),

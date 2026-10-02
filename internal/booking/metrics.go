@@ -15,6 +15,9 @@ type holdMetrics struct {
 	duration *prometheus.HistogramVec
 	// gateOpened — сколько раз фильтр Redis выключался после ошибки.
 	gateOpened prometheus.Counter
+	// queueBypassed — сколько раз очередь ожидания пропустила покупателя
+	// без проверки, потому что Redis недоступен (ADR 020).
+	queueBypassed prometheus.Counter
 }
 
 func newHoldMetrics(reg prometheus.Registerer) *holdMetrics {
@@ -36,8 +39,12 @@ func newHoldMetrics(reg prometheus.Registerer) *holdMetrics {
 			Name: "dd_booking_redis_gate_opened_total",
 			Help: "Сколько раз фильтр холдов в Redis выключался после ошибки Redis.",
 		}),
+		queueBypassed: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "dd_booking_queue_bypassed_total",
+			Help: "Покупатели, пропущенные мимо очереди ожидания из-за отказа Redis.",
+		}),
 	}
-	reg.MustRegister(m.attempts, m.retries, m.duration, m.gateOpened)
+	reg.MustRegister(m.attempts, m.retries, m.duration, m.gateOpened, m.queueBypassed)
 	return m
 }
 

@@ -24,6 +24,15 @@ type Availability struct {
 	// ServiceFeeBps — ставка сервисного сбора с покупателя в сотых долях
 	// процента: сайт показывает сбор в корзине до оформления (ADR 019).
 	ServiceFeeBps int32 `json:"service_fee_bps"`
+	// Queue — окно очереди ожидания при старте продаж (ADR 020) или null,
+	// если очереди у события нет.
+	Queue *QueueWindow `json:"queue"`
+}
+
+// QueueWindow — когда у события работает очередь ожидания.
+type QueueWindow struct {
+	OpensAt  time.Time `json:"opens_at"`
+	ClosesAt time.Time `json:"closes_at"`
 }
 
 // GeneralAvailability — свободные места входной зоны.
@@ -48,8 +57,8 @@ func (s *Service) GetAvailability(ctx context.Context, eventID string) ([]byte, 
 }
 
 func (s *Service) loadAvailability(ctx context.Context, eventID string, now time.Time) ([]byte, error) {
-	status, err := s.q.GetPublishedEventStatus(ctx, eventID)
-	if errors.Is(err, pgx.ErrNoRows) || (err == nil && status != "published") {
+	ev, err := s.q.GetPublishedEventStatus(ctx, eventID)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && ev.Status != "published") {
 		return nil, ErrNotFound
 	}
 	if err != nil {
@@ -64,6 +73,9 @@ func (s *Service) loadAvailability(ctx context.Context, eventID string, now time
 		return nil, fmt.Errorf("count general seats: %w", err)
 	}
 	a := Availability{Taken: make([]SeatRef, len(taken)), General: make([]GeneralAvailability, len(general)), ServiceFeeBps: s.feeBps}
+	if s.queue != nil && ev.SalesStartAt != nil {
+		a.Queue = &QueueWindow{OpensAt: ev.SalesStartAt.Add(-s.queue.cfg.OpensBefore), ClosesAt: ev.SalesStartAt.Add(s.queue.cfg.Window)}
+	}
 	for i, t := range taken {
 		a.Taken[i] = SeatRef{Section: t.Section, Row: deref(t.RowLabel), Seat: t.SeatLabel}
 	}

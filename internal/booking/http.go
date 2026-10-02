@@ -19,6 +19,7 @@ import (
 //	POST /events/{eventID}/orders       — заказ покупателя
 //	GET  /orders/{orderID}              — заказ покупателя
 //	POST /orders/{orderID}/cancel       — отмена неоплаченного заказа
+//	POST /events/{eventID}/queue        — встать в очередь ожидания или узнать своё место
 //	GET  /me/orders                     — заказы покупателя
 func (s *Service) Register(r chi.Router) {
 	r.Get("/events/{eventID}/availability", s.handleAvailability)
@@ -29,6 +30,8 @@ func (s *Service) Register(r chi.Router) {
 		r.Get("/orders/{orderID}", s.handleGetOrder)
 		r.Get("/me/orders", s.handleListOrders)
 		r.With(idem).Post("/orders/{orderID}/cancel", s.handleCancelOrder)
+		// Ключ идемпотентности не нужен: повторный вызов место в очереди не меняет.
+		r.Post("/events/{eventID}/queue", s.handleJoinQueue)
 	})
 }
 
@@ -51,11 +54,20 @@ func (s *Service) handleCreateOrder(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
+	req.ClientIP = httpx.ClientIP(r)
 	o, err := s.CreateOrder(r.Context(), buyerID(r), chi.URLParam(r, "eventID"), req, time.Now())
 	if writeError(w, r, err) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, o)
+}
+
+func (s *Service) handleJoinQueue(w http.ResponseWriter, r *http.Request) {
+	st, err := s.JoinQueue(r.Context(), buyerID(r), chi.URLParam(r, "eventID"), time.Now())
+	if writeError(w, r, err) {
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, st)
 }
 
 func (s *Service) handleGetOrder(w http.ResponseWriter, r *http.Request) {

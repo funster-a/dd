@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/mail"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -31,7 +32,10 @@ type Service struct {
 
 	strategy Strategy
 	metrics  *holdMetrics
-	feeBps   int32 // сервисный сбор с покупателя, ADR 019
+	feeBps   int32        // сервисный сбор с покупателя, ADR 019
+	ipLimit  int          // билетов на событие с одного IP, 0 — без лимита (ADR 020)
+	queue    *waitingRoom // nil — очереди нет
+	queueCfg QueueConfig
 }
 
 // NewService создаёт сервис бронирования. rdb может быть nil: тогда холды
@@ -45,6 +49,12 @@ func NewService(pool *pgxpool.Pool, rdb goredis.Scripter, log *slog.Logger, opts
 		s.holds = newHoldStore(rdb, func(err error) {
 			s.metrics.gateOpened.Inc()
 			s.log.Warn("redis holds disabled, booking through database only", slog.Duration("for", breakerCooldown), slog.Any("error", err))
+		})
+	}
+	if rdb != nil && s.queueCfg.AdmitPerSecond > 0 {
+		s.queue = newWaitingRoom(rdb, s.queueCfg, func(err error) {
+			s.metrics.gateOpened.Inc()
+			s.log.Warn("redis queue disabled, buyers go straight to booking", slog.Duration("for", breakerCooldown), slog.Any("error", err))
 		})
 	}
 	return s
@@ -77,6 +87,9 @@ type OrderRequest struct {
 	General []GeneralRef `json:"general"`
 	// Email — куда отправить билеты.
 	Email string `json:"email"`
+	// ClientIP — адрес покупателя для лимита билетов на IP (ADR 020).
+	// Заполняет обработчик HTTP, не клиент.
+	ClientIP string `json:"-"`
 }
 
 // Order — заказ покупателя.
@@ -181,6 +194,9 @@ func (s *Service) createOrder(ctx context.Context, buyerID, eventID string, req 
 	if err := checkSales(ev, now, count); err != nil {
 		return Order{}, err
 	}
+	if err := s.checkQueue(ctx, ev, buyerID, now); err != nil {
+		return Order{}, err
+	}
 	// Лимит — на покупателя за всё событие, с учётом уже купленных билетов:
 	// перекупщик не наберёт билеты несколькими заказами.
 	bought, err := s.q.CountBuyerTickets(ctx, bookingdb.CountBuyerTicketsParams{BuyerID: buyerID, EventID: eventID})
@@ -193,6 +209,11 @@ func (s *Service) createOrder(ctx context.Context, buyerID, eventID string, req 
 			Message: fmt.Sprintf("at most %d tickets per buyer for this event, %d already bought",
 				ev.MaxTicketsPerBuyer, bought),
 		}
+	}
+
+	ip := clientAddr(req.ClientIP)
+	if err := s.checkIPLimit(ctx, ip, buyerID, eventID, count, now); err != nil {
+		return Order{}, err
 	}
 
 	orderID := uuid.Must(uuid.NewV7()).String()
@@ -222,7 +243,7 @@ func (s *Service) createOrder(ctx context.Context, buyerID, eventID string, req 
 		}
 	}
 
-	res, err := s.createTx(ctx, ev, buyerID, orderID, req, now)
+	res, err := s.createTx(ctx, ev, buyerID, orderID, req, ip, now)
 	// Оптимистичная стратегия: конфликт версий — перечитать и попробовать снова.
 	for errors.Is(err, errVersionConflict) && st.retries < optimisticAttempts-1 {
 		st.retries++
@@ -231,7 +252,7 @@ func (s *Service) createOrder(ctx context.Context, buyerID, eventID string, req 
 			return Order{}, ctx.Err()
 		case <-time.After(backoff(st.retries)):
 		}
-		res, err = s.createTx(ctx, ev, buyerID, orderID, req, now)
+		res, err = s.createTx(ctx, ev, buyerID, orderID, req, ip, now)
 	}
 	if errors.Is(err, errVersionConflict) {
 		err = &ConflictError{Code: "seat_taken", Message: "seats are being booked concurrently, retry"}
@@ -303,7 +324,7 @@ type createResult struct {
 	prevKeys    []string
 }
 
-func (s *Service) createTx(ctx context.Context, ev bookingdb.GetBookableEventRow, buyerID, orderID string, req OrderRequest, now time.Time) (createResult, error) {
+func (s *Service) createTx(ctx context.Context, ev bookingdb.GetBookableEventRow, buyerID, orderID string, req OrderRequest, ip *netip.Addr, now time.Time) (createResult, error) {
 	var res createResult
 	expires := now.Add(HoldTTL)
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
@@ -329,7 +350,7 @@ func (s *Service) createTx(ctx context.Context, ev bookingdb.GetBookableEventRow
 		// покупателя раньше, чем тот тронет места.
 		if _, err := q.InsertOrder(ctx, bookingdb.InsertOrderParams{
 			ID: orderID, OrganizerID: ev.OrganizerID, EventID: ev.ID, BuyerID: buyerID,
-			Email: req.Email, ExpiresAt: expires,
+			Email: req.Email, ExpiresAt: expires, ClientIp: ip,
 		}); err != nil {
 			if uniqueConstraint(err) == "orders_one_pending_per_buyer_event_key" {
 				return &ConflictError{Code: "order_in_progress", Message: "another order for this event is being created, retry"}

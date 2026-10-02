@@ -7,6 +7,7 @@ package bookingdb
 
 import (
 	"context"
+	"net/netip"
 	"time"
 )
 
@@ -64,6 +65,39 @@ func (q *Queries) CountGeneralAvailable(ctx context.Context, eventID string) ([]
 		return nil, err
 	}
 	return items, nil
+}
+
+const countIPTickets = `-- name: CountIPTickets :one
+SELECT count(*)::int FROM order_items i
+JOIN orders o ON o.id = i.order_id
+LEFT JOIN tickets t ON t.order_item_id = i.id
+WHERE o.event_id = $1 AND o.client_ip = $2::inet
+  AND (
+      (o.status IN ('paid', 'partially_refunded') AND (t.id IS NULL OR t.status <> 'revoked'))
+      OR (o.status = 'pending' AND o.expires_at > $3 AND o.buyer_id <> $4)
+  )
+`
+
+type CountIPTicketsParams struct {
+	EventID  string
+	ClientIp netip.Addr
+	Now      time.Time
+	BuyerID  string
+}
+
+// Сколько билетов на событие уже взято с этого IP-адреса (ADR 020): места
+// оплаченных заказов без возвращённых и действующие корзины других
+// покупателей. Своя корзина не считается: новый заказ её заменит.
+func (q *Queries) CountIPTickets(ctx context.Context, arg CountIPTicketsParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countIPTickets,
+		arg.EventID,
+		arg.ClientIp,
+		arg.Now,
+		arg.BuyerID,
+	)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const countOrderItems = `-- name: CountOrderItems :one
@@ -170,7 +204,7 @@ func (q *Queries) GetBookableEvent(ctx context.Context, id string) (GetBookableE
 }
 
 const getBuyerOrder = `-- name: GetBuyerOrder :one
-SELECT id, organizer_id, event_id, buyer_id, status, email, total_tiyn, currency, expires_at, paid_at, created_at, updated_at FROM orders WHERE id = $1 AND buyer_id = $2
+SELECT id, organizer_id, event_id, buyer_id, status, email, total_tiyn, currency, expires_at, paid_at, created_at, updated_at, client_ip FROM orders WHERE id = $1 AND buyer_id = $2
 `
 
 type GetBuyerOrderParams struct {
@@ -194,6 +228,7 @@ func (q *Queries) GetBuyerOrder(ctx context.Context, arg GetBuyerOrderParams) (O
 		&i.PaidAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ClientIp,
 	)
 	return i, err
 }
@@ -210,14 +245,19 @@ func (q *Queries) GetEventStatus(ctx context.Context, id string) (string, error)
 }
 
 const getPublishedEventStatus = `-- name: GetPublishedEventStatus :one
-SELECT status FROM events WHERE id = $1
+SELECT status, sales_start_at FROM events WHERE id = $1
 `
 
-func (q *Queries) GetPublishedEventStatus(ctx context.Context, id string) (string, error) {
+type GetPublishedEventStatusRow struct {
+	Status       string
+	SalesStartAt *time.Time
+}
+
+func (q *Queries) GetPublishedEventStatus(ctx context.Context, id string) (GetPublishedEventStatusRow, error) {
 	row := q.db.QueryRow(ctx, getPublishedEventStatus, id)
-	var status string
-	err := row.Scan(&status)
-	return status, err
+	var i GetPublishedEventStatusRow
+	err := row.Scan(&i.Status, &i.SalesStartAt)
+	return i, err
 }
 
 const holdGeneral = `-- name: HoldGeneral :many
@@ -402,9 +442,9 @@ func (q *Queries) HoldSeatsIfVersion(ctx context.Context, arg HoldSeatsIfVersion
 }
 
 const insertOrder = `-- name: InsertOrder :one
-INSERT INTO orders (id, organizer_id, event_id, buyer_id, email, total_tiyn, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, organizer_id, event_id, buyer_id, status, email, total_tiyn, currency, expires_at, paid_at, created_at, updated_at
+INSERT INTO orders (id, organizer_id, event_id, buyer_id, email, total_tiyn, expires_at, client_ip)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8::inet)
+RETURNING id, organizer_id, event_id, buyer_id, status, email, total_tiyn, currency, expires_at, paid_at, created_at, updated_at, client_ip
 `
 
 type InsertOrderParams struct {
@@ -415,6 +455,7 @@ type InsertOrderParams struct {
 	Email       string
 	TotalTiyn   int64
 	ExpiresAt   time.Time
+	ClientIp    *netip.Addr
 }
 
 func (q *Queries) InsertOrder(ctx context.Context, arg InsertOrderParams) (Order, error) {
@@ -426,6 +467,7 @@ func (q *Queries) InsertOrder(ctx context.Context, arg InsertOrderParams) (Order
 		arg.Email,
 		arg.TotalTiyn,
 		arg.ExpiresAt,
+		arg.ClientIp,
 	)
 	var i Order
 	err := row.Scan(
@@ -441,6 +483,7 @@ func (q *Queries) InsertOrder(ctx context.Context, arg InsertOrderParams) (Order
 		&i.PaidAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ClientIp,
 	)
 	return i, err
 }
@@ -622,7 +665,7 @@ func (q *Queries) ListTakenSeats(ctx context.Context, arg ListTakenSeatsParams) 
 }
 
 const lockBuyerOrder = `-- name: LockBuyerOrder :one
-SELECT id, organizer_id, event_id, buyer_id, status, email, total_tiyn, currency, expires_at, paid_at, created_at, updated_at FROM orders WHERE id = $1 AND buyer_id = $2 FOR UPDATE
+SELECT id, organizer_id, event_id, buyer_id, status, email, total_tiyn, currency, expires_at, paid_at, created_at, updated_at, client_ip FROM orders WHERE id = $1 AND buyer_id = $2 FOR UPDATE
 `
 
 type LockBuyerOrderParams struct {
@@ -646,12 +689,13 @@ func (q *Queries) LockBuyerOrder(ctx context.Context, arg LockBuyerOrderParams) 
 		&i.PaidAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ClientIp,
 	)
 	return i, err
 }
 
 const lockOrder = `-- name: LockOrder :one
-SELECT id, organizer_id, event_id, buyer_id, status, email, total_tiyn, currency, expires_at, paid_at, created_at, updated_at FROM orders WHERE id = $1 FOR UPDATE
+SELECT id, organizer_id, event_id, buyer_id, status, email, total_tiyn, currency, expires_at, paid_at, created_at, updated_at, client_ip FROM orders WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) LockOrder(ctx context.Context, id string) (Order, error) {
@@ -670,6 +714,7 @@ func (q *Queries) LockOrder(ctx context.Context, id string) (Order, error) {
 		&i.PaidAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ClientIp,
 	)
 	return i, err
 }
@@ -701,7 +746,7 @@ func (q *Queries) LockPendingOrder(ctx context.Context, arg LockPendingOrderPara
 const markOrderPaid = `-- name: MarkOrderPaid :one
 UPDATE orders SET status = 'paid', paid_at = $1::timestamptz, updated_at = now()
 WHERE id = $2 AND status = 'pending'
-RETURNING id, organizer_id, event_id, buyer_id, status, email, total_tiyn, currency, expires_at, paid_at, created_at, updated_at
+RETURNING id, organizer_id, event_id, buyer_id, status, email, total_tiyn, currency, expires_at, paid_at, created_at, updated_at, client_ip
 `
 
 type MarkOrderPaidParams struct {
@@ -725,6 +770,7 @@ func (q *Queries) MarkOrderPaid(ctx context.Context, arg MarkOrderPaidParams) (O
 		&i.PaidAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ClientIp,
 	)
 	return i, err
 }
@@ -936,7 +982,7 @@ func (q *Queries) SetOrderRefundStatus(ctx context.Context, arg SetOrderRefundSt
 const setOrderStatus = `-- name: SetOrderStatus :one
 UPDATE orders SET status = $1, updated_at = now()
 WHERE id = $2 AND status = 'pending'
-RETURNING id, organizer_id, event_id, buyer_id, status, email, total_tiyn, currency, expires_at, paid_at, created_at, updated_at
+RETURNING id, organizer_id, event_id, buyer_id, status, email, total_tiyn, currency, expires_at, paid_at, created_at, updated_at, client_ip
 `
 
 type SetOrderStatusParams struct {
@@ -960,12 +1006,13 @@ func (q *Queries) SetOrderStatus(ctx context.Context, arg SetOrderStatusParams) 
 		&i.PaidAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ClientIp,
 	)
 	return i, err
 }
 
 const setOrderTotal = `-- name: SetOrderTotal :one
-UPDATE orders SET total_tiyn = $1, updated_at = now() WHERE id = $2 RETURNING id, organizer_id, event_id, buyer_id, status, email, total_tiyn, currency, expires_at, paid_at, created_at, updated_at
+UPDATE orders SET total_tiyn = $1, updated_at = now() WHERE id = $2 RETURNING id, organizer_id, event_id, buyer_id, status, email, total_tiyn, currency, expires_at, paid_at, created_at, updated_at, client_ip
 `
 
 type SetOrderTotalParams struct {
@@ -989,6 +1036,7 @@ func (q *Queries) SetOrderTotal(ctx context.Context, arg SetOrderTotalParams) (O
 		&i.PaidAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ClientIp,
 	)
 	return i, err
 }

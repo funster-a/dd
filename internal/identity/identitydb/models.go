@@ -5,6 +5,7 @@
 package identitydb
 
 import (
+	"net/netip"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -87,6 +88,7 @@ type Order struct {
 	PaidAt      *time.Time
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+	ClientIp    *netip.Addr
 }
 
 type OrderItem struct {

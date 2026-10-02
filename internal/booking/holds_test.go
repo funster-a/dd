@@ -17,7 +17,7 @@ func TestHoldGateFailsFastWhenRedisIsDown(t *testing.T) {
 	dead := redis.NewClient("10.255.255.1:6379", quietLog())
 	t.Cleanup(func() { _ = dead.Close() })
 	opened := 0
-	h := &holdStore{rdb: dead, onOpen: func(error) { opened++ }}
+	h := newHoldStore(dead, func(error) { opened++ })
 
 	start := time.Now()
 	if _, err := h.claim(t.Context(), []string{"k"}, "o1", "", time.Minute); err == nil {
@@ -27,8 +27,8 @@ func TestHoldGateFailsFastWhenRedisIsDown(t *testing.T) {
 		t.Fatalf("first claim took %v, want about %v", d, redisCallTimeout)
 	}
 	start = time.Now()
-	if _, err := h.claim(t.Context(), []string{"k"}, "o2", "", time.Minute); !errors.Is(err, errGateOpen) {
-		t.Fatalf("second claim: err = %v, want errGateOpen", err)
+	if _, err := h.claim(t.Context(), []string{"k"}, "o2", "", time.Minute); !errors.Is(err, redis.ErrGateOpen) {
+		t.Fatalf("second claim: err = %v, want ErrGateOpen", err)
 	}
 	if d := time.Since(start); d > 10*time.Millisecond {
 		t.Fatalf("claim with the gate open took %v, want immediate", d)
@@ -37,11 +37,11 @@ func TestHoldGateFailsFastWhenRedisIsDown(t *testing.T) {
 		t.Fatalf("gate opened %d times, want 1", opened)
 	}
 	// Отмена запроса — не отказ Redis: фильтр из-за неё не выключается.
-	h2 := &holdStore{rdb: dead}
+	h2 := newHoldStore(dead, nil)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, _ = h2.claim(ctx, []string{"k"}, "o3", "", time.Minute)
-	if h2.openUntil.Load() != 0 {
+	if h2.gate.Open() {
 		t.Fatal("a cancelled request disabled the gate")
 	}
 }

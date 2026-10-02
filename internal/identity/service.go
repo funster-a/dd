@@ -8,6 +8,7 @@ import (
 	"net/mail"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/funster-a/dd/internal/identity/identitydb"
 	"github.com/funster-a/dd/internal/platform/auth"
+	"github.com/funster-a/dd/internal/platform/redis"
 )
 
 // ErrInvalidAddress — телефон или email в неверном формате.
@@ -27,9 +29,12 @@ type Service struct {
 	q        *identitydb.Queries
 	codes    codes
 	sessions sessions
-	sender   Sender
-	admins   map[string]struct{}
-	log      *slog.Logger
+	// cache и gate — работа проверки сессий при отказе Redis (ADR 018).
+	cache  *sessionCache
+	gate   *redis.Gate
+	sender Sender
+	admins map[string]struct{}
+	log    *slog.Logger
 }
 
 // NewService создаёт сервис. adminEmails — администраторы платформы (ADR 006).
@@ -38,15 +43,42 @@ func NewService(pool *pgxpool.Pool, rdb goredis.Cmdable, sender Sender, adminEma
 	for _, e := range adminEmails {
 		admins[strings.ToLower(strings.TrimSpace(e))] = struct{}{}
 	}
-	return &Service{
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
+	s := &Service{
 		q:        identitydb.New(pool),
 		codes:    codes{rdb: rdb},
 		sessions: sessions{rdb: rdb},
 		sender:   sender,
 		admins:   admins,
 		log:      log,
+		cache:    newSessionCache(sessionStaleMaxAge, sessionCacheLimit),
 	}
+	s.gate = &redis.Gate{Timeout: sessionCallTimeout, Cooldown: sessionGateCooldown, OnOpen: func(err error) {
+		sessionGateOpened.Inc()
+		s.log.Warn("session store unavailable, using recently verified sessions", slog.Duration("for", sessionGateCooldown), slog.Any("error", err))
+	}}
+	return s
 }
+
+const (
+	// sessionCallTimeout — бюджет проверки сессии в Redis.
+	sessionCallTimeout = 300 * time.Millisecond
+	// sessionGateCooldown — сколько после ошибки Redis сессии проверяются
+	// только по кэшу.
+	sessionGateCooldown = 5 * time.Second
+	// sessionStaleMaxAge — по проверке какой давности можно пустить запрос
+	// без Redis (бизнес-решение, ADR 018).
+	sessionStaleMaxAge = 10 * time.Minute
+	// sessionCacheLimit — сколько сессий помнит процесс: около 300 байт на
+	// сессию, до ~60 МБ.
+	sessionCacheLimit = 200_000
+)
+
+// ErrUnavailable — хранилище сессий недоступно, а сессии нет в кэше
+// недавно проверенных. HTTP 503: можно повторить позже.
+var ErrUnavailable = errors.New("session store is unavailable")
 
 // NormalizeAddress проверяет и приводит адрес к каноническому виду:
 // телефон в E.164 для покупателя, email в нижнем регистре для остальных.
@@ -137,12 +169,43 @@ func (s *Service) Login(ctx context.Context, kind auth.Kind, address, code strin
 }
 
 // Authenticate возвращает сессию по токену.
+//
+// Пока Redis отвечает, сессия всегда проверяется в нём: отзыв действует
+// сразу. При отказе Redis запрос пускается по последней успешной проверке
+// этой сессии в этом процессе, если ей не больше sessionStaleMaxAge
+// (ADR 018). Новые входы без Redis невозможны: коды тоже живут в нём.
 func (s *Service) Authenticate(ctx context.Context, token string) (Session, error) {
-	return s.sessions.get(ctx, token)
+	key := sessionKey(token)
+	var sess Session
+	err := s.gate.Do(ctx, func(ctx context.Context) error {
+		var err error
+		sess, err = s.sessions.get(ctx, token)
+		if errors.Is(err, ErrNoSession) {
+			return nil // ответ Redis, а не его отказ
+		}
+		return err
+	})
+	now := time.Now()
+	switch {
+	case err == nil && sess.ExpiresAt.IsZero():
+		s.cache.delete(key)
+		return Session{}, ErrNoSession
+	case err == nil:
+		s.cache.put(key, sess, now)
+		return sess, nil
+	case ctx.Err() != nil:
+		return Session{}, err
+	}
+	if cached, ok := s.cache.get(key, now); ok {
+		sessionStaleHits.Inc()
+		return cached, nil
+	}
+	return Session{}, fmt.Errorf("%w: %w", ErrUnavailable, err)
 }
 
-// Logout отзывает сессию.
+// Logout отзывает сессию. Кэш этого процесса забывает её сразу.
 func (s *Service) Logout(ctx context.Context, token string) error {
+	s.cache.delete(sessionKey(token))
 	return s.sessions.delete(ctx, token)
 }
 

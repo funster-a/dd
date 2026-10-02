@@ -44,6 +44,11 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 			httpx.WriteError(w, http.StatusUnauthorized, "invalid_session", "session is invalid or expired")
 			return
 		}
+		if errors.Is(err, ErrUnavailable) {
+			w.Header().Set("Retry-After", "5")
+			httpx.WriteError(w, http.StatusServiceUnavailable, "session_store_unavailable", "sign-in is temporarily unavailable, retry shortly")
+			return
+		}
 		if err != nil {
 			httpx.Logger(r.Context()).Error("authenticate", slog.Any("error", err))
 			httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")

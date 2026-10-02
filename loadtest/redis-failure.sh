@@ -11,6 +11,7 @@ REPEATS=${REPEATS:-3}
 POOL=${POOL:-32}
 DOWN_AFTER_MS=${DOWN_AFTER_MS:-300}
 LABEL=${LABEL:-redis-down}
+WARMUP=${WARMUP:-1}
 K6_IMAGE=${K6_IMAGE:-grafana/k6:latest}
 OUT=${OUT:-loadtest/results/raw/redis-failure}
 DATA=loadtest/.data
@@ -41,7 +42,7 @@ for rep in $(seq 1 "$REPEATS"); do
   curl -fs localhost:8080/metrics >"$dir/metrics-before.txt"
   base=$(attempts)
   docker run --rm --user 0 --network host -v "$PWD:/work" -w /work \
-    -e VUS="$N" -e SCENARIO=hall -e EVENT="/work/$dir/event.json" -e BUYERS="/work/$DATA/buyers.json" \
+    -e VUS="$N" -e SCENARIO=hall -e WARMUP="$WARMUP" -e EVENT="/work/$dir/event.json" -e BUYERS="/work/$DATA/buyers.json" \
     -e SUMMARY="/work/$dir/summary.json" "$K6_IMAGE" run --quiet loadtest/booking.js >"$dir/k6.log" 2>&1 &
   K6=$!
   # Ждём первые попытки на сервере, затем «роняем» Redis.

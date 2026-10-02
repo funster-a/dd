@@ -15,6 +15,9 @@ import { Counter, Trend } from 'k6/metrics';
 
 const N = Number(__ENV.VUS || 500);
 const SCENARIO = __ENV.SCENARIO || 'one-seat';
+// WARMUP=1: перед стартом покупатель открывает свой профиль — как реальный
+// покупатель, который заходит на страницу события до начала продаж.
+const WARMUP = __ENV.WARMUP === '1';
 const BASE = __ENV.API || 'http://localhost:8080';
 const buyers = JSON.parse(open(__ENV.BUYERS || '.data/buyers.json')).tokens;
 const ev = JSON.parse(open(__ENV.EVENT || '.data/event.json'));
@@ -33,6 +36,7 @@ const taken = new Counter('booking_taken');
 const failed = new Counter('booking_failed');
 const failed5xx = new Counter('booking_failed_5xx');
 const failedNet = new Counter('booking_failed_network'); // таймаут или обрыв, статуса нет
+const failed503 = new Counter('booking_failed_503'); // вход временно недоступен
 const attempts = new Counter('booking_attempts');
 const attemptTime = new Trend('booking_attempt_ms', true);
 const wonTime = new Trend('booking_won_at_ms', true); // когда от старта получен успех
@@ -65,6 +69,9 @@ function randomSeat() {
 }
 
 export default function (data) {
+  if (WARMUP) {
+    http.get(`${BASE}/v1/me`, { headers: { Authorization: `Bearer ${buyers[__VU - 1]}` }, tags: { name: 'warmup' } });
+  }
   const wait = data.startAt - Date.now();
   if (wait > 0) sleep(wait / 1000);
   const token = buyers[__VU - 1];
@@ -83,6 +90,7 @@ export default function (data) {
     failed.add(1);
     if (res.status >= 500) failed5xx.add(1);
     if (res.status === 0) failedNet.add(1);
+    if (res.status === 503) failed503.add(1);
     return;
   }
 }
@@ -98,6 +106,7 @@ export function handleSummary(data) {
     failed: m('booking_failed').count ?? 0,
     failed_5xx: m('booking_failed_5xx').count ?? 0,
     failed_network: m('booking_failed_network').count ?? 0,
+    failed_503: m('booking_failed_503').count ?? 0,
     attempts: m('booking_attempts').count ?? 0,
     attempt_ms: m('booking_attempt_ms'),
     won_at_ms: m('booking_won_at_ms'),

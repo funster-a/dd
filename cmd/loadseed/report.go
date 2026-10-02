@@ -282,7 +282,7 @@ func writeCSV(path string, runs []runResult) error {
 var strategyNames = []string{"pessimistic", "optimistic", "redis"}
 
 // Порядок в таблицах: три стратегии, затем прогоны с отказом Redis.
-var tableOrder = []string{"pessimistic", "optimistic", "redis", "redis-down-nobreaker", "redis-down"}
+var tableOrder = []string{"pessimistic", "optimistic", "redis", "redis-down-nobreaker", "redis-down", "redis-down-sessions"}
 
 func strategyOrder(s string) int { return slices.Index(tableOrder, s) }
 
@@ -376,6 +376,7 @@ func aggregate(runs []runResult) []group {
 var strategyRu = map[string]string{
 	"pessimistic": "Пессимистичная", "optimistic": "Оптимистичная", "redis": "Redis + БД",
 	"redis-down-nobreaker": "Без предохранителя", "redis-down": "С предохранителем",
+	"redis-down-sessions": "С предохранителем и кэшем сессий",
 }
 
 func tables(groups []group) string {

@@ -215,10 +215,10 @@ func aggregateQueue(runs []queueRun) []queueGroup {
 func queueTables(groups []queueGroup) string {
 	var b strings.Builder
 	f0 := func(s stat) string { return fmtNum(s.Mean) }
-	b.WriteString("| Вариант | Продано мест | Ошибок | из них 503 | Заказ p50, мс | Заказ p95, мс | Заказ p99, мс | Захват на сервере p95, мс | Зал продан за, с | Двойных броней |\n")
-	b.WriteString("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
+	b.WriteString("| Вариант | Прогонов | Продано мест | Ошибок | из них 503 | Заказ p50, мс | Заказ p95, мс | Заказ p99, мс | Захват на сервере p95, мс | Зал продан за, с | Двойных броней |\n")
+	b.WriteString("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
 	for _, g := range groups {
-		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s | %s | %s | %d |\n", variantRu(g.Variant), f0(g.Won), f0(g.Failed), f0(g.Failed503),
+		fmt.Fprintf(&b, "| %s | %d | %s | %s | %s | %s | %s | %s | %s | %s | %d |\n", variantRu(g.Variant), g.Runs, f0(g.Won), f0(g.Failed), f0(g.Failed503),
 			f0(g.OrderP50), f0(g.OrderP95), f0(g.OrderP99), f0(g.SrvP95), fmtNum(round1(g.SoldOut.Mean)), g.DoubleBooked)
 	}
 	b.WriteString("\n| Вариант | Ожидание в очереди p50, с | p95, с | максимум, с | Опросов на покупателя | Опрос p95, мс |\n")
@@ -230,14 +230,21 @@ func queueTables(groups []queueGroup) string {
 		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s |\n", variantRu(g.Variant), fmtNum(round1(g.WaitP50.Mean)), fmtNum(round1(g.WaitP95.Mean)),
 			fmtNum(round1(g.WaitMax.Mean)), fmtNum(round1(g.PollsPerBuyer.Mean)), f0(g.PollP95))
 	}
-	fmt.Fprintf(&b, "\nСреднее по %d повторам, %d покупателей.\n", groups[0].Runs, groups[0].VUs)
+	fmt.Fprintf(&b, "\nСреднее по прогонам варианта, %d покупателей, зал на 1000 мест.\n", groups[0].VUs)
 	return b.String()
 }
 
 func round1(v float64) float64 { return float64(int(v*10+0.5)) / 10 }
 
 // Цвета вариантов — из той же палитры, что графики стратегий (svg.go).
-var variantColors = []string{"#eb6834", "#2a78d6", "#1baf7a", "#8a6bd1"}
+var variantColors = map[string]string{"off": "#eb6834", "q100": "#2a78d6", "q200": "#1baf7a"}
+
+func variantColor(v string) string {
+	if c, ok := variantColors[v]; ok {
+		return c
+	}
+	return "#8a6bd1"
+}
 
 type bar struct {
 	label string
@@ -246,29 +253,31 @@ type bar struct {
 }
 
 func queueCharts(groups []queueGroup) map[string]string {
-	pick := func(f func(queueGroup) stat, withOff bool) []bar {
+	// Холодный старт в графики не идёт: его «быстрые» ответы — это 503 у
+	// почти всех покупателей. Он разобран в таблице и в тексте отчёта.
+	pick := func(f func(queueGroup) stat) []bar {
 		var out []bar
-		for i, g := range groups {
-			if !strings.HasPrefix(g.Variant, "q") && !withOff {
+		for _, g := range groups {
+			if g.Variant == "offcold" {
 				continue
 			}
-			out = append(out, bar{label: variantRu(g.Variant), stat: f(g), color: variantColors[i%len(variantColors)]})
+			out = append(out, bar{label: variantRu(g.Variant), stat: f(g), color: variantColor(g.Variant)})
 		}
 		return out
 	}
 	return map[string]string{
 		"order-p95.svg": barChart("Время ответа на заказ, p95",
 			"Штурм зала на 1000 мест в момент старта продаж. Столбец — среднее трёх прогонов, ус — разброс.", "мс",
-			pick(func(g queueGroup) stat { return g.OrderP95 }, true)),
+			pick(func(g queueGroup) stat { return g.OrderP95 })),
 		"sold-out.svg": barChart("За сколько продан зал",
-			"От старта продаж до последней успешной покупки. С очередью — дольше: покупателей пускают по одному темпу.", "с",
-			pick(func(g queueGroup) stat { return g.SoldOut }, true)),
+			"От старта продаж до последней покупки. С очередью дольше: покупателей пускают с постоянной скоростью.", "с",
+			pick(func(g queueGroup) stat { return g.SoldOut })),
 	}
 }
 
 // barChart — горизонтальные столбцы с подписью значения у конца.
 func barChart(title, subtitle, unit string, bars []bar) string {
-	const w, left, right, top, rowH, barH = 800.0, 210.0, 120.0, 96.0, 52.0, 26.0
+	const w, left, right, top, rowH, barH = 800.0, 230.0, 90.0, 104.0, 52.0, 26.0
 	h := top + rowH*float64(len(bars)) + 40
 	pw := w - left - right
 	var maxV float64
@@ -288,7 +297,7 @@ func barChart(title, subtitle, unit string, bars []bar) string {
 		fmt.Fprintf(&b, `<line x1="%.1f" y1="%.0f" x2="%.1f" y2="%.0f" stroke="%s" stroke-width="1"/>`, x, top-8, x, bottom, gridColor)
 		fmt.Fprintf(&b, `<text x="%.1f" y="%.0f" font-size="11.5" fill="%s" text-anchor="middle">%s</text>`, x, bottom+18, textMuted, fmtNum(v))
 	}
-	fmt.Fprintf(&b, `<text x="%.0f" y="%.0f" font-size="11.5" fill="%s">%s</text>`, left+pw+8, bottom+18, textMuted, html.EscapeString(unit))
+	fmt.Fprintf(&b, `<text x="%.0f" y="%.0f" font-size="11.5" fill="%s">%s</text>`, left, top-20, textMuted, html.EscapeString(unit))
 	for i, br := range bars {
 		y := top + float64(i)*rowH + (rowH-barH)/2
 		fmt.Fprintf(&b, `<text x="%.0f" y="%.1f" font-size="13" fill="%s" text-anchor="end">%s</text>`, left-12, y+barH/2+4.5, textMain, html.EscapeString(br.label))

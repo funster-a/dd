@@ -126,6 +126,7 @@ const errorText: Record<string, string> = {
   sales_not_started: 'Продажи ещё не открылись.',
   event_cancelled: 'Событие отменено.',
   order_in_progress: 'Заказ уже оформляется в другой вкладке.',
+  session_store_unavailable: 'Вход временно недоступен. Попробуйте через несколько секунд — места пока не заняты.',
 }
 
 async function submit() {

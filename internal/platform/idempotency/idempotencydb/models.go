@@ -96,6 +96,7 @@ type OrderItem struct {
 	OrderID     string
 	EventSeatID string
 	PriceTiyn   int64
+	FeeTiyn     int64
 }
 
 type Organizer struct {

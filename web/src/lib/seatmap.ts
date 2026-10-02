@@ -148,6 +148,24 @@ export function cartTotal(c: Cart, zones: GeneralZone[]): number {
   return sum
 }
 
+// serviceFee — сервисный сбор с билета, как его считает сервер (ADR 019):
+// ставка в сотых долях процента, округление до тиына половиной вверх.
+// Целые числа, без float (CLAUDE.md, правило 5). Итог заказа всё равно
+// решает сервер — здесь только предпросмотр в корзине.
+export function serviceFee(priceTiyn: number, bps: number): number {
+  if (priceTiyn <= 0 || bps <= 0) return 0
+  return Math.floor((priceTiyn * bps + 5000) / 10000)
+}
+
+// cartFee — сервисный сбор за все билеты корзины: считается с каждого
+// билета отдельно, как на сервере, поэтому суммы совпадают до тиына.
+export function cartFee(c: Cart, zones: GeneralZone[], bps: number): number {
+  let sum = 0
+  for (const s of c.seats.values()) sum += serviceFee(s.priceTiyn, bps)
+  for (const [name, q] of c.general) sum += serviceFee(zones.find((z) => z.name === name)?.priceTiyn ?? 0, bps) * q
+  return sum
+}
+
 // toggleSeat выбирает или снимает место. Возвращает false, если выбрать
 // нельзя: место занято или достигнут лимит билетов на покупателя.
 export function toggleSeat(c: Cart, s: MapSeat, taken: Set<string>, limit: number): boolean {

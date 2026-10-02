@@ -31,6 +31,7 @@ type Service struct {
 
 	strategy Strategy
 	metrics  *holdMetrics
+	feeBps   int32 // сервисный сбор с покупателя, ADR 019
 }
 
 // NewService создаёт сервис бронирования. rdb может быть nil: тогда холды
@@ -84,7 +85,8 @@ type Order struct {
 	EventID   string      `json:"event_id"`
 	Status    string      `json:"status"`
 	Email     string      `json:"email"`
-	TotalTiyn int64       `json:"total_tiyn"`
+	TotalTiyn int64       `json:"total_tiyn"` // к оплате: билеты и сервисный сбор
+	FeeTiyn   int64       `json:"fee_tiyn"`   // сервисный сбор в сумме заказа
 	Currency  string      `json:"currency"`
 	ExpiresAt time.Time   `json:"expires_at"`
 	PaidAt    *time.Time  `json:"paid_at"`
@@ -99,6 +101,7 @@ type OrderItem struct {
 	Row       *string `json:"row"`
 	Seat      string  `json:"seat"`
 	PriceTiyn int64   `json:"price_tiyn"`
+	FeeTiyn   int64   `json:"fee_tiyn"`
 }
 
 func (r *OrderRequest) normalize() (int, error) {
@@ -335,12 +338,14 @@ func (s *Service) createTx(ctx context.Context, ev bookingdb.GetBookableEventRow
 		}
 
 		var seatIDs []string
-		var prices []int64
+		var prices, fees []int64
 		var total int64
 		add := func(id string, price int64) {
+			fee := ServiceFee(price, s.feeBps)
 			seatIDs = append(seatIDs, id)
 			prices = append(prices, price)
-			total += price
+			fees = append(fees, fee)
+			total += price + fee
 		}
 
 		if len(req.Seats) > 0 {
@@ -400,7 +405,7 @@ func (s *Service) createTx(ctx context.Context, ev bookingdb.GetBookableEventRow
 			res.free = true
 		}
 		if err := q.InsertOrderItems(ctx, bookingdb.InsertOrderItemsParams{
-			OrganizerID: ev.OrganizerID, EventID: ev.ID, OrderID: orderID, SeatIds: seatIDs, Prices: prices,
+			OrganizerID: ev.OrganizerID, EventID: ev.ID, OrderID: orderID, SeatIds: seatIDs, Prices: prices, Fees: fees,
 		}); err != nil {
 			return fmt.Errorf("insert order items: %w", err)
 		}
@@ -568,7 +573,8 @@ func orderFrom(o bookingdb.Order, items []bookingdb.ListOrderItemsRow) Order {
 		Items: make([]OrderItem, len(items)),
 	}
 	for i, it := range items {
-		out.Items[i] = OrderItem{Kind: it.Kind, Section: it.Section, Row: it.RowLabel, Seat: it.SeatLabel, PriceTiyn: it.PriceTiyn}
+		out.Items[i] = OrderItem{Kind: it.Kind, Section: it.Section, Row: it.RowLabel, Seat: it.SeatLabel, PriceTiyn: it.PriceTiyn, FeeTiyn: it.FeeTiyn}
+		out.FeeTiyn += it.FeeTiyn
 	}
 	return out
 }

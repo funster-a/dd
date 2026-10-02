@@ -96,6 +96,9 @@ func (s *Service) RequestRefund(ctx context.Context, buyerID, orderID string, ti
 			case "revoked":
 				return &PreconditionError{Code: "ticket_already_refunded", Message: "ticket is already returned"}
 			}
+			// Сервисный сбор при возврате по желанию покупателя не
+			// возвращается (бизнес-решение, ADR 019): платформа свою работу
+			// сделала. При отмене события он возвращается — ниже.
 			req.AmountTiyn += r.PriceTiyn
 		}
 		if err := q.RevokeTickets(ctx, ids); err != nil {
@@ -128,7 +131,8 @@ func emitRefund(ctx context.Context, tx pgx.Tx, requestID, orderID, reason strin
 var cancelNamespace = uuid.MustParse("6f1c2a5e-8b7d-4e0a-9c3f-2d1b0a4e5f60")
 
 // HandleEventCancelled аннулирует билеты отменённого события и запрашивает
-// полный возврат по каждому заказу (обработчик события event.cancelled).
+// полный возврат по каждому заказу, вместе с сервисным сбором (обработчик
+// события event.cancelled).
 func (s *Service) HandleEventCancelled(ctx context.Context, ev events.EventCancelledEvent) error {
 	var orders int
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
@@ -144,7 +148,7 @@ func (s *Service) HandleEventCancelled(ctx context.Context, ev events.EventCance
 			var amount int64
 			for ; i < len(rows) && rows[i].OrderID == orderID; i++ {
 				ids = append(ids, rows[i].ID)
-				amount += rows[i].PriceTiyn
+				amount += rows[i].PriceTiyn + rows[i].FeeTiyn // отмена — вина не покупателя, сбор возвращается
 				if rows[i].Status == "issued" {
 					issued = append(issued, rows[i].ID)
 				}

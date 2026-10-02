@@ -446,8 +446,8 @@ func (q *Queries) InsertOrder(ctx context.Context, arg InsertOrderParams) (Order
 }
 
 const insertOrderItems = `-- name: InsertOrderItems :exec
-INSERT INTO order_items (organizer_id, event_id, order_id, event_seat_id, price_tiyn)
-SELECT $1::uuid, $2::uuid, $3::uuid, unnest($4::uuid[]), unnest($5::bigint[])
+INSERT INTO order_items (organizer_id, event_id, order_id, event_seat_id, price_tiyn, fee_tiyn)
+SELECT $1::uuid, $2::uuid, $3::uuid, unnest($4::uuid[]), unnest($5::bigint[]), unnest($6::bigint[])
 `
 
 type InsertOrderItemsParams struct {
@@ -456,6 +456,7 @@ type InsertOrderItemsParams struct {
 	OrderID     string
 	SeatIds     []string
 	Prices      []int64
+	Fees        []int64
 }
 
 func (q *Queries) InsertOrderItems(ctx context.Context, arg InsertOrderItemsParams) error {
@@ -465,6 +466,7 @@ func (q *Queries) InsertOrderItems(ctx context.Context, arg InsertOrderItemsPara
 		arg.OrderID,
 		arg.SeatIds,
 		arg.Prices,
+		arg.Fees,
 	)
 	return err
 }
@@ -536,7 +538,7 @@ func (q *Queries) ListBuyerOrders(ctx context.Context, buyerID string) ([]ListBu
 }
 
 const listOrderItems = `-- name: ListOrderItems :many
-SELECT i.event_seat_id, s.kind, s.section, s.row_label, s.seat_label, i.price_tiyn
+SELECT i.event_seat_id, s.kind, s.section, s.row_label, s.seat_label, i.price_tiyn, i.fee_tiyn
 FROM order_items i JOIN event_seats s ON s.id = i.event_seat_id
 WHERE i.order_id = $1
 ORDER BY s.section, s.row_label, s.seat_label
@@ -549,6 +551,7 @@ type ListOrderItemsRow struct {
 	RowLabel    *string
 	SeatLabel   string
 	PriceTiyn   int64
+	FeeTiyn     int64
 }
 
 func (q *Queries) ListOrderItems(ctx context.Context, orderID string) ([]ListOrderItemsRow, error) {
@@ -567,6 +570,7 @@ func (q *Queries) ListOrderItems(ctx context.Context, orderID string) ([]ListOrd
 			&i.RowLabel,
 			&i.SeatLabel,
 			&i.PriceTiyn,
+			&i.FeeTiyn,
 		); err != nil {
 			return nil, err
 		}

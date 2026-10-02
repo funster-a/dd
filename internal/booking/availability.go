@@ -21,6 +21,9 @@ type Availability struct {
 	Taken []SeatRef `json:"taken"`
 	// General — сколько виртуальных мест свободно во входных зонах.
 	General []GeneralAvailability `json:"general"`
+	// ServiceFeeBps — ставка сервисного сбора с покупателя в сотых долях
+	// процента: сайт показывает сбор в корзине до оформления (ADR 019).
+	ServiceFeeBps int32 `json:"service_fee_bps"`
 }
 
 // GeneralAvailability — свободные места входной зоны.
@@ -60,7 +63,7 @@ func (s *Service) loadAvailability(ctx context.Context, eventID string, now time
 	if err != nil {
 		return nil, fmt.Errorf("count general seats: %w", err)
 	}
-	a := Availability{Taken: make([]SeatRef, len(taken)), General: make([]GeneralAvailability, len(general))}
+	a := Availability{Taken: make([]SeatRef, len(taken)), General: make([]GeneralAvailability, len(general)), ServiceFeeBps: s.feeBps}
 	for i, t := range taken {
 		a.Taken[i] = SeatRef{Section: t.Section, Row: deref(t.RowLabel), Seat: t.SeatLabel}
 	}

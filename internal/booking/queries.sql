@@ -72,8 +72,8 @@ VALUES (@id, @organizer_id, @event_id, @buyer_id, @email, @total_tiyn, @expires_
 RETURNING *;
 
 -- name: InsertOrderItems :exec
-INSERT INTO order_items (organizer_id, event_id, order_id, event_seat_id, price_tiyn)
-SELECT @organizer_id::uuid, @event_id::uuid, @order_id::uuid, unnest(@seat_ids::uuid[]), unnest(@prices::bigint[]);
+INSERT INTO order_items (organizer_id, event_id, order_id, event_seat_id, price_tiyn, fee_tiyn)
+SELECT @organizer_id::uuid, @event_id::uuid, @order_id::uuid, unnest(@seat_ids::uuid[]), unnest(@prices::bigint[]), unnest(@fees::bigint[]);
 
 -- name: LockBuyerOrder :one
 SELECT * FROM orders WHERE id = @id AND buyer_id = @buyer_id FOR UPDATE;
@@ -82,7 +82,7 @@ SELECT * FROM orders WHERE id = @id AND buyer_id = @buyer_id FOR UPDATE;
 SELECT * FROM orders WHERE id = @id AND buyer_id = @buyer_id;
 
 -- name: ListOrderItems :many
-SELECT i.event_seat_id, s.kind, s.section, s.row_label, s.seat_label, i.price_tiyn
+SELECT i.event_seat_id, s.kind, s.section, s.row_label, s.seat_label, i.price_tiyn, i.fee_tiyn
 FROM order_items i JOIN event_seats s ON s.id = i.event_seat_id
 WHERE i.order_id = @order_id
 ORDER BY s.section, s.row_label, s.seat_label;

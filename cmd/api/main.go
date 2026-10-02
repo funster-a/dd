@@ -94,7 +94,7 @@ func run() error {
 	if strategy != booking.StrategyRedis {
 		log.Warn("booking strategy for experiments, not for production", slog.String("strategy", string(strategy)))
 	}
-	book := booking.NewService(pool, rdb, log, booking.WithStrategy(strategy))
+	book := booking.NewService(pool, rdb, log, booking.WithStrategy(strategy), booking.WithServiceFee(cfg.ServiceFeeBps))
 	pay := payment.NewService(pool,
 		payment.NewPSPClient(cfg.Payment.ProviderURL, cfg.Payment.APIKey, cfg.Payment.WebhookSecret),
 		payment.Config{ReturnURL: cfg.PublicBaseURL + "/payment/return", CallbackURL: cfg.Payment.CallbackURL}, log)

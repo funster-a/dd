@@ -2,6 +2,7 @@ package ticket
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -91,8 +92,10 @@ func TestRequestRefundRules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Покупатель вернул билет сам: возвращается цена, сервисный сбор — нет
+	// (ADR 019).
 	if req.AmountTiyn != 500000 || req.Status != "requested" {
-		t.Errorf("request = %+v", req)
+		t.Errorf("request = %+v, want 500000 without the service fee", req)
 	}
 	if v, _ := e.svc.ByToken(ctx, tokenOf(ts[0].URL)); v.Status != "revoked" {
 		t.Errorf("refunded ticket = %s, want revoked at once", v.Status)
@@ -123,7 +126,7 @@ func TestRefundFreeTickets(t *testing.T) {
 	e := newEnv(t)
 	ctx := t.Context()
 	order, buyer := e.order(t, "paid", e.seats[0])
-	if _, err := e.db.Pool.Exec(ctx, `UPDATE order_items SET price_tiyn = 0 WHERE order_id = $1`, order); err != nil {
+	if _, err := e.db.Pool.Exec(ctx, `UPDATE order_items SET price_tiyn = 0, fee_tiyn = 0 WHERE order_id = $1`, order); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.svc.Issue(ctx, events.OrderPaidEvent{OrderID: order}); err != nil {
@@ -157,6 +160,19 @@ func TestEventCancelledIdempotent(t *testing.T) {
 	first := e.outbox(t, events.RefundRequested)
 	if len(first) != 2 {
 		t.Fatalf("refund requests = %d, want one per order", len(first))
+	}
+	// Событие отменил организатор: покупатель получает всё, что заплатил,
+	// вместе с сервисным сбором (ADR 019).
+	amounts := map[string]int64{}
+	for _, raw := range first {
+		var ev events.RefundRequestedEvent
+		if err := json.Unmarshal([]byte(raw), &ev); err != nil {
+			t.Fatal(err)
+		}
+		amounts[ev.OrderID] = ev.AmountTiyn
+	}
+	if amounts[o1] != 2*(500000+testFee) || amounts[o2] != 500000+testFee {
+		t.Errorf("cancellation refunds = %v, want price and service fee of every ticket", amounts)
 	}
 	var active int
 	if err := e.db.Pool.QueryRow(ctx, `SELECT count(*) FROM tickets WHERE event_id = $1 AND status = 'issued'`, e.event).Scan(&active); err != nil || active != 0 {

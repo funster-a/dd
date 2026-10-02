@@ -88,6 +88,14 @@ async function cancel() {
   }
 }
 
+// При возврате по желанию покупателя сервисный сбор не возвращается
+// (ADR 019) — говорим об этом до подтверждения, а не после.
+const refundQuestion = computed(() =>
+  order.value && order.value.fee_tiyn > 0
+    ? 'Вернуть билет? Он сразу перестанет действовать, цена билета вернётся на карту. Сервисный сбор не возвращается.'
+    : 'Вернуть билет? Он сразу перестанет действовать, деньги вернутся на карту.',
+)
+
 const refundErrors: Record<string, string> = {
   refund_deadline_passed: 'Срок возврата уже прошёл',
   ticket_used: 'По этому билету уже прошли',
@@ -96,7 +104,7 @@ const refundErrors: Record<string, string> = {
 }
 
 async function refund(t: Ticket) {
-  if (!order.value || !confirm('Вернуть билет? Он сразу перестанет действовать, деньги вернутся на карту.')) return
+  if (!order.value || !confirm(refundQuestion.value)) return
   busy.value = true
   try {
     const r = await api.refund(order.value.id, [t.id], newKey())
@@ -196,6 +204,10 @@ function itemText(i: { kind: string; section: string; row: string | null; seat: 
             <span class="mono">{{ money(i.price_tiyn) }}</span>
           </li>
         </ul>
+        <div v-if="order.fee_tiyn > 0" class="receipt__fee">
+          <span>Сервисный сбор</span>
+          <span class="mono">{{ money(order.fee_tiyn) }}</span>
+        </div>
         <div class="receipt__total">
           <span>Итого</span>
           <span class="mono">{{ money(order.total_tiyn) }}</span>
@@ -345,12 +357,16 @@ function itemText(i: { kind: string; section: string; row: string | null; seat: 
   border-top: 1px solid var(--ink);
 }
 .receipt li,
+.receipt__fee,
 .receipt__total {
   display: flex;
   justify-content: space-between;
   gap: var(--space-3);
   padding: var(--space-3) 0;
   border-bottom: 1px solid var(--line);
+}
+.receipt__fee {
+  color: var(--ink-2);
 }
 .receipt__total {
   font-weight: 700;

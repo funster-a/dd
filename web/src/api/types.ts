@@ -86,6 +86,8 @@ export interface SeatRef {
 export interface Availability {
   taken: SeatRef[]
   general: { section: string; available: number }[]
+  // Сервисный сбор с покупателя в сотых долях процента: 500 = 5 % (ADR 019).
+  service_fee_bps: number
 }
 
 export interface OrderItem {
@@ -94,6 +96,7 @@ export interface OrderItem {
   row: string | null
   seat: string
   price_tiyn: number
+  fee_tiyn: number
 }
 
 export type OrderStatus = 'pending' | 'paid' | 'expired' | 'cancelled' | 'partially_refunded' | 'refunded'
@@ -103,7 +106,8 @@ export interface Order {
   event_id: string
   status: OrderStatus
   email: string
-  total_tiyn: number
+  total_tiyn: number // к оплате: билеты и сервисный сбор
+  fee_tiyn: number
   currency: string
   expires_at: string
   paid_at: string | null

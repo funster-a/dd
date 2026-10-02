@@ -9,7 +9,7 @@ import type { Availability, PublicEvent } from '@/api/types'
 import { useAuth } from '@/composables/auth'
 import { useToast } from '@/composables/toast'
 import { dayMonth, fullDate, money, tickets, time, weekday } from '@/lib/format'
-import { buildSeatMap, cartCount, cartTotal, emptyCart, setZoneQuantity, takenSet, toggleSeat, type MapSeat } from '@/lib/seatmap'
+import { buildSeatMap, cartCount, cartFee, cartTotal, emptyCart, setZoneQuantity, takenSet, toggleSeat, type MapSeat } from '@/lib/seatmap'
 
 const props = defineProps<{ org: string; slug: string }>()
 const router = useRouter()
@@ -31,7 +31,15 @@ const taken = computed(() => takenSet(availability.value))
 const zoneAvailable = computed(() => Object.fromEntries((availability.value?.general ?? []).map((g) => [g.section, g.available])))
 const zoneQuantities = computed(() => Object.fromEntries(cart.general))
 const count = computed(() => cartCount(cart))
-const total = computed(() => (map.value ? cartTotal(cart, map.value.zones) : 0))
+const ticketsTotal = computed(() => (map.value ? cartTotal(cart, map.value.zones) : 0))
+// Сервисный сбор показываем сразу, до оформления: покупатель видит сумму,
+// которую заплатит (ADR 019).
+const fee = computed(() => (map.value ? cartFee(cart, map.value.zones, availability.value?.service_fee_bps ?? 0) : 0))
+const total = computed(() => ticketsTotal.value + fee.value)
+const feePercent = computed(() => {
+  const bps = availability.value?.service_fee_bps ?? 0
+  return bps > 0 ? `${(bps / 100).toLocaleString('ru-RU')} %` : ''
+})
 const tz = computed(() => event.value?.venue.timezone ?? 'UTC')
 
 // Можно ли сейчас покупать: событие активно, продажи идут.
@@ -265,7 +273,8 @@ const cartLines = computed(() => [
       </div>
       <p class="seats__note">
         Не больше {{ tickets(event.max_tickets_per_buyer) }} на покупателя. Места держатся за вами 10 минут, пока вы платите.
-        Вернуть билет можно не позже чем за {{ event.refund_deadline_hours }} ч до начала.
+        Вернуть билет можно не позже чем за {{ event.refund_deadline_hours }} ч до начала<template v-if="feePercent">
+          ; сервисный сбор {{ feePercent }} при возврате не возвращается, при отмене события — возвращается</template>.
       </p>
     </section>
 
@@ -292,6 +301,10 @@ const cartLines = computed(() => [
               <span class="mono">{{ money(l.price) }}</span>
             </li>
           </ul>
+          <div v-if="fee > 0" class="stub__fee">
+            <span>Сервисный сбор</span>
+            <span class="mono">{{ money(fee) }}</span>
+          </div>
           <div class="stub__total">
             <span>Итого</span>
             <span class="mono">{{ money(total) }}</span>
@@ -569,10 +582,16 @@ const cartLines = computed(() => [
   font-size: var(--text-sm);
 }
 .stub__lines li,
+.stub__fee,
 .stub__total {
   display: flex;
   justify-content: space-between;
   gap: var(--space-3);
+}
+.stub__fee {
+  margin-top: 6px;
+  font-size: var(--text-sm);
+  color: var(--ink-2);
 }
 .stub__total {
   margin-top: var(--space-3);

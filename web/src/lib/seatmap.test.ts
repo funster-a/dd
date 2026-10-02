@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Layout, PriceCategory } from '@/api/types'
-import { buildSeatMap, cartCount, cartTotal, emptyCart, seatKey, setZoneQuantity, takenSet, toggleSeat } from './seatmap'
+import { buildSeatMap, cartCount, cartFee, cartTotal, emptyCart, serviceFee, seatKey, setZoneQuantity, takenSet, toggleSeat } from './seatmap'
 
 const layout: Layout = {
   sections: [
@@ -57,13 +57,14 @@ describe('cart', () => {
 
   it('respects taken seats and the ticket limit', () => {
     const cart = emptyCart()
-    const taken = takenSet({ taken: [s2!.ref], general: [] })
+    const taken = takenSet({ taken: [s2!.ref], general: [], service_fee_bps: 500 })
     expect(toggleSeat(cart, s1!, taken, 2)).toBe(true)
     expect(toggleSeat(cart, s2!, taken, 2)).toBe(false)
     expect(setZoneQuantity(cart, 'Фан-зона', 5, 100, 2)).toBe(1)
     expect(toggleSeat(cart, s3!, taken, 2)).toBe(false)
     expect(cartCount(cart)).toBe(2)
     expect(cartTotal(cart, map.zones)).toBe(700000)
+    expect(cartFee(cart, map.zones, 500)).toBe(25000 + 10000) // 5 % от 5 000 ₸ и от 2 000 ₸
     expect(toggleSeat(cart, s1!, taken, 2)).toBe(true) // снятие всегда можно
     expect(cartCount(cart)).toBe(1)
   })
@@ -77,5 +78,16 @@ describe('cart', () => {
 
   it('builds stable keys', () => {
     expect(seatKey({ section: 'A', row: '1', seat: '2' })).toBe(seatKey({ section: 'A', row: '1', seat: '2' }))
+  })
+})
+
+describe('serviceFee', () => {
+  it('matches the server: per ticket, half up, integers', () => {
+    expect(serviceFee(500000, 500)).toBe(25000) // 5 000 ₸ → 250 ₸
+    expect(serviceFee(0, 500)).toBe(0)
+    expect(serviceFee(500000, 0)).toBe(0)
+    expect(serviceFee(999, 500)).toBe(50)
+    expect(serviceFee(989, 500)).toBe(49)
+    expect(serviceFee(10, 500)).toBe(1)
   })
 })

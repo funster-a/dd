@@ -38,6 +38,9 @@ import (
 // зависит. Поэтому при отказе Redis она пропускает всех (как фильтр холдов,
 // ADR 017), а не останавливает продажу.
 
+// Очередь включает организатор для события (events.waiting_room,
+// бизнес-решение 2026-10-02); настройка сервиса задаёт скорость пропуска.
+
 // QueueConfig — параметры очереди ожидания.
 type QueueConfig struct {
 	// AdmitPerSecond — сколько покупателей в секунду пропускается к покупке.
@@ -54,8 +57,8 @@ func DefaultQueueConfig(admitPerSecond int) QueueConfig {
 	return QueueConfig{AdmitPerSecond: admitPerSecond, OpensBefore: 15 * time.Minute, Window: 2 * time.Hour}
 }
 
-// WithQueue включает очередь ожидания для событий с объявленным стартом
-// продаж. Нужен Redis; без него очереди нет.
+// WithQueue включает очередь ожидания для событий, где её выбрал
+// организатор. Нужен Redis; без него очереди нет.
 func WithQueue(cfg QueueConfig) Option { return func(s *Service) { s.queueCfg = cfg } }
 
 // QueueStatus — место покупателя в очереди.
@@ -97,6 +100,14 @@ const (
 	phaseNotOpen
 	phaseOpen
 )
+
+// queueStart — старт продаж, если у события есть очередь, иначе nil.
+func queueStart(enabled bool, salesStart *time.Time) *time.Time {
+	if !enabled {
+		return nil
+	}
+	return salesStart
+}
 
 func (w *waitingRoom) phase(start *time.Time, now time.Time) phase {
 	switch {
@@ -188,7 +199,7 @@ func (s *Service) JoinQueue(ctx context.Context, buyerID, eventID string, now ti
 	if err := checkSalesOpenable(ev, now); err != nil {
 		return QueueStatus{}, err
 	}
-	switch s.queue.phase(ev.SalesStartAt, now) {
+	switch s.queue.phase(queueStart(ev.WaitingRoom, ev.SalesStartAt), now) {
 	case phaseNone:
 		return QueueStatus{State: "not_required"}, nil
 	case phaseNotOpen:
@@ -207,7 +218,7 @@ func (s *Service) JoinQueue(ctx context.Context, buyerID, eventID string, now ti
 // checkQueue пропускает заказ, только если покупатель дождался своей
 // очереди. Вызывается после checkSales: продажи уже идут.
 func (s *Service) checkQueue(ctx context.Context, ev bookingdb.GetBookableEventRow, buyerID string, now time.Time) error {
-	if s.queue.phase(ev.SalesStartAt, now) != phaseOpen {
+	if s.queue.phase(queueStart(ev.WaitingRoom, ev.SalesStartAt), now) != phaseOpen {
 		return nil
 	}
 	rank, err := s.queue.rank(ctx, ev.ID, buyerID, *ev.SalesStartAt, now, false)

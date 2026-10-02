@@ -232,6 +232,7 @@ export interface OrgEvent {
   sales_end_at: string | null
   max_tickets_per_buyer: number
   refund_deadline_hours: number
+  waiting_room: boolean
   cover_image_key: string | null
   cover_video_key: string | null
   cover_image_url?: string
@@ -255,6 +256,7 @@ export interface EventInput {
   sales_end_at: string | null
   max_tickets_per_buyer: number
   refund_deadline_hours: number
+  waiting_room: boolean
 }
 
 export interface PriceInput {

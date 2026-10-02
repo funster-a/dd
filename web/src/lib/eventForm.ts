@@ -19,6 +19,7 @@ export interface EventForm {
   salesEnd: string
   max_tickets_per_buyer: number
   refund_deadline_hours: number
+  waiting_room: boolean
 }
 
 export const AGE_RATINGS = ['0+', '6+', '12+', '16+', '18+']
@@ -38,6 +39,7 @@ export function emptyForm(venueId = ''): EventForm {
     salesEnd: '',
     max_tickets_per_buyer: 6,
     refund_deadline_hours: 24,
+    waiting_room: false,
   }
 }
 
@@ -56,6 +58,7 @@ export function formFromEvent(e: OrgEvent, tz: string): EventForm {
     salesEnd: e.sales_end_at ? utcToWall(e.sales_end_at, tz) : '',
     max_tickets_per_buyer: e.max_tickets_per_buyer,
     refund_deadline_hours: e.refund_deadline_hours,
+    waiting_room: e.waiting_room,
   }
 }
 
@@ -77,6 +80,8 @@ export function toInput(f: EventForm, tz: string): { input: EventInput } | { err
   if (salesEnd && salesEnd > ends) return { error: 'Продажи не могут идти после окончания события' }
   if (!Number.isInteger(f.max_tickets_per_buyer) || f.max_tickets_per_buyer < 1) return { error: 'Лимит билетов на покупателя — от 1' }
   if (!Number.isInteger(f.refund_deadline_hours) || f.refund_deadline_hours < 0) return { error: 'Срок возврата — целое число часов от 0' }
+  const waitingRoom = f.admission === 'ticketed' && f.waiting_room
+  if (waitingRoom && !salesStart) return { error: 'Для очереди укажите, когда открываются продажи' }
   return {
     input: {
       venue_id: f.venue_id,
@@ -92,6 +97,7 @@ export function toInput(f: EventForm, tz: string): { input: EventInput } | { err
       sales_end_at: salesEnd,
       max_tickets_per_buyer: f.max_tickets_per_buyer,
       refund_deadline_hours: f.refund_deadline_hours,
+      waiting_room: waitingRoom,
     },
   }
 }
@@ -110,6 +116,7 @@ const FIELD_LABELS: Record<string, string> = {
   venue_id: 'Площадка',
   seat_map_id: 'Схема зала',
   admission: 'Формат входа',
+  waiting_room: 'Очередь при старте продаж',
 }
 
 const CODES: Record<string, string> = {

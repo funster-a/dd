@@ -44,6 +44,9 @@ type EventInput struct {
 	SalesEndAt          *time.Time `json:"sales_end_at"`
 	MaxTicketsPerBuyer  int32      `json:"max_tickets_per_buyer"`
 	RefundDeadlineHours *int32     `json:"refund_deadline_hours"`
+	// WaitingRoom — очередь ожидания при старте продаж (ADR 020). Нужен
+	// объявленный старт продаж.
+	WaitingRoom bool `json:"waiting_room"`
 }
 
 // Event — событие организатора.
@@ -63,6 +66,7 @@ type Event struct {
 	SalesEndAt          *time.Time `json:"sales_end_at"`
 	MaxTicketsPerBuyer  int32      `json:"max_tickets_per_buyer"`
 	RefundDeadlineHours int32      `json:"refund_deadline_hours"`
+	WaitingRoom         bool       `json:"waiting_room"`
 	CoverImageKey       *string    `json:"cover_image_key"`
 	CoverVideoKey       *string    `json:"cover_video_key"`
 	// Публичные адреса обложек для превью в кабинете; ключи выше — для
@@ -93,7 +97,7 @@ func (s *Service) CreateEvent(ctx context.Context, organizerID string, in EventI
 		OrganizerID: organizerID, VenueID: in.VenueID, SeatMapID: in.seatMap(), Admission: in.Admission,
 		Slug: in.Slug, Title: in.Title, Description: in.Description, AgeRating: in.AgeRating,
 		StartsAt: in.StartsAt, EndsAt: in.EndsAt, SalesStartAt: in.SalesStartAt, SalesEndAt: in.SalesEndAt,
-		MaxTicketsPerBuyer: in.MaxTicketsPerBuyer, RefundDeadlineHours: *in.RefundDeadlineHours,
+		MaxTicketsPerBuyer: in.MaxTicketsPerBuyer, RefundDeadlineHours: *in.RefundDeadlineHours, WaitingRoom: in.WaitingRoom,
 	})
 	if err != nil {
 		return Event{}, eventWriteError(err, "create event")
@@ -122,7 +126,7 @@ func (s *Service) UpdateEvent(ctx context.Context, organizerID, id string, in Ev
 			OrganizerID: organizerID, ID: id, VenueID: in.VenueID, SeatMapID: in.seatMap(), Admission: in.Admission,
 			Slug: in.Slug, Title: in.Title, Description: in.Description, AgeRating: in.AgeRating,
 			StartsAt: in.StartsAt, EndsAt: in.EndsAt, SalesStartAt: in.SalesStartAt, SalesEndAt: in.SalesEndAt,
-			MaxTicketsPerBuyer: in.MaxTicketsPerBuyer, RefundDeadlineHours: *in.RefundDeadlineHours,
+			MaxTicketsPerBuyer: in.MaxTicketsPerBuyer, RefundDeadlineHours: *in.RefundDeadlineHours, WaitingRoom: in.WaitingRoom,
 		})
 		if err != nil {
 			return eventWriteError(err, "update event")
@@ -226,6 +230,9 @@ func (in EventInput) normalize() (EventInput, error) {
 	if in.SalesEndAt != nil && in.SalesEndAt.After(in.EndsAt) {
 		return in, &ValidationError{Field: "sales_end_at", Message: "must not be after ends_at"}
 	}
+	if in.WaitingRoom && (in.SalesStartAt == nil || in.Admission == AdmissionFreeEntry) {
+		return in, &ValidationError{Field: "waiting_room", Message: "needs sales_start_at and ticketed admission"}
+	}
 	if in.MaxTicketsPerBuyer == 0 {
 		in.MaxTicketsPerBuyer = defaultMaxTicketsPerBuyer
 	}
@@ -305,7 +312,7 @@ func eventFrom(e catalogdb.Event) Event {
 		ID: e.ID, VenueID: e.VenueID, Admission: e.Admission, SeatMapID: e.SeatMapID, Slug: e.Slug, Title: e.Title,
 		Description: e.Description, AgeRating: e.AgeRating, Status: e.Status,
 		StartsAt: e.StartsAt, EndsAt: e.EndsAt, SalesStartAt: e.SalesStartAt, SalesEndAt: e.SalesEndAt,
-		MaxTicketsPerBuyer: e.MaxTicketsPerBuyer, RefundDeadlineHours: e.RefundDeadlineHours,
+		MaxTicketsPerBuyer: e.MaxTicketsPerBuyer, RefundDeadlineHours: e.RefundDeadlineHours, WaitingRoom: e.WaitingRoom,
 		CoverImageKey: e.CoverImageKey, CoverVideoKey: e.CoverVideoKey,
 		PublishedAt: e.PublishedAt, CreatedAt: e.CreatedAt, UpdatedAt: e.UpdatedAt,
 	}

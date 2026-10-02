@@ -136,11 +136,35 @@ function onSlug(e: Event) {
         </label>
       </div>
       <p class="note">Без дат продажи идут с публикации и до начала события.</p>
+      <label class="check">
+        <input v-model="form.waiting_room" type="checkbox" :disabled="!form.salesStart" />
+        <span>
+          <span class="check__title">Очередь при старте продаж</span>
+          <span class="note">
+            Для популярных событий: покупатели встают в очередь за 15 минут до старта, порядок пришедших заранее решает жребий,
+            к покупке пускают по очереди — сайт не тормозит в момент старта.{{ form.salesStart ? '' : ' Нужна дата открытия продаж.' }}
+          </span>
+        </span>
+      </label>
     </fieldset>
   </div>
 </template>
 
 <style scoped>
+.check {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  cursor: pointer;
+}
+.check input {
+  margin-top: 4px;
+  accent-color: var(--accent);
+}
+.check__title {
+  display: block;
+  font-weight: 600;
+}
 .fields {
   display: grid;
   gap: var(--space-4);

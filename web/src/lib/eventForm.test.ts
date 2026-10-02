@@ -26,6 +26,15 @@ describe('event form', () => {
     expect(f.starts).toBe('2026-10-13T19:00')
   })
 
+  it('lets the organizer turn on the waiting room only with a sales start', () => {
+    const no = toInput({ ...valid(), waiting_room: true }, 'Asia/Almaty')
+    expect('error' in no && no.error).toMatch(/открываются продажи/)
+    const yes = toInput({ ...valid(), waiting_room: true, salesStart: '2026-10-01T10:00' }, 'Asia/Almaty')
+    expect('input' in yes && yes.input.waiting_room).toBe(true)
+    const free = toInput({ ...valid(), admission: 'free_entry', waiting_room: true, salesStart: '2026-10-01T10:00' }, 'Asia/Almaty')
+    expect('input' in free && free.input.waiting_room).toBe(false)
+  })
+
   it('drops the seat map for free entry', () => {
     const r = toInput({ ...valid(), admission: 'free_entry' }, 'Asia/Almaty')
     expect('input' in r && r.input.seat_map_id).toBe('')

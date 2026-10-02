@@ -73,7 +73,7 @@ func (s *Service) loadAvailability(ctx context.Context, eventID string, now time
 		return nil, fmt.Errorf("count general seats: %w", err)
 	}
 	a := Availability{Taken: make([]SeatRef, len(taken)), General: make([]GeneralAvailability, len(general)), ServiceFeeBps: s.feeBps}
-	if s.queue != nil && ev.SalesStartAt != nil {
+	if s.queue != nil && ev.WaitingRoom && ev.SalesStartAt != nil {
 		a.Queue = &QueueWindow{OpensAt: ev.SalesStartAt.Add(-s.queue.cfg.OpensBefore), ClosesAt: ev.SalesStartAt.Add(s.queue.cfg.Window)}
 	}
 	for i, t := range taken {

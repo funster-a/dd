@@ -54,7 +54,7 @@ for v in $VARIANTS; do
     event=$(python3 -c "import json;print(json.load(open('$dir/event.json'))['event_id'])")
     start_ms=$(( ($(date +%s) + LEAD_S) * 1000 ))
     docker exec dd-postgres-1 psql -U dd -d dd -qAtc \
-      "UPDATE events SET sales_start_at = to_timestamp($start_ms / 1000.0) WHERE id = '$event'" >/dev/null
+      "UPDATE events SET sales_start_at = to_timestamp($start_ms / 1000.0), waiting_room = true WHERE id = '$event'" >/dev/null
     use_queue=1; [[ $rate == 0 ]] && use_queue=0
     curl -fs localhost:8080/metrics >"$dir/metrics-before.txt"
     docker run --rm --user 0 --network host -v "$PWD:/work" -w /work \

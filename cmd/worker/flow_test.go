@@ -259,13 +259,15 @@ func TestLatePaymentIsRefunded(t *testing.T) {
 	}
 
 	eventually(t, "refund at provider", func() bool { return f.psp.Refunded(providerID(p)) == o.TotalTiyn })
+	// Провайдер фиксирует возврат раньше, чем платёжный модуль получает ответ
+	// и записывает succeeded, поэтому статус в базе тоже ждём.
+	var refund string
+	eventually(t, "refund succeeded in the database", func() bool {
+		return f.db.Pool.QueryRow(ctx, `SELECT status FROM refunds WHERE payment_id = $1`, p.ID).Scan(&refund) == nil && refund == "succeeded"
+	})
 	got, err := f.book.GetOrder(ctx, buyer, o.ID, time.Now())
 	if err != nil || got.Status != "expired" {
 		t.Errorf("order = %+v, %v; want expired", got, err)
-	}
-	var refund string
-	if err := f.db.Pool.QueryRow(ctx, `SELECT status FROM refunds WHERE payment_id = $1`, p.ID).Scan(&refund); err != nil || refund != "succeeded" {
-		t.Errorf("refund = %q, %v; want succeeded", refund, err)
 	}
 	if ts, _ := f.tickets.ForOrder(ctx, buyer, o.ID); len(ts) != 0 {
 		t.Errorf("tickets issued for a refunded order: %d", len(ts))

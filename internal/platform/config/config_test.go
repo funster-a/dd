@@ -9,7 +9,7 @@ import (
 
 func TestLoadDefaults(t *testing.T) {
 	for _, k := range []string{"HTTP_ADDR", "LOG_LEVEL", "SHUTDOWN_TIMEOUT", "DATABASE_URL", "REDIS_ADDR", "RABBITMQ_URL",
-		"PUBLIC_BASE_URL", "PAYMENT_CALLBACK_URL", "SERVICE_FEE_BPS"} {
+		"PUBLIC_BASE_URL", "PAYMENT_CALLBACK_URL", "SERVICE_FEE_BPS", "TRUSTED_PROXIES", "QUEUE_ADMIT_PER_SECOND", "IP_TICKET_LIMIT"} {
 		t.Setenv(k, "")
 	}
 
@@ -31,6 +31,9 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.ServiceFeeBps != 500 {
 		t.Errorf("ServiceFeeBps = %d, want 500 (5 %%)", cfg.ServiceFeeBps)
+	}
+	if cfg.QueueAdmitPerSecond != 50 || cfg.IPTicketLimit != 40 || len(cfg.TrustedProxies) != 6 {
+		t.Errorf("queue = %d, ip limit = %d, trusted proxies = %v", cfg.QueueAdmitPerSecond, cfg.IPTicketLimit, cfg.TrustedProxies)
 	}
 }
 
@@ -67,6 +70,9 @@ func TestLoadInvalid(t *testing.T) {
 		"fee not number":    {"SERVICE_FEE_BPS": "5%"},
 		"fee negative":      {"SERVICE_FEE_BPS": "-1"},
 		"fee too high":      {"SERVICE_FEE_BPS": "3001"},
+		"bad proxy cidr":    {"TRUSTED_PROXIES": "10.0.0.0/33"},
+		"queue negative":    {"QUEUE_ADMIT_PER_SECOND": "-1"},
+		"ip limit not int":  {"IP_TICKET_LIMIT": "many"},
 	}
 	for name, env := range tests {
 		t.Run(name, func(t *testing.T) {

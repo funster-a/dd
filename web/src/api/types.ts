@@ -88,6 +88,18 @@ export interface Availability {
   general: { section: string; available: number }[]
   // Сервисный сбор с покупателя в сотых долях процента: 500 = 5 % (ADR 019).
   service_fee_bps: number
+  // Окно очереди ожидания при старте продаж (ADR 020) или null.
+  queue: { opens_at: string; closes_at: string } | null
+}
+
+// Место покупателя в очереди ожидания (ADR 020).
+export interface QueueStatus {
+  state: 'not_required' | 'not_open' | 'waiting' | 'admitted'
+  position?: number
+  estimated_wait_seconds?: number
+  poll_after_seconds?: number
+  opens_at?: string
+  sales_start_at?: string
 }
 
 export interface OrderItem {

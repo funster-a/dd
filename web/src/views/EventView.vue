@@ -5,15 +5,16 @@ import SeatMapView from '@/components/SeatMap.vue'
 import ZonePicker from '@/components/ZonePicker.vue'
 import BottomSheet from '@/components/BottomSheet.vue'
 import { ApiError, api, newKey } from '@/api/client'
-import type { Availability, PublicEvent } from '@/api/types'
+import type { Availability, PublicEvent, QueueStatus } from '@/api/types'
 import { useAuth } from '@/composables/auth'
 import { useToast } from '@/composables/toast'
 import { dayMonth, fullDate, money, tickets, time, weekday } from '@/lib/format'
+import { queueView } from '@/lib/queue'
 import { buildSeatMap, cartCount, cartFee, cartTotal, emptyCart, setZoneQuantity, takenSet, toggleSeat, type MapSeat } from '@/lib/seatmap'
 
 const props = defineProps<{ org: string; slug: string }>()
 const router = useRouter()
-const { requireLogin } = useAuth()
+const { requireLogin, authed } = useAuth()
 const toast = useToast()
 
 const event = ref<PublicEvent | null>(null)
@@ -25,6 +26,9 @@ const email = ref(readEmail())
 const busy = ref(false)
 let checkoutKey = newKey()
 let poll: ReturnType<typeof setInterval> | undefined
+let clock: ReturnType<typeof setInterval> | undefined
+// Часы страницы: продажи и очередь открываются по времени, без перезагрузки.
+const now = ref(Date.now())
 
 const map = computed(() => (event.value?.layout ? buildSeatMap(event.value.layout, event.value.prices) : null))
 const taken = computed(() => takenSet(availability.value))
@@ -48,10 +52,63 @@ const saleState = computed<'open' | 'cancelled' | 'free_entry' | 'not_started' |
   if (!e) return 'closed'
   if (e.status === 'cancelled') return 'cancelled'
   if (e.admission === 'free_entry') return 'free_entry'
-  const now = Date.now()
-  if (e.sales_start_at && now < Date.parse(e.sales_start_at)) return 'not_started'
-  if (now >= Date.parse(e.sales_end_at ?? e.starts_at)) return 'closed'
+  if (e.sales_start_at && now.value < Date.parse(e.sales_start_at)) return 'not_started'
+  if (now.value >= Date.parse(e.sales_end_at ?? e.starts_at)) return 'closed'
   return 'open'
+})
+
+// Очередь ожидания при старте продаж (ADR 020). Покупатель встаёт в неё,
+// как только войдёт; сайт опрашивает своё место, пока не подойдёт черёд.
+const queue = ref<QueueStatus | null>(null)
+const queueOn = computed(() => {
+  const w = availability.value?.queue
+  if (!w || (saleState.value !== 'open' && saleState.value !== 'not_started')) return false
+  return now.value >= Date.parse(w.opens_at) && now.value < Date.parse(w.closes_at)
+})
+const qv = computed(() =>
+  queueView(queue.value, saleState.value === 'open', event.value?.sales_start_at ? time(event.value.sales_start_at, tz.value) : ''),
+)
+const canBuy = computed(() => !queueOn.value || qv.value.canBuy)
+const showQueue = computed(() => queueOn.value && queue.value?.state !== 'not_required')
+let queuePoll: ReturnType<typeof setTimeout> | undefined
+
+// Следующий опрос — когда советует сервер: дальние места в очереди
+// спрашивают реже (ADR 020).
+function scheduleQueuePoll(seconds: number) {
+  clearTimeout(queuePoll)
+  queuePoll = setTimeout(pollQueue, seconds * 1000)
+}
+
+async function pollQueue() {
+  if (!event.value || !queueOn.value || !authed.value) return // возобновит watch ниже
+  const was = queue.value?.state
+  try {
+    queue.value = await api.joinQueue(event.value.id)
+  } catch {
+    return scheduleQueuePoll(5)
+  }
+  if (!queueSettled.value) scheduleQueuePoll(queue.value.poll_after_seconds ?? 3)
+  if (was === 'waiting' && queue.value.state === 'admitted') {
+    toast.show('Ваша очередь! Выберите места и оформите заказ.')
+    await refresh()
+  }
+}
+
+async function joinQueue() {
+  try {
+    await requireLogin()
+  } catch {
+    return
+  }
+  await pollQueue()
+}
+
+const queueSettled = computed(() => queue.value?.state === 'admitted' || queue.value?.state === 'not_required')
+watch([queueOn, authed], ([on, a]) => {
+  if (on && a && !queueSettled.value) pollQueue()
+})
+watch(saleState, (st, prev) => {
+  if (prev === 'not_started' && st === 'open') refresh() // старт продаж: свежая занятость
 })
 
 const paragraphs = computed(() => (event.value?.description ?? '').split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean))
@@ -89,8 +146,13 @@ onMounted(() => {
   poll = setInterval(() => {
     if (document.visibilityState === 'visible' && saleState.value === 'open') refresh()
   }, 15000)
+  clock = setInterval(() => (now.value = Date.now()), 1000)
 })
-onBeforeUnmount(() => clearInterval(poll))
+onBeforeUnmount(() => {
+  clearInterval(poll)
+  clearInterval(clock)
+  clearTimeout(queuePoll)
+})
 watch(() => [props.org, props.slug], load)
 
 function onToggle(s: MapSeat) {
@@ -107,6 +169,7 @@ function onZone(zone: string, q: number) {
 }
 
 async function startCheckout() {
+  if (!canBuy.value) return
   try {
     await requireLogin()
   } catch {
@@ -135,6 +198,8 @@ const errorText: Record<string, string> = {
   event_cancelled: 'Событие отменено.',
   order_in_progress: 'Заказ уже оформляется в другой вкладке.',
   session_store_unavailable: 'Вход временно недоступен. Попробуйте через несколько секунд — места пока не заняты.',
+  queue_required: 'Сначала дождитесь своей очереди.',
+  ip_ticket_limit_exceeded: 'С этой сети уже взято много билетов на событие. Если это ошибка, попробуйте с мобильного интернета.',
 }
 
 async function submit() {
@@ -164,6 +229,11 @@ async function submit() {
   } catch (e) {
     const code = e instanceof ApiError ? e.code : ''
     toast.show(errorText[code] ?? 'Не получилось оформить заказ. Попробуйте ещё раз.', 'error')
+    if (code === 'queue_required') {
+      checkoutOpen.value = false
+      queue.value = null
+      await pollQueue()
+    }
     if (code === 'seat_taken' || code === 'not_enough_seats') {
       checkoutOpen.value = false
       await refresh()
@@ -228,9 +298,20 @@ const cartLines = computed(() => [
             </dd>
           </div>
         </dl>
-        <a v-if="saleState === 'open'" href="#seats" class="btn btn--accent hero__cta">Выбрать места</a>
+        <div v-if="showQueue" class="queue" :class="{ 'queue--go': qv.canBuy }" aria-live="polite">
+          <p class="eyebrow">Очередь</p>
+          <h2 class="queue__title">{{ qv.title }}</h2>
+          <p class="queue__text">{{ qv.text }}</p>
+          <button v-if="!queue" class="btn btn--accent" type="button" @click="joinQueue">Встать в очередь</button>
+          <a v-else-if="qv.canBuy && saleState === 'open'" href="#seats" class="btn btn--accent">Выбрать места</a>
+        </div>
+        <a v-else-if="saleState === 'open'" href="#seats" class="btn btn--accent hero__cta">Выбрать места</a>
         <p v-else-if="saleState === 'free_entry'" class="note note--ok">Вход свободный — билеты не нужны. Просто приходите.</p>
-        <p v-else-if="saleState === 'not_started'" class="note">Продажи откроются {{ fullDate(event.sales_start_at!, tz) }}</p>
+        <p v-else-if="saleState === 'not_started'" class="note">
+          Продажи откроются {{ fullDate(event.sales_start_at!, tz) }}<template v-if="availability?.queue && !queueOn"
+            >. За 15 минут до старта откроется очередь</template
+          >
+        </p>
         <p v-else-if="saleState === 'closed'" class="note">Продажи закрыты</p>
       </div>
       <figure class="hero__poster">
@@ -285,7 +366,9 @@ const cartLines = computed(() => [
             <span class="cart__count">{{ tickets(count) }}</span>
             <span class="cart__total mono">{{ money(total) }}</span>
           </div>
-          <button class="btn btn--accent" type="button" @click="startCheckout">Оформить</button>
+          <button class="btn btn--accent" type="button" :disabled="!canBuy" @click="startCheckout">
+            {{ canBuy ? 'Оформить' : 'Ждём очередь' }}
+          </button>
         </div>
       </div>
     </Transition>
@@ -324,6 +407,28 @@ const cartLines = computed(() => [
 </template>
 
 <style scoped>
+.queue {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: start;
+  padding: var(--space-5);
+  border: 1.5px solid var(--ink);
+  border-radius: var(--radius-lg);
+  background: var(--paper-2);
+}
+.queue--go {
+  border-color: var(--accent);
+}
+.queue__title {
+  margin: 0;
+  font-size: var(--text-2xl);
+  line-height: 1.1;
+}
+.queue__text {
+  margin: 0;
+  max-width: 60ch;
+  color: var(--ink-2);
+}
 .state {
   padding-top: var(--space-8);
   display: grid;

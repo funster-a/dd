@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"slices"
@@ -47,6 +48,16 @@ type Config struct {
 	// ServiceFeeBps — сервисный сбор с покупателя в сотых долях процента
 	// (ADR 019): 500 = 5 %, бизнес-решение 2026-10-02.
 	ServiceFeeBps int32
+	// TrustedProxies — сети обратных прокси, которым api верит в
+	// X-Forwarded-For (ADR 020). По умолчанию loopback и частные сети:
+	// порт api открыт только внутри сети Compose, снаружи — через nginx.
+	TrustedProxies []netip.Prefix
+	// QueueAdmitPerSecond — сколько покупателей в секунду очередь пропускает
+	// к покупке после старта продаж (ADR 020). 0 — очереди нет.
+	QueueAdmitPerSecond int
+	// IPTicketLimit — сколько билетов на событие можно взять с одного
+	// IP-адреса (ADR 020). 0 — без лимита.
+	IPTicketLimit int
 }
 
 // PaymentConfig — параметры платёжного провайдера. Значения по умолчанию
@@ -155,6 +166,20 @@ func Load() (Config, error) {
 	// DATABASE_URL разбирает pgx при создании пула: он принимает и URL,
 	// и формат key=value, а пароль в ошибках скрывает.
 
+	for v := range strings.SplitSeq(getenv("TRUSTED_PROXIES", "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7"), ",") {
+		if v = strings.TrimSpace(v); v == "" {
+			continue
+		}
+		p, err := netip.ParsePrefix(v)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("TRUSTED_PROXIES: %w", err))
+			continue
+		}
+		cfg.TrustedProxies = append(cfg.TrustedProxies, p.Masked())
+	}
+	cfg.QueueAdmitPerSecond = getInt(&errs, "QUEUE_ADMIT_PER_SECOND", 50, 0, 100000)
+	cfg.IPTicketLimit = getInt(&errs, "IP_TICKET_LIMIT", 40, 0, 100000)
+
 	fee, err := strconv.ParseInt(getenv("SERVICE_FEE_BPS", "500"), 10, 32)
 	switch {
 	case err != nil:
@@ -188,4 +213,16 @@ func getenv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// getInt читает целое из окружения в границах [lo, hi].
+func getInt(errs *[]error, name string, def, lo, hi int) int {
+	v, err := strconv.Atoi(getenv(name, strconv.Itoa(def)))
+	switch {
+	case err != nil:
+		*errs = append(*errs, fmt.Errorf("%s: %w", name, err))
+	case v < lo || v > hi:
+		*errs = append(*errs, fmt.Errorf("%s: must be between %d and %d", name, lo, hi))
+	}
+	return v
 }

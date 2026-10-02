@@ -17,6 +17,9 @@ OUT=${OUT:-loadtest/results/raw/redis-failure}
 DATA=loadtest/.data
 mkdir -p "$OUT"
 export DATABASE_URL="${DATABASE_URL:-postgres://dd:dd@localhost:5432/dd?sslmode=disable}&pool_max_conns=$POOL"
+# Все виртуальные покупатели k6 приходят с одного адреса: лимит билетов на IP
+# (ADR 020) на стенде выключен, иначе после 40 билетов остальные получат отказ.
+export IP_TICKET_LIMIT=0
 
 
 # Порт api должен быть свободен: иначе readyz ответит чужой процесс и серия

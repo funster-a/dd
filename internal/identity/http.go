@@ -3,7 +3,6 @@ package identity
 import (
 	"errors"
 	"log/slog"
-	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -154,12 +153,6 @@ func bearerToken(r *http.Request) (string, bool) {
 	return token, true
 }
 
-// clientIP — адрес клиента для лимитов. За обратным прокси понадобится
-// доверенный X-Forwarded-For; сейчас api смотрит в сеть напрямую.
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
-}
+// clientIP — адрес клиента для лимитов. За nginx его подставляет
+// httpx.RealIP по доверенному X-Forwarded-For (ADR 020).
+func clientIP(r *http.Request) string { return httpx.ClientIP(r) }

@@ -94,7 +94,8 @@ func run() error {
 	if strategy != booking.StrategyRedis {
 		log.Warn("booking strategy for experiments, not for production", slog.String("strategy", string(strategy)))
 	}
-	book := booking.NewService(pool, rdb, log, booking.WithStrategy(strategy), booking.WithServiceFee(cfg.ServiceFeeBps))
+	book := booking.NewService(pool, rdb, log, booking.WithStrategy(strategy), booking.WithServiceFee(cfg.ServiceFeeBps),
+		booking.WithIPTicketLimit(cfg.IPTicketLimit), booking.WithQueue(booking.DefaultQueueConfig(cfg.QueueAdmitPerSecond)))
 	pay := payment.NewService(pool,
 		payment.NewPSPClient(cfg.Payment.ProviderURL, cfg.Payment.APIKey, cfg.Payment.WebhookSecret),
 		payment.Config{ReturnURL: cfg.PublicBaseURL + "/payment/return", CallbackURL: cfg.Payment.CallbackURL}, log)
@@ -103,6 +104,8 @@ func run() error {
 	cat := catalog.NewService(pool, catalog.WithObjectStore(objectStore{c: store}), catalog.WithCache(redis.NewCache(rdb)))
 
 	r := chi.NewRouter()
+	// Адрес покупателя за nginx — до всех лимитов по IP (ADR 020).
+	r.Use(httpx.RealIP(cfg.TrustedProxies))
 	r.Use(httpx.RequestID(log))
 	r.Get("/healthz", httpx.Healthz)
 	// Метрики Prometheus (ADR 017). Наружу не публикуются: nginx проксирует

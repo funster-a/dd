@@ -148,6 +148,9 @@ npm run typecheck    # vue-tsc
 | `QUEUE_PREFIX` | `dd.` | префикс очередей событий между модулями |
 | `BOOKING_STRATEGY` | `redis` | стратегия захвата мест: `redis`, `pessimistic`, `optimistic` (ADR 017) |
 | `SERVICE_FEE_BPS` | `500` | сервисный сбор с покупателя в сотых долях процента, 500 = 5 % (ADR 019) |
+| `QUEUE_ADMIT_PER_SECOND` | `50` | очередь ожидания при старте продаж: сколько покупателей в секунду пропускать, `0` — без очереди (ADR 020) |
+| `IP_TICKET_LIMIT` | `40` | билетов на событие с одного IP-адреса, `0` — без лимита (ADR 020) |
+| `TRUSTED_PROXIES` | loopback и частные сети | сети обратных прокси, которым api верит в `X-Forwarded-For` (ADR 020) |
 
 Значения по умолчанию совпадают с `docker-compose.yml`. Все переменные проверяются при старте. Неверное значение, например `LOG_LEVEL=loud` или `REDIS_ADDR=redis` без порта, останавливает процесс с понятной ошибкой. Пароли в текст ошибок не попадают.
 
@@ -213,7 +216,7 @@ curl localhost:8080/v1/public/events/standup-club/<event-slug>
 Покупка (ADR 011). Id события берётся из публичной страницы, места указываются позицией на схеме зала, во входной зоне — количеством:
 
 ```sh
-curl localhost:8080/v1/events/<event-id>/availability     # занятые места и свободные во входных зонах
+curl localhost:8080/v1/events/<event-id>/availability     # занятые места, свободные во входных зонах, окно очереди
 curl -X POST localhost:8080/v1/events/<event-id>/orders \
   -H "Authorization: Bearer <buyer-token>" -H "Idempotency-Key: $(uuidgen)" \
   -d '{"seats":[{"section":"Партер","row":"1","seat":"3"}],"general":[{"section":"Фан-зона","quantity":2}],"email":"me@example.com"}'
@@ -221,7 +224,11 @@ curl localhost:8080/v1/orders/<order-id> -H "Authorization: Bearer <buyer-token>
 curl localhost:8080/v1/me/orders -H "Authorization: Bearer <buyer-token>"      # заказы покупателя для «Моих билетов»
 curl -X POST localhost:8080/v1/orders/<order-id>/cancel \
   -H "Authorization: Bearer <buyer-token>" -H "Idempotency-Key: $(uuidgen)"
+curl -X POST localhost:8080/v1/events/<event-id>/queue \
+  -H "Authorization: Bearer <buyer-token>"                  # очередь ожидания: место и когда спросить снова
 ```
+
+Очередь ожидания (ADR 020) работает у событий с объявленным стартом продаж: встать в неё можно за 15 минут до старта, действует она 2 часа после. Всем, кто встал до старта, порядок определяет жребий, остальные — в порядке прихода. После старта очередь пропускает `QUEUE_ADMIT_PER_SECOND` покупателей в секунду, заказ без своей очереди — `422 queue_required`. Без Redis очередь пропускает всех. С одного IP-адреса на событие берётся не больше `IP_TICKET_LIMIT` билетов — `422 ip_ticket_limit_exceeded`.
 
 Места держатся за заказом 10 минут. Потом worker переводит заказ в `expired`, а места снова продаются. Новый заказ покупателя на то же событие заменяет прежнюю корзину. В заказе не больше мест, чем лимит билетов на покупателя в карточке события. Если место занято, ответ — `409 seat_taken`. Если во входной зоне не хватает мест — `409 not_enough_seats`.
 
@@ -324,6 +331,8 @@ GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) запу
 ./loadtest/run.sh                                   # 3 стратегии × 500/2000/5000 × 3 повтора × 2 сценария
 STRATEGIES=redis LEVELS=500 REPEATS=1 ./loadtest/run.sh   # быстрый прогон
 ./loadtest/redis-failure.sh                         # отказ Redis в середине прогона
+./loadtest/queue.sh                                 # очередь ожидания при старте продаж (ADR 020)
+go run ./cmd/loadseed queue-report -dir loadtest/results/raw/queue -out docs/experiments/<папка>
 go run ./cmd/loadseed report -dir loadtest/results/raw/<серия> -out docs/experiments/<папка>
 ```
 

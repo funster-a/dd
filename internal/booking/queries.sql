@@ -67,8 +67,8 @@ WHERE s.id = picked.id AND p.id = s.price_category_id
 RETURNING s.id, s.section, s.row_label, s.seat_label, p.price_tiyn;
 
 -- name: InsertOrder :one
-INSERT INTO orders (id, organizer_id, event_id, buyer_id, email, total_tiyn, expires_at)
-VALUES (@id, @organizer_id, @event_id, @buyer_id, @email, @total_tiyn, @expires_at)
+INSERT INTO orders (id, organizer_id, event_id, buyer_id, email, total_tiyn, expires_at, client_ip)
+VALUES (@id, @organizer_id, @event_id, @buyer_id, @email, @total_tiyn, @expires_at, sqlc.narg(client_ip)::inet)
 RETURNING *;
 
 -- name: InsertOrderItems :exec
@@ -118,7 +118,7 @@ SET status = 'available', hold_order_id = NULL, hold_expires_at = NULL
 WHERE hold_order_id = ANY(@order_ids::uuid[]) AND status = 'held';
 
 -- name: GetPublishedEventStatus :one
-SELECT status FROM events WHERE id = @id;
+SELECT status, sales_start_at FROM events WHERE id = @id;
 
 -- name: ListTakenSeats :many
 -- Занятые места с рядом: проданные и под действующим холдом.
@@ -165,6 +165,19 @@ LEFT JOIN tickets t ON t.order_item_id = i.id
 WHERE o.buyer_id = @buyer_id AND o.event_id = @event_id
   AND o.status IN ('paid', 'partially_refunded')
   AND (t.id IS NULL OR t.status <> 'revoked');
+
+-- name: CountIPTickets :one
+-- Сколько билетов на событие уже взято с этого IP-адреса (ADR 020): места
+-- оплаченных заказов без возвращённых и действующие корзины других
+-- покупателей. Своя корзина не считается: новый заказ её заменит.
+SELECT count(*)::int FROM order_items i
+JOIN orders o ON o.id = i.order_id
+LEFT JOIN tickets t ON t.order_item_id = i.id
+WHERE o.event_id = @event_id AND o.client_ip = @client_ip::inet
+  AND (
+      (o.status IN ('paid', 'partially_refunded') AND (t.id IS NULL OR t.status <> 'revoked'))
+      OR (o.status = 'pending' AND o.expires_at > @now AND o.buyer_id <> @buyer_id)
+  );
 
 -- name: ReleaseRefundedSeats :many
 -- Места возвращённых билетов снова продаются. Возвращает места, чтобы

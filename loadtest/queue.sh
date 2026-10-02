@@ -5,6 +5,10 @@
 # после каждого прогона, как в основной серии (ADR 017).
 #
 #   VARIANTS="off:0 q100:100 q200:200" N=5000 REPEATS=3 loadtest/queue.sh
+#
+# WARMUP=1 — покупатели до старта открывают свой профиль, и их сессии
+# попадают в кэш api (ADR 018). Без этого вариант off на только что
+# запущенном api проверяет «холодный» старт: см. отчёт.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -54,7 +58,7 @@ for v in $VARIANTS; do
     use_queue=1; [[ $rate == 0 ]] && use_queue=0
     curl -fs localhost:8080/metrics >"$dir/metrics-before.txt"
     docker run --rm --user 0 --network host -v "$PWD:/work" -w /work \
-      -e VUS="$N" -e SCENARIO=queue -e QUEUE="$use_queue" -e START_AT="$start_ms" \
+      -e VUS="$N" -e SCENARIO=queue -e QUEUE="$use_queue" -e START_AT="$start_ms" -e WARMUP="${WARMUP:-0}" \
       -e EVENT="/work/$dir/event.json" -e BUYERS="/work/$DATA/buyers.json" \
       -e SUMMARY="/work/$dir/summary.json" "$K6_IMAGE" run --quiet loadtest/booking.js >"$dir/k6.log" 2>&1 || true
     curl -fs localhost:8080/metrics >"$dir/metrics-after.txt"

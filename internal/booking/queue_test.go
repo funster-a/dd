@@ -45,14 +45,14 @@ func TestQueueMath(t *testing.T) {
 	// 25 пропущены; место 30 (с 0) — шестое среди ждущих, пропуск через
 	// (30+1)/10 = 3,1 с после старта, то есть через 0,6 с.
 	st := w.status(start, 30, start.Add(2500*time.Millisecond))
-	if st.State != "waiting" || st.Position != 6 || st.EstimatedWaitSeconds != 1 {
+	if st.State != "waiting" || st.Position != 6 || st.EstimatedWaitSeconds != 1 || st.PollAfterSeconds != 2 {
 		t.Errorf("status = %+v", st)
 	}
 	if st := w.status(start, 24, start.Add(2500*time.Millisecond)); st.State != "admitted" {
 		t.Errorf("rank 24 = %+v, want admitted", st)
 	}
 	// До старта ждут все, оценка — от старта.
-	if st := w.status(start, 99, start.Add(-time.Minute)); st.State != "waiting" || st.Position != 100 || st.EstimatedWaitSeconds != 70 {
+	if st := w.status(start, 99, start.Add(-time.Minute)); st.State != "waiting" || st.Position != 100 || st.EstimatedWaitSeconds != 70 || st.PollAfterSeconds != 20 {
 		t.Errorf("status before start = %+v", st)
 	}
 

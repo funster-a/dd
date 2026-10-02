@@ -97,6 +97,7 @@ export interface QueueStatus {
   state: 'not_required' | 'not_open' | 'waiting' | 'admitted'
   position?: number
   estimated_wait_seconds?: number
+  poll_after_seconds?: number
   opens_at?: string
   sales_start_at?: string
 }

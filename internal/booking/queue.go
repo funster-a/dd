@@ -67,6 +67,10 @@ type QueueStatus struct {
 	Position int64 `json:"position,omitempty"`
 	// EstimatedWaitSeconds — сколько примерно ждать пропуска.
 	EstimatedWaitSeconds int64 `json:"estimated_wait_seconds,omitempty"`
+	// PollAfterSeconds — когда спросить снова. Чем дальше покупатель, тем
+	// реже: тысячи ждущих не должны сами создавать пик, от которого
+	// очередь защищает.
+	PollAfterSeconds int64 `json:"poll_after_seconds,omitempty"`
 	// OpensAt — когда можно встать в очередь (для not_open).
 	OpensAt *time.Time `json:"opens_at,omitempty"`
 	// SalesStartAt — старт продаж.
@@ -161,8 +165,12 @@ func (w *waitingRoom) status(start time.Time, rank int64, now time.Time) QueueSt
 	// Пропуск места rank наступает через (rank+1)/скорость секунд после старта.
 	at := start.Add(time.Duration(float64(rank+1) / float64(w.cfg.AdmitPerSecond) * float64(time.Second)))
 	wait := int64(math.Ceil(at.Sub(now).Seconds()))
-	return QueueStatus{State: "waiting", Position: pos, EstimatedWaitSeconds: max(wait, 1), SalesStartAt: &st}
+	wait = max(wait, 1)
+	return QueueStatus{State: "waiting", Position: pos, EstimatedWaitSeconds: wait, PollAfterSeconds: pollAfter(wait), SalesStartAt: &st}
 }
+
+// pollAfter — половина оставшегося ожидания, от 2 до 20 секунд.
+func pollAfter(wait int64) int64 { return min(max(wait/2, 2), 20) }
 
 // JoinQueue ставит покупателя в очередь события и возвращает его место.
 // Повторный вызов место не меняет — им же сайт опрашивает очередь.
@@ -185,7 +193,7 @@ func (s *Service) JoinQueue(ctx context.Context, buyerID, eventID string, now ti
 		return QueueStatus{State: "not_required"}, nil
 	case phaseNotOpen:
 		opens := ev.SalesStartAt.Add(-s.queue.cfg.OpensBefore)
-		return QueueStatus{State: "not_open", OpensAt: &opens, SalesStartAt: ev.SalesStartAt}, nil
+		return QueueStatus{State: "not_open", OpensAt: &opens, SalesStartAt: ev.SalesStartAt, PollAfterSeconds: 20}, nil
 	}
 	rank, err := s.queue.rank(ctx, eventID, buyerID, *ev.SalesStartAt, now, true)
 	if err != nil {

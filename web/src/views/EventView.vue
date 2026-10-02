@@ -70,16 +70,24 @@ const qv = computed(() =>
 )
 const canBuy = computed(() => !queueOn.value || qv.value.canBuy)
 const showQueue = computed(() => queueOn.value && queue.value?.state !== 'not_required')
-let queuePoll: ReturnType<typeof setInterval> | undefined
+let queuePoll: ReturnType<typeof setTimeout> | undefined
+
+// Следующий опрос — когда советует сервер: дальние места в очереди
+// спрашивают реже (ADR 020).
+function scheduleQueuePoll(seconds: number) {
+  clearTimeout(queuePoll)
+  queuePoll = setTimeout(pollQueue, seconds * 1000)
+}
 
 async function pollQueue() {
-  if (!event.value || !queueOn.value || !authed.value) return
+  if (!event.value || !queueOn.value || !authed.value) return // возобновит watch ниже
   const was = queue.value?.state
   try {
     queue.value = await api.joinQueue(event.value.id)
   } catch {
-    return // следующий опрос через несколько секунд
+    return scheduleQueuePoll(5)
   }
+  if (!queueSettled.value) scheduleQueuePoll(queue.value.poll_after_seconds ?? 3)
   if (was === 'waiting' && queue.value.state === 'admitted') {
     toast.show('Ваша очередь! Выберите места и оформите заказ.')
     await refresh()
@@ -139,15 +147,11 @@ onMounted(() => {
     if (document.visibilityState === 'visible' && saleState.value === 'open') refresh()
   }, 15000)
   clock = setInterval(() => (now.value = Date.now()), 1000)
-  // Место в очереди проверяется и в фоновой вкладке: черёд не ждёт.
-  queuePoll = setInterval(() => {
-    if (!queueSettled.value) pollQueue()
-  }, 3000)
 })
 onBeforeUnmount(() => {
   clearInterval(poll)
   clearInterval(clock)
-  clearInterval(queuePoll)
+  clearTimeout(queuePoll)
 })
 watch(() => [props.org, props.slug], load)
 

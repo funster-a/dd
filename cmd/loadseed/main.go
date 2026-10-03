@@ -6,6 +6,7 @@
 //	loadseed check -event <id>                 инвариант после прогона
 //	loadseed report -dir <results>             таблица и графики
 //	loadseed queue-report -dir <results>       то же для серии с очередью (ADR 020)
+//	loadseed scale-report -dir <results>       ёмкость при 1, 2, 4 экземплярах api (ADR 023)
 //
 // Покупатели и события создаются кодом модулей — тем же, что в продукте.
 // Инструмент работает рядом с базой и Redis и не публикуется.
@@ -26,7 +27,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: loadseed buyers|event|check|report|queue-report [flags]")
+		fmt.Fprintln(os.Stderr, "usage: loadseed buyers|event|check|report|queue-report|scale-report [flags]")
 		os.Exit(2)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -44,6 +45,8 @@ func run(ctx context.Context, cmd string, args []string) error {
 		return report(args)
 	case "queue-report":
 		return queueReport(args)
+	case "scale-report":
+		return scaleReport(args)
 	}
 	cfg, err := config.Load()
 	if err != nil {

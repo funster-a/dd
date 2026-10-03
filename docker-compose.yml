@@ -15,7 +15,7 @@ x-app-env: &app-env
   PSP_URL: http://fakepsp:8090
   PSP_API_KEY: dev-psp-api-key
   PSP_WEBHOOK_SECRET: dev-psp-webhook-secret
-  PAYMENT_CALLBACK_URL: http://api:8080/v1/payments/webhooks/fakepsp
+  PAYMENT_CALLBACK_URL: http://api-lb:8080/v1/payments/webhooks/fakepsp
 
 services:
   postgres:
@@ -179,8 +179,10 @@ services:
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-dd}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-dd-secret-key}
       S3_BUCKET: ${S3_BUCKET:-dd-media}
-    ports:
-      - "127.0.0.1:${API_PORT:-8080}:8080"
+    # Несколько экземпляров за балансировщиком api-lb (ADR 023). Порт наружу
+    # открывает балансировщик, у реплик своих портов нет.
+    deploy:
+      replicas: ${API_REPLICAS:-2}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -224,10 +226,32 @@ services:
       retries: 5
       start_period: 5s
 
+  # Балансировщик api (ADR 023): вход на 8080 для клиентов, провайдера
+  # платежей и экспериментов.
+  api-lb:
+    image: nginx:1.29-alpine
+    configs:
+      - source: api-lb
+        target: /etc/nginx/conf.d/default.conf
+    ports:
+      - "127.0.0.1:${API_PORT:-8080}:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/lb-healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
   worker:
     build:
       context: .
       target: worker
+    # Воркеры конкурируют за сообщения и строки outbox (SKIP LOCKED): их
+    # можно запускать сколько угодно (ADR 023).
+    deploy:
+      replicas: ${WORKER_REPLICAS:-2}
     environment:
       <<: *app-env
     depends_on:
@@ -265,6 +289,8 @@ configs:
     file: ./deploy/prometheus/alerts.yml
   grafana-dashboards:
     file: ./deploy/grafana/dashboards.yml
+  api-lb:
+    file: ./deploy/nginx/api-lb.conf
   grafana-dashboard-overview:
     file: ./deploy/grafana/dashboards/dd-overview.json
   grafana-datasources:

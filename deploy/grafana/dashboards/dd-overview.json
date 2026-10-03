@@ -1,0 +1,1688 @@
+{
+ "uid": "dd-overview",
+ "title": "Партер: продажи и система",
+ "tags": [
+  "dd"
+ ],
+ "timezone": "browser",
+ "schemaVersion": 39,
+ "version": 1,
+ "refresh": "5s",
+ "time": {
+  "from": "now-30m",
+  "to": "now"
+ },
+ "editable": true,
+ "graphTooltip": 1,
+ "panels": [
+  {
+   "type": "row",
+   "title": "Продажи",
+   "id": 1,
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 0
+   },
+   "panels": []
+  },
+  {
+   "type": "stat",
+   "title": "Заказов в секунду",
+   "id": 2,
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "description": "",
+   "gridPos": {
+    "h": 6,
+    "w": 4,
+    "x": 0,
+    "y": 1
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "A",
+     "expr": "sum(rate(dd_booking_attempts_total{result=\"ok\"}[1m]))",
+     "legendFormat": "заказы"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "noValue": "0",
+     "unit": "reqps",
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "value",
+    "graphMode": "area",
+    "textMode": "auto"
+   }
+  },
+  {
+   "type": "stat",
+   "title": "Оформление заказа p95",
+   "id": 3,
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "description": "",
+   "gridPos": {
+    "h": 6,
+    "w": 4,
+    "x": 4,
+    "y": 1
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "A",
+     "expr": "histogram_quantile(0.95, sum by (le) (rate(dd_booking_attempt_seconds_bucket[1m])))",
+     "legendFormat": "p95"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "noValue": "0",
+     "unit": "s",
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 0.5
+       },
+       {
+        "color": "red",
+        "value": 1
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "value",
+    "graphMode": "area",
+    "textMode": "auto"
+   }
+  },
+  {
+   "type": "stat",
+   "title": "Ошибки сервера, доля",
+   "id": 4,
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "description": "",
+   "gridPos": {
+    "h": 6,
+    "w": 4,
+    "x": 8,
+    "y": 1
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "A",
+     "expr": "(sum(rate(dd_http_requests_total{code=~\"5..\"}[1m])) or vector(0)) / clamp_min(sum(rate(dd_http_requests_total[1m])), 1e-9)",
+     "legendFormat": "5xx"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "noValue": "0",
+     "unit": "percentunit",
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 0.01
+       },
+       {
+        "color": "red",
+        "value": 0.05
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "value",
+    "graphMode": "area",
+    "textMode": "auto"
+   }
+  },
+  {
+   "type": "stat",
+   "title": "Outbox: старейшее событие",
+   "id": 5,
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "description": "",
+   "gridPos": {
+    "h": 6,
+    "w": 4,
+    "x": 12,
+    "y": 1
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "A",
+     "expr": "max(dd_outbox_oldest_pending_seconds)",
+     "legendFormat": "возраст"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "noValue": "0",
+     "unit": "s",
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 10
+       },
+       {
+        "color": "red",
+        "value": 60
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "value",
+    "graphMode": "area",
+    "textMode": "auto"
+   }
+  },
+  {
+   "type": "stat",
+   "title": "Срабатывания предохранителей Redis, 15 мин",
+   "id": 6,
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "description": "",
+   "gridPos": {
+    "h": 6,
+    "w": 4,
+    "x": 16,
+    "y": 1
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "A",
+     "expr": "sum(increase(dd_booking_redis_gate_opened_total[15m])) + sum(increase(dd_identity_session_gate_opened_total[15m]))",
+     "legendFormat": "раз"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "noValue": "0",
+     "unit": "short",
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 1
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "value",
+    "graphMode": "area",
+    "textMode": "auto"
+   }
+  },
+  {
+   "type": "stat",
+   "title": "Запросов в обработке",
+   "id": 7,
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "description": "",
+   "gridPos": {
+    "h": 6,
+    "w": 4,
+    "x": 20,
+    "y": 1
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "A",
+     "expr": "sum(dd_http_requests_in_flight)",
+     "legendFormat": "сейчас"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "noValue": "0",
+     "unit": "short",
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "value",
+    "graphMode": "area",
+    "textMode": "auto"
+   }
+  },
+  {
+   "type": "timeseries",
+   "title": "Попытки заказа по результату",
+   "id": 8,
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "description": "ok — заказ создан; seat_taken — место заняли; queue_required — покупатель ещё в очереди; ip_ticket_limit_exceeded — лимит на IP.",
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 7
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "A",
+     "expr": "sum by (result) (rate(dd_booking_attempts_total[$__rate_interval]))",
+     "legendFormat": "{{result}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "noValue": "0",
+     "unit": "reqps",
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 10,
+      "showPoints": "never",
+      "spanNulls": true,
+      "stacking": {
+       "mode": "normal"
+      }
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "type": "timeseries",
+   "title": "Время оформления заказа",
+   "id": 9,
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "description": "Только CreateOrder на сервере, метрика dd_booking_attempt_seconds (ADR 017).",
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 7
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "A",
+     "expr": "histogram_quantile(0.5, sum by (le) (rate(dd_booking_attempt_seconds_bucket[$__rate_interval])))",
+     "legendFormat": "p50"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "B",
+     "expr": "histogram_quantile(0.95, sum by (le) (rate(dd_booking_attempt_seconds_bucket[$__rate_interval])))",
+     "legendFormat": "p95"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "C",
+     "expr": "histogram_quantile(0.99, sum by (le) (rate(dd_booking_attempt_seconds_bucket[$__rate_interval])))",
+     "legendFormat": "p99"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "noValue": "0",
+     "unit": "s",
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 10,
+      "showPoints": "never",
+      "spanNulls": true
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "type": "timeseries",
+   "title": "«Место занято»: кто отказал",
+   "id": 10,
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "description": "redis — отсекли холды в Redis до базы; db — отказала база.",
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 0,
+    "y": 15
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "A",
+     "expr": "sum by (reject_by) (rate(dd_booking_attempts_total{result=\"seat_taken\"}[$__rate_interval]))",
+     "legendFormat": "{{reject_by}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "noValue": "0",
+     "unit": "reqps",
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 10,
+      "showPoints": "never",
+      "spanNulls": true,
+      "stacking": {
+       "mode": "normal"
+      }
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "type": "timeseries",
+   "title": "Очередь ожидания",
+   "id": 11,
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "description": "",
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 8,
+    "y": 15
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "A",
+     "expr": "sum(rate(dd_http_requests_total{route=\"/v1/events/{eventID}/queue\"}[$__rate_interval]))",
+     "legendFormat": "опросы очереди"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "B",
+     "expr": "sum(rate(dd_booking_attempts_total{result=\"queue_required\"}[$__rate_interval]))",
+     "legendFormat": "заказ до своей очереди"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "C",
+     "expr": "sum(rate(dd_booking_queue_bypassed_total[$__rate_interval]))",
+     "legendFormat": "пропуск без проверки (нет Redis)"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "noValue": "0",
+     "unit": "reqps",
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 10,
+      "showPoints": "never",
+      "spanNulls": true
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "type": "timeseries",
+   "title": "Предохранители Redis",
+   "id": 12,
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "description": "Срабатывание — Redis не ответил вовремя, продажа идёт без него (ADR 017, 018).",
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 16,
+    "y": 15
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "A",
+     "expr": "sum(increase(dd_booking_redis_gate_opened_total[$__rate_interval]))",
+     "legendFormat": "холды"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "B",
+     "expr": "sum(increase(dd_identity_session_gate_opened_total[$__rate_interval]))",
+     "legendFormat": "сессии"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "C",
+     "expr": "sum(rate(dd_identity_session_stale_hits_total[$__rate_interval]))",
+     "legendFormat": "сессии из кэша, в секунду"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "noValue": "0",
+     "unit": "short",
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 10,
+      "showPoints": "never",
+      "spanNulls": true
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "type": "row",
+   "title": "HTTP",
+   "id": 13,
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 23
+   },
+   "panels": []
+  },
+  {
+   "type": "timeseries",
+   "title": "Запросы по маршрутам",
+   "id": 14,
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "description": "",
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 0,
+    "y": 24
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "A",
+     "expr": "sum by (route) (rate(dd_http_requests_total{route=~\"/v1.*\"}[$__rate_interval]))",
+     "legendFormat": "{{route}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "noValue": "0",
+     "unit": "reqps",
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 10,
+      "showPoints": "never",
+      "spanNulls": true
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "type": "timeseries",
+   "title": "Время ответа p95 по маршрутам",
+   "id": 15,
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "description": "",
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 12,
+    "y": 24
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "A",
+     "expr": "histogram_quantile(0.95, sum by (le, route) (rate(dd_http_request_duration_seconds_bucket{route=~\"/v1.*\"}[$__rate_interval])))",
+     "legendFormat": "{{route}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "noValue": "0",
+     "unit": "s",
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 10,
+      "showPoints": "never",
+      "spanNulls": true
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "type": "timeseries",
+   "title": "Ответы по кодам",
+   "id": 16,
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "description": "",
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 33
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "A",
+     "expr": "sum by (code) (rate(dd_http_requests_total{route=~\"/v1.*\"}[$__rate_interval]))",
+     "legendFormat": "{{code}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "noValue": "0",
+     "unit": "reqps",
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 10,
+      "showPoints": "never",
+      "spanNulls": true,
+      "stacking": {
+       "mode": "normal"
+      }
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "type": "timeseries",
+   "title": "Ошибки сервера по маршрутам",
+   "id": 17,
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "description": "",
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 33
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "A",
+     "expr": "sum by (route) (rate(dd_http_requests_total{code=~\"5..\",route=~\"/v1.*\"}[$__rate_interval]))",
+     "legendFormat": "{{route}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "noValue": "0",
+     "unit": "reqps",
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 10,
+      "showPoints": "never",
+      "spanNulls": true
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "type": "row",
+   "title": "Воркер: события между модулями",
+   "id": 18,
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 41
+   },
+   "panels": []
+  },
+  {
+   "type": "timeseries",
+   "title": "Outbox",
+   "id": 19,
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "description": "Оплата → выпуск билетов → возвраты идут через outbox и RabbitMQ (ADR 012).",
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 0,
+    "y": 42
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "A",
+     "expr": "max(dd_outbox_pending)",
+     "legendFormat": "неопубликовано"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "B",
+     "expr": "sum(rate(dd_outbox_published_total[$__rate_interval]))",
+     "legendFormat": "публикуется в секунду"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "noValue": "0",
+     "unit": "short",
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 10,
+      "showPoints": "never",
+      "spanNulls": true
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "type": "timeseries",
+   "title": "Обработка сообщений",
+   "id": 20,
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "description": "",
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 8,
+    "y": 42
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "A",
+     "expr": "sum by (queue, result) (rate(dd_mq_messages_total[$__rate_interval]))",
+     "legendFormat": "{{queue}} · {{result}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "noValue": "0",
+     "unit": "reqps",
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 10,
+      "showPoints": "never",
+      "spanNulls": true
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "type": "timeseries",
+   "title": "Обработка p95",
+   "id": 21,
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "description": "",
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 16,
+    "y": 42
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "A",
+     "expr": "histogram_quantile(0.95, sum by (le, queue) (rate(dd_mq_handle_seconds_bucket[$__rate_interval])))",
+     "legendFormat": "{{queue}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "noValue": "0",
+     "unit": "s",
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 10,
+      "showPoints": "never",
+      "spanNulls": true
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "type": "timeseries",
+   "title": "Истёкшие заказы",
+   "id": 22,
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "description": "Неоплаченные заказы, закрытые по истечении 10-минутного холда.",
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 0,
+    "y": 50
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "A",
+     "expr": "sum(increase(dd_booking_orders_expired_total[$__rate_interval]))",
+     "legendFormat": "закрыто"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "noValue": "0",
+     "unit": "short",
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 10,
+      "showPoints": "never",
+      "spanNulls": true
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "type": "timeseries",
+   "title": "RabbitMQ: сообщения в очередях",
+   "id": 23,
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "description": "",
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 8,
+    "y": 50
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "A",
+     "expr": "sum(rabbitmq_queue_messages_ready)",
+     "legendFormat": "ждут"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "B",
+     "expr": "sum(rabbitmq_queue_messages_unacked)",
+     "legendFormat": "в обработке"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "noValue": "0",
+     "unit": "short",
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 10,
+      "showPoints": "never",
+      "spanNulls": true
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "type": "timeseries",
+   "title": "RabbitMQ: соединения и потребители",
+   "id": 24,
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "description": "",
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 16,
+    "y": 50
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "A",
+     "expr": "sum(rabbitmq_connections)",
+     "legendFormat": "соединения"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "B",
+     "expr": "sum(rabbitmq_consumers)",
+     "legendFormat": "потребители"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "noValue": "0",
+     "unit": "short",
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 10,
+      "showPoints": "never",
+      "spanNulls": true
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "type": "row",
+   "title": "Хранилища и процессы",
+   "id": 25,
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 57
+   },
+   "panels": []
+  },
+  {
+   "type": "timeseries",
+   "title": "PostgreSQL: соединения по состоянию",
+   "id": 26,
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "description": "active у пула api растёт, когда запросы ждут базу (ADR 017: пул 32 соединения).",
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 0,
+    "y": 58
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "A",
+     "expr": "sum by (state) (pg_stat_activity_count{datname=\"dd\",state=~\"active|idle|idle in transaction\"})",
+     "legendFormat": "{{state}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "noValue": "0",
+     "unit": "short",
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 10,
+      "showPoints": "never",
+      "spanNulls": true,
+      "stacking": {
+       "mode": "normal"
+      }
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "type": "timeseries",
+   "title": "PostgreSQL: транзакции",
+   "id": 27,
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "description": "",
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 8,
+    "y": 58
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "A",
+     "expr": "sum(rate(pg_stat_database_xact_commit{datname=\"dd\"}[$__rate_interval]))",
+     "legendFormat": "commit"
+    },
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "B",
+     "expr": "sum(rate(pg_stat_database_xact_rollback{datname=\"dd\"}[$__rate_interval]))",
+     "legendFormat": "rollback"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "noValue": "0",
+     "unit": "ops",
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 10,
+      "showPoints": "never",
+      "spanNulls": true
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "type": "timeseries",
+   "title": "PostgreSQL: взаимоблокировки",
+   "id": 28,
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "description": "Места блокируются в порядке id, взаимоблокировок быть не должно (ADR 011).",
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 16,
+    "y": 58
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "A",
+     "expr": "sum(increase(pg_stat_database_deadlocks{datname=\"dd\"}[$__rate_interval]))",
+     "legendFormat": "deadlocks"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "noValue": "0",
+     "unit": "short",
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 10,
+      "showPoints": "never",
+      "spanNulls": true
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "type": "timeseries",
+   "title": "Redis: команды в секунду",
+   "id": 29,
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "description": "",
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 0,
+    "y": 66
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "A",
+     "expr": "sum(rate(redis_commands_processed_total[$__rate_interval]))",
+     "legendFormat": "команды"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "noValue": "0",
+     "unit": "ops",
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 10,
+      "showPoints": "never",
+      "spanNulls": true
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "type": "timeseries",
+   "title": "Redis: клиенты",
+   "id": 30,
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "description": "",
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 8,
+    "y": 66
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "A",
+     "expr": "sum(redis_connected_clients)",
+     "legendFormat": "клиенты"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "noValue": "0",
+     "unit": "short",
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 10,
+      "showPoints": "never",
+      "spanNulls": true
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "type": "timeseries",
+   "title": "Redis: память",
+   "id": 31,
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "description": "",
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 16,
+    "y": 66
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "A",
+     "expr": "sum(redis_memory_used_bytes)",
+     "legendFormat": "занято"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "noValue": "0",
+     "unit": "bytes",
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 10,
+      "showPoints": "never",
+      "spanNulls": true
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "type": "timeseries",
+   "title": "Горутины",
+   "id": 32,
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "description": "",
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 74
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "A",
+     "expr": "go_goroutines{job=~\"api.*|worker.*\"}",
+     "legendFormat": "{{job}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "noValue": "0",
+     "unit": "short",
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 10,
+      "showPoints": "never",
+      "spanNulls": true
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "type": "timeseries",
+   "title": "Память процессов",
+   "id": 33,
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "description": "",
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 74
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "refId": "A",
+     "expr": "process_resident_memory_bytes{job=~\"api.*|worker.*\"}",
+     "legendFormat": "{{job}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "noValue": "0",
+     "unit": "bytes",
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 10,
+      "showPoints": "never",
+      "spanNulls": true
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  }
+ ],
+ "description": "Продажи, очередь ожидания, HTTP, воркер и хранилища (ADR 022)."
+}

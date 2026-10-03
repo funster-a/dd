@@ -29,7 +29,7 @@ GOLANGCI_LINT_VERSION := v2.14.0
 # goose закреплён в tools.mod, чтобы его зависимости не попадали в go.mod (ADR 002).
 GOOSE_CMD := go tool -modfile=tools.mod goose
 GOOSE := $(GOOSE_CMD) -dir migrations postgres "$(DATABASE_URL)"
-INFRA := postgres redis rabbitmq seaweedfs prometheus grafana
+INFRA := postgres redis rabbitmq seaweedfs prometheus grafana postgres-exporter redis-exporter
 
 .DEFAULT_GOAL := help
 

@@ -68,7 +68,7 @@ docker compose logs worker
 | api | http://localhost:8080 | — |
 | RabbitMQ, панель управления | http://localhost:15672 | `dd` / `dd` |
 | Prometheus | http://localhost:9090 | — |
-| Grafana | http://localhost:3000 | `admin` / `admin`, источник Prometheus подключён |
+| Grafana | http://localhost:3000 | `admin` / `admin`, дашборд «Партер: продажи и система» в папке «Партер» |
 | Мок платёжного провайдера | http://localhost:8090 | страница оплаты, карта не нужна |
 | S3 (SeaweedFS) | http://localhost:8333 | `dd` / `dd-secret-key`, бакет `dd-media` открыт на чтение |
 | PostgreSQL | `localhost:5432` | `dd` / `dd`, база `dd` |
@@ -148,6 +148,7 @@ npm run typecheck    # vue-tsc
 | `QUEUE_PREFIX` | `dd.` | префикс очередей событий между модулями |
 | `BOOKING_STRATEGY` | `redis` | стратегия захвата мест: `redis`, `pessimistic`, `optimistic` (ADR 017) |
 | `SERVICE_FEE_BPS` | `500` | сервисный сбор с покупателя в сотых долях процента, 500 = 5 % (ADR 019) |
+| `METRICS_ADDR` | `:9091` | адрес `/metrics` воркера (ADR 022) |
 | `QUEUE_ADMIT_PER_SECOND` | `50` | очередь ожидания при старте продаж: сколько покупателей в секунду пропускать, `0` — без очереди (ADR 020) |
 | `IP_TICKET_LIMIT` | `40` | билетов на событие с одного IP-адреса, `0` — без лимита (ADR 020) |
 | `TRUSTED_PROXIES` | loopback и частные сети | сети обратных прокси, которым api верит в `X-Forwarded-For` (ADR 020) |
@@ -299,6 +300,20 @@ cmd/loadseed/     подготовка данных эксперимента, п
 - **Логи** пишутся в JSON через `log/slog`. У каждой строки есть поле `service`, у строк запроса — `request_id` (заголовок `X-Request-ID`).
 - **`/healthz`** отвечает 200, пока процесс жив. **`/readyz`** проверяет PostgreSQL, Redis и RabbitMQ и отвечает 200 или 503. Подробности — в ADR 003.
 - **Границы модулей** проверяет линтер: доменные модули не импортируют друг друга, `platform` не зависит от доменных модулей. Подробности — в ADR 004.
+
+## Наблюдаемость
+
+Метрики, дашборд и алерты — ADR 022.
+
+- **api** отдаёт `/metrics` на своём порту: HTTP по маршрутам (`dd_http_*`), бронирование и очередь (`dd_booking_*`), сессии (`dd_identity_*`).
+- **worker** отдаёт `/metrics` на `METRICS_ADDR` (`:9091`): обработка очередей (`dd_mq_*`), отставание outbox (`dd_outbox_*`), истёкшие заказы.
+- **PostgreSQL и Redis** — через экспортёры в Compose, **RabbitMQ** — встроенным плагином.
+- **Дашборд** Grafana «Партер: продажи и система» (`deploy/grafana/dashboards/dd-overview.json`): продажи и очередь, HTTP, воркер, хранилища и процессы. Дашборд правится в JSON и проходит ревью, правки в интерфейсе при перезапуске не сохраняются.
+- **Алерты** — `deploy/prometheus/alerts.yml`, видны в Prometheus (Alerts) и в Grafana: недоступная цель, ошибки сервера, медленное оформление заказа, вставший outbox, сообщения в очереди недоставленных, отказ Redis, очередь без проверки.
+
+api и worker, запущенные на машине через `make run` и `make run-worker` (и нагрузочные эксперименты), Prometheus тоже собирает: задания `api-local` и `worker-local`. Поэтому прогон k6 виден на дашборде сразу.
+
+![Дашборд Grafana во время нагрузочного прогона](docs/observability/grafana-overview.png)
 
 ## Тесты и CI
 

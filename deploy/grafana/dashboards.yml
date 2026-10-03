@@ -1,0 +1,11 @@
+# Дашборды Grafana из репозитория (ADR 022). Изменения, сделанные в
+# интерфейсе, при перезапуске не сохраняются: дашборд правится в JSON и
+# проходит ревью, как код.
+apiVersion: 1
+providers:
+  - name: dd
+    folder: Партер
+    type: file
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards

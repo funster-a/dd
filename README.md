@@ -196,6 +196,7 @@ curl -X POST localhost:8080/v1/admin/organizers \
 | `GET /profile` | название и slug организатора для публичных ссылок |
 | `GET/POST /venues`, `GET/PUT /venues/{id}` | площадки: название, адрес, часовой пояс, координаты |
 | `GET/POST /venues/{id}/seat-maps`, `GET /seat-maps/{id}` | схемы залов |
+| `GET /seat-map-templates`, `GET /seat-map-templates/{id}` | готовые схемы площадок, например Центральный стадион Алматы (ADR 024) |
 | `GET/POST /events`, `GET/PUT /events/{id}` | события (черновик меняется целиком) |
 | `GET/PUT /events/{id}/prices` | ценовые категории и их секторы |
 | `POST /events/{id}/media/uploads`, `PUT /events/{id}/media` | ссылка на загрузку обложки и её прикрепление |
@@ -227,7 +228,9 @@ curl localhost:8080/v1/public/events/standup-club/<event-slug>
 Покупка (ADR 011). Id события берётся из публичной страницы, места указываются позицией на схеме зала, во входной зоне — количеством:
 
 ```sh
-curl localhost:8080/v1/events/<event-id>/availability     # занятые места, свободные во входных зонах, окно очереди
+curl localhost:8080/v1/events/<event-id>/availability     # занятые места, свободные по секторам и во входных зонах, окно очереди
+curl 'localhost:8080/v1/events/<event-id>/availability?view=summary'          # только сводка по секторам (план стадиона, ADR 024)
+curl 'localhost:8080/v1/events/<event-id>/availability?section=Сектор%2033'   # занятые места одного сектора
 curl -X POST localhost:8080/v1/events/<event-id>/orders \
   -H "Authorization: Bearer <buyer-token>" -H "Idempotency-Key: $(uuidgen)" \
   -d '{"seats":[{"section":"Партер","row":"1","seat":"3"}],"general":[{"section":"Фан-зона","quantity":2}],"email":"me@example.com"}'

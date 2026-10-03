@@ -72,7 +72,7 @@ function activate(s: MapSeat) {
       >
         <g class="stage">
           <path :d="`M ${map.width * 0.18} ${map.stageY + 18} Q ${map.width / 2} ${map.stageY - 6} ${map.width * 0.82} ${map.stageY + 18}`" />
-          <text :x="map.width / 2" :y="map.stageY + 34" text-anchor="middle">СЦЕНА</text>
+          <text :x="map.width / 2" :y="map.stageY + 34" text-anchor="middle">{{ map.stageLabel }}</text>
         </g>
 
         <g v-for="sec in map.sections" :key="sec.name">

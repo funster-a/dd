@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
@@ -109,6 +110,8 @@ func run() error {
 	r.Use(httpx.RealIP(cfg.TrustedProxies))
 	r.Use(httpx.RequestID(log))
 	r.Use(observability.NewHTTPMetrics(prometheus.DefaultRegisterer).Middleware)
+	// Сжатие JSON: схема стадиона — 400 КБ, в gzip — около 11 КБ (ADR 024).
+	r.Use(middleware.Compress(5, "application/json"))
 	r.Get("/healthz", httpx.Healthz)
 	// Метрики Prometheus (ADR 017). Наружу не публикуются: nginx проксирует
 	// только /v1, порт api открыт лишь внутри сети Compose.

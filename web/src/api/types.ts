@@ -33,9 +33,21 @@ export interface LayoutSection {
   kind: 'seat' | 'general'
   rows?: LayoutRow[]
   capacity?: number
+  // Трибуна и контур сектора на плане большой площадки (ADR 024).
+  stand?: string
+  outline?: [number, number][]
+}
+
+// План большой площадки: размер, поле или сцена (x, y, ширина, высота).
+export interface LayoutPlan {
+  width: number
+  height: number
+  field: [number, number, number, number]
+  field_label: string
 }
 
 export interface Layout {
+  plan?: LayoutPlan
   sections: LayoutSection[]
 }
 
@@ -83,8 +95,16 @@ export interface SeatRef {
   seat: string
 }
 
+export interface SectionAvailability {
+  section: string
+  available: number
+  total: number
+}
+
 export interface Availability {
   taken: SeatRef[]
+  // Свободные и все места по секторам с рядами — для плана площадки.
+  sections: SectionAvailability[]
   general: { section: string; available: number }[]
   // Сервисный сбор с покупателя в сотых долях процента: 500 = 5 % (ADR 019).
   service_fee_bps: number
@@ -197,6 +217,18 @@ export interface OrgVenue {
   longitude: number | null
   created_at: string
   updated_at: string
+}
+
+// Готовая схема известной площадки (ADR 024).
+export interface SeatMapTemplate {
+  id: string
+  name: string
+  venue_name: string
+  address: string
+  seat_count: number
+  note: string
+  layout?: Layout
+  prices?: PriceInput[]
 }
 
 export interface VenueInput {

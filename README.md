@@ -58,6 +58,16 @@ docker compose logs worker
 
 Остановить: `docker compose down`. Удалить вместе с данными: `docker compose down -v`.
 
+### Несколько экземпляров api и воркера
+
+По умолчанию поднимаются два экземпляра api и два воркера (ADR 023). Порт 8080 слушает балансировщик `api-lb` (nginx): он раскладывает запросы по экземплярам api, а сайт ходит в api тоже через DNS-имя сервиса. Число экземпляров меняется без перезапуска остальных:
+
+```sh
+docker compose up -d --scale api=4 --scale worker=3 --no-recreate
+```
+
+То же постоянно — `API_REPLICAS` и `WORKER_REPLICAS` в `.env`. Новые экземпляры балансировщик и Prometheus находят через DNS Docker за 10 секунд.
+
 ### Адреса
 
 | Сервис | Адрес | Доступ |
@@ -65,7 +75,7 @@ docker compose logs worker
 | Сайт покупателя | http://localhost:8000 | вход по телефону, код в логе api |
 | Кабинет организатора | http://localhost:8000/org | вход по email, код в логе api |
 | Сканер контролёра | http://localhost:8000/scan#… | ссылка из кабинета, раздел «Контроль входа» |
-| api | http://localhost:8080 | — |
+| api (через балансировщик `api-lb`) | http://localhost:8080 | — |
 | RabbitMQ, панель управления | http://localhost:15672 | `dd` / `dd` |
 | Prometheus | http://localhost:9090 | — |
 | Grafana | http://localhost:3000 | `admin` / `admin`, дашборд «Партер: продажи и система» в папке «Партер» |
@@ -347,6 +357,8 @@ GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) запу
 STRATEGIES=redis LEVELS=500 REPEATS=1 ./loadtest/run.sh   # быстрый прогон
 ./loadtest/redis-failure.sh                         # отказ Redis в середине прогона
 ./loadtest/queue.sh                                 # очередь ожидания при старте продаж (ADR 020)
+./loadtest/scale.sh                                 # ёмкость при 1, 2, 4 экземплярах api (ADR 023)
+go run ./cmd/loadseed scale-report -dir loadtest/results/raw/scale -out docs/experiments/<папка>
 go run ./cmd/loadseed queue-report -dir loadtest/results/raw/queue -out docs/experiments/<папка>
 go run ./cmd/loadseed report -dir loadtest/results/raw/<серия> -out docs/experiments/<папка>
 ```

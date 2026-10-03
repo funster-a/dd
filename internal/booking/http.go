@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 
@@ -15,7 +16,8 @@ import (
 
 // Register добавляет маршруты бронирования в роутер /v1:
 //
-//	GET  /events/{eventID}/availability — занятость мест, без входа
+//	GET  /events/{eventID}/availability — занятость мест, без входа; ?view=summary — только
+//	                                     сводка по секторам, ?section= — места одного сектора (ADR 024)
 //	POST /events/{eventID}/orders       — заказ покупателя
 //	GET  /orders/{orderID}              — заказ покупателя
 //	POST /orders/{orderID}/cancel       — отмена неоплаченного заказа
@@ -36,7 +38,12 @@ func (s *Service) Register(r chi.Router) {
 }
 
 func (s *Service) handleAvailability(w http.ResponseWriter, r *http.Request) {
-	b, err := s.GetAvailability(r.Context(), chi.URLParam(r, "eventID"))
+	q := AvailabilityQuery{Section: r.URL.Query().Get("section"), Summary: r.URL.Query().Get("view") == "summary"}
+	if utf8.RuneCountInString(q.Section) > 100 {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "section is too long")
+		return
+	}
+	b, err := s.GetAvailability(r.Context(), chi.URLParam(r, "eventID"), q)
 	if writeError(w, r, err) {
 		return
 	}

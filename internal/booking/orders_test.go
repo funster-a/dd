@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math/rand/v2"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -83,7 +84,7 @@ func TestOrderLifecycle(t *testing.T) {
 
 func (e *env) availability(t *testing.T) Availability {
 	t.Helper()
-	b, err := e.svc.loadAvailability(t.Context(), e.eventID, time.Now())
+	b, err := e.svc.loadAvailability(t.Context(), e.eventID, AvailabilityQuery{}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -387,7 +388,7 @@ func TestOrderRules(t *testing.T) {
 		if _, err := e.svc.CreateOrder(t.Context(), e.buyer(t), draft, seatsReq(seat(1, 1)), now); !errors.Is(err, ErrNotFound) {
 			t.Errorf("draft: %v", err)
 		}
-		if _, err := e.svc.GetAvailability(t.Context(), draft); !errors.Is(err, ErrNotFound) {
+		if _, err := e.svc.GetAvailability(t.Context(), draft, AvailabilityQuery{}); !errors.Is(err, ErrNotFound) {
 			t.Errorf("draft availability: %v", err)
 		}
 		if _, err := e.svc.CreateOrder(t.Context(), e.buyer(t), "not-a-uuid", seatsReq(seat(1, 1)), now); !errors.Is(err, ErrNotFound) {
@@ -575,5 +576,49 @@ func TestServiceFee(t *testing.T) {
 	}
 	if free.Status != "paid" || free.TotalTiyn != 0 || free.FeeTiyn != 0 {
 		t.Errorf("free order = %+v, want paid with no fee", free)
+	}
+}
+
+func TestAvailabilitySummaryAndSection(t *testing.T) {
+	e := newEnv(t, false, 2, 3, 0)
+	ctx := t.Context()
+	now := time.Now()
+	if _, err := e.svc.CreateOrder(ctx, e.buyer(t), e.eventID, seatsReq(seat(1, 1), seat(2, 3)), now); err != nil {
+		t.Fatal(err)
+	}
+	// Холд, который уже истёк, считается свободным местом.
+	if _, err := e.svc.CreateOrder(ctx, e.buyer(t), e.eventID, seatsReq(seat(1, 2)), now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	load := func(q AvailabilityQuery) Availability {
+		t.Helper()
+		b, err := e.svc.loadAvailability(ctx, e.eventID, q, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var a Availability
+		if err := json.Unmarshal(b, &a); err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
+	want := []SectionAvailability{{Section: "Партер", Available: 4, Total: 6}}
+
+	for name, tc := range map[string]struct {
+		q     AvailabilityQuery
+		taken int
+	}{
+		"all":           {AvailabilityQuery{}, 2},
+		"summary":       {AvailabilityQuery{Summary: true}, 0},
+		"section":       {AvailabilityQuery{Section: "Партер"}, 2},
+		"other section": {AvailabilityQuery{Section: "Сектор 12"}, 0},
+	} {
+		a := load(tc.q)
+		if len(a.Taken) != tc.taken {
+			t.Errorf("%s: taken = %v, want %d seats", name, a.Taken, tc.taken)
+		}
+		if !slices.Equal(a.Sections, want) {
+			t.Errorf("%s: sections = %+v, want %+v", name, a.Sections, want)
+		}
 	}
 }

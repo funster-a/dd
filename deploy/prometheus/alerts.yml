@@ -1,0 +1,61 @@
+# Правила алертов (ADR 022). Каждое правило — симптом, который видит
+# покупатель или организатор, или явный признак того, что он скоро его
+# увидит. Пороги — для MVP; уточняются по метрикам реальной нагрузки.
+groups:
+  - name: dd
+    rules:
+      - alert: DDTargetDown
+        expr: up{job=~"api|worker|postgres|redis|rabbitmq"} == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ $labels.job }} недоступен для Prometheus"
+          description: "Цель {{ $labels.instance }} не отвечает на /metrics больше минуты."
+
+      - alert: DDHighErrorRate
+        expr: |
+          sum(rate(dd_http_requests_total{code=~"5.."}[5m]))
+            / sum(rate(dd_http_requests_total[5m])) > 0.05
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "Больше 5% ответов api — ошибки сервера"
+
+      - alert: DDSlowBooking
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(dd_booking_attempt_seconds_bucket[5m]))) > 1
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Оформление заказа p95 дольше секунды"
+          description: "Покупатели ждут заказа больше секунды. Включить очередь ожидания у события или добавить экземпляры api (ADR 020, 021)."
+
+      - alert: DDOutboxStuck
+        expr: dd_outbox_oldest_pending_seconds > 60
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "Outbox стоит: событие ждёт публикации больше минуты"
+          description: "Оплаты проходят, но билеты не выпускаются и возвраты не идут. Проверить worker и RabbitMQ."
+
+      - alert: DDDeadLetters
+        expr: increase(dd_mq_messages_total{result="error"}[10m]) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: "Сообщения уходят в очередь недоставленных: {{ $labels.queue }}"
+
+      - alert: DDRedisDegraded
+        expr: |
+          increase(dd_booking_redis_gate_opened_total[5m]) > 0
+            or increase(dd_identity_session_gate_opened_total[5m]) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: "Redis отказывает: продажа идёт без фильтра холдов или без проверки сессий"
+          description: "Предохранитель выключил Redis на время (ADR 017, 018). Корректность не страдает, нагрузка на базу растёт."
+
+      - alert: DDQueueBypassed
+        expr: increase(dd_booking_queue_bypassed_total[5m]) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: "Очередь ожидания пропускает покупателей без проверки"
+          description: "Redis недоступен, очередь открыта для всех (ADR 020). В пик продаж это нагрузка без сглаживания."

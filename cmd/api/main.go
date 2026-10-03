@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/funster-a/dd/internal/booking"
@@ -107,6 +108,7 @@ func run() error {
 	// Адрес покупателя за nginx — до всех лимитов по IP (ADR 020).
 	r.Use(httpx.RealIP(cfg.TrustedProxies))
 	r.Use(httpx.RequestID(log))
+	r.Use(observability.NewHTTPMetrics(prometheus.DefaultRegisterer).Middleware)
 	r.Get("/healthz", httpx.Healthz)
 	// Метрики Prometheus (ADR 017). Наружу не публикуются: nginx проксирует
 	// только /v1, порт api открыт лишь внутри сети Compose.

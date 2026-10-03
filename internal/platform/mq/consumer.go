@@ -100,7 +100,7 @@ func consumeOnce(ctx context.Context, c *Conn, cfg ConsumerConfig, log *slog.Log
 				stopConsuming(ch, cfg.Tag, log)
 				return nil
 			}
-			handle(handlerCtx, &d, log, h)
+			handle(handlerCtx, cfg.Queue, &d, log, h)
 		}
 	}
 }
@@ -113,8 +113,12 @@ func stopConsuming(ch *amqp.Channel, tag string, log *slog.Logger) {
 	}
 }
 
-func handle(ctx context.Context, d *amqp.Delivery, log *slog.Logger, h Handler) {
-	if err := h(ctx, d); err != nil {
+func handle(ctx context.Context, queue string, d *amqp.Delivery, log *slog.Logger, h Handler) {
+	start := time.Now()
+	err := h(ctx, d)
+	handled.WithLabelValues(queue, result(err)).Inc()
+	handleTime.WithLabelValues(queue).Observe(time.Since(start).Seconds())
+	if err != nil {
 		log.Error("message handling failed", slog.String("message_id", d.MessageId), slog.Any("error", err))
 		if nackErr := d.Nack(false, false); nackErr != nil {
 			log.Warn("nack failed", slog.Any("error", nackErr))

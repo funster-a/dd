@@ -19,6 +19,9 @@ import (
 type Config struct {
 	// HTTPAddr — адрес, на котором слушает HTTP-сервер api.
 	HTTPAddr string
+	// MetricsAddr — адрес /metrics воркера (ADR 022). У api метрики на
+	// HTTPAddr.
+	MetricsAddr string
 	// LogLevel — минимальный уровень логов.
 	LogLevel slog.Level
 	// ShutdownTimeout — сколько ждать завершения активных запросов и задач.
@@ -89,6 +92,7 @@ type S3Config struct {
 func Load() (Config, error) {
 	cfg := Config{
 		HTTPAddr:    getenv("HTTP_ADDR", ":8080"),
+		MetricsAddr: getenv("METRICS_ADDR", ":9091"),
 		DatabaseURL: getenv("DATABASE_URL", "postgres://dd:dd@localhost:5432/dd?sslmode=disable"),
 		RedisAddr:   getenv("REDIS_ADDR", "localhost:6379"),
 		RabbitMQURL: getenv("RABBITMQ_URL", "amqp://dd:dd@localhost:5672/"),
@@ -129,6 +133,9 @@ func Load() (Config, error) {
 
 	if _, _, err := net.SplitHostPort(cfg.HTTPAddr); err != nil {
 		errs = append(errs, fmt.Errorf("HTTP_ADDR: %w", err))
+	}
+	if _, _, err := net.SplitHostPort(cfg.MetricsAddr); err != nil {
+		errs = append(errs, fmt.Errorf("METRICS_ADDR: %w", err))
 	}
 	if _, _, err := net.SplitHostPort(cfg.RedisAddr); err != nil {
 		errs = append(errs, fmt.Errorf("REDIS_ADDR: %w", err))

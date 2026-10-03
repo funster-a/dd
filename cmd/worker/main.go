@@ -6,13 +6,18 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	amqp "github.com/rabbitmq/amqp091-go"
 
 	"github.com/funster-a/dd/internal/booking"
@@ -80,6 +85,16 @@ func run() error {
 	tasks.Go(func() { outbox.NewRelay(pool, pub, cfg.QueuePrefix, log).Run(ctx) })
 	tasks.Go(func() { expireOrders(ctx, book, log) })
 
+	// Метрики воркера (ADR 022): обработка очередей, отставание outbox,
+	// истёкшие заказы. Порт открыт только внутри сети Compose.
+	prometheus.MustRegister(outbox.NewBacklogCollector(pool))
+	metricsSrv := &http.Server{Addr: cfg.MetricsAddr, Handler: promhttp.Handler(), ReadHeaderTimeout: 5 * time.Second}
+	go func() {
+		if err := metricsSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Error("metrics server", slog.Any("error", err))
+		}
+	}()
+
 	<-ctx.Done()
 
 	// Весь выход, включая закрытие соединения, укладывается в ShutdownTimeout.
@@ -87,6 +102,9 @@ func run() error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 
+	if err := metricsSrv.Shutdown(shutdownCtx); err != nil {
+		log.Warn("stop metrics server", slog.Any("error", err))
+	}
 	stopped := make(chan struct{})
 	go func() {
 		tasks.Wait()

@@ -90,10 +90,15 @@ services:
 
   prometheus:
     image: prom/prometheus:v3.14.0
-    # Метрики api (ADR 017): попытки захвата мест, отказы, повторы, задержка.
+    # Метрики api, worker и хранилищ, правила алертов (ADR 017, 022).
     configs:
       - source: prometheus-config
         target: /etc/prometheus/prometheus.yml
+      - source: prometheus-alerts
+        target: /etc/prometheus/alerts.yml
+    # api, запущенный на машине разработчика (нагрузочные эксперименты).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
     volumes:
@@ -116,6 +121,10 @@ services:
     configs:
       - source: grafana-datasources
         target: /etc/grafana/provisioning/datasources/prometheus.yml
+      - source: grafana-dashboards
+        target: /etc/grafana/provisioning/dashboards/dd.yml
+      - source: grafana-dashboard-overview
+        target: /var/lib/grafana/dashboards/dd-overview.json
     depends_on:
       prometheus:
         condition: service_healthy
@@ -125,6 +134,24 @@ services:
       timeout: 3s
       retries: 10
       start_period: 20s
+
+  # Экспортёры метрик PostgreSQL и Redis (ADR 022). RabbitMQ отдаёт метрики
+  # сам: плагин rabbitmq_prometheus, порт 15692.
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.18.1
+    environment:
+      DATA_SOURCE_NAME: postgresql://${POSTGRES_USER:-dd}:${POSTGRES_PASSWORD:-dd}@postgres:5432/${POSTGRES_DB:-dd}?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.79.0
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
 
   # Одноразовый сервис: применяет миграции и завершается. api стартует
   # только после его успешного завершения.
@@ -233,21 +260,25 @@ configs:
         {"name": "anonymous", "actions": ["Read:${S3_BUCKET:-dd-media}"]}
       ]}
   prometheus-config:
-    content: |
-      global:
-        scrape_interval: 5s
-      scrape_configs:
-        - job_name: prometheus
-          static_configs:
-            - targets: ["localhost:9090"]
-        - job_name: api
-          static_configs:
-            - targets: ["api:8080"]
+    file: ./deploy/prometheus/prometheus.yml
+  prometheus-alerts:
+    file: ./deploy/prometheus/alerts.yml
+  grafana-dashboards:
+    file: ./deploy/grafana/dashboards.yml
+  grafana-dashboard-overview:
+    file: ./deploy/grafana/dashboards/dd-overview.json
   grafana-datasources:
     content: |
       apiVersion: 1
+      # Источник пересоздаётся с постоянным uid: на него ссылаются дашборды
+      # из репозитория (ADR 022). Без удаления Grafana со старым томом не
+      # стартует: источник с тем же именем уже есть, а uid у него другой.
+      deleteDatasources:
+        - name: Prometheus
+          orgId: 1
       datasources:
         - name: Prometheus
+          uid: prometheus
           type: prometheus
           access: proxy
           url: http://prometheus:9090

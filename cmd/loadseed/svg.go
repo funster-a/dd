@@ -39,6 +39,7 @@ type series struct {
 type chartSpec struct {
 	title, subtitle, unit string
 	series                []series
+	xLabel                string // подпись оси X; пусто — «одновременных покупателей»
 }
 
 func charts(groups []group) map[string]string {
@@ -173,7 +174,11 @@ func lineChart(c chartSpec) string {
 	for _, x := range xs {
 		fmt.Fprintf(&b, `<text x="%.1f" y="%.0f" font-size="11.5" fill="%s" text-anchor="middle">%s</text>`, xAt(x), top+ph+22, textMuted, fmtNum(func() float64 { v, _ := strconv.Atoi(x); return float64(v) }()))
 	}
-	fmt.Fprintf(&b, `<text x="%.0f" y="%.0f" font-size="11.5" fill="%s" text-anchor="middle">одновременных покупателей</text>`, left+pw/2, h-10, textMuted)
+	xLabel := c.xLabel
+	if xLabel == "" {
+		xLabel = "одновременных покупателей"
+	}
+	fmt.Fprintf(&b, `<text x="%.0f" y="%.0f" font-size="11.5" fill="%s" text-anchor="middle">%s</text>`, left+pw/2, h-10, textMuted, html.EscapeString(xLabel))
 
 	type endLabel struct {
 		y, ty float64

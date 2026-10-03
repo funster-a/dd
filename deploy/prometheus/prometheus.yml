@@ -12,20 +12,30 @@ scrape_configs:
     static_configs:
       - targets: ["localhost:9090"]
 
-  # api и worker в Docker Compose.
+  # api и worker в Docker Compose: реплики находятся через Docker DNS, каждая
+  # собирается отдельно (ADR 023).
   - job_name: api
-    static_configs:
-      - targets: ["api:8080"]
+    dns_sd_configs:
+      - names: ["api"]
+        type: A
+        port: 8080
+        refresh_interval: 10s
   - job_name: worker
-    static_configs:
-      - targets: ["worker:9091"]
+    dns_sd_configs:
+      - names: ["worker"]
+        type: A
+        port: 9091
+        refresh_interval: 10s
 
   # api и worker, запущенные на машине разработчика (make run, нагрузочные
   # эксперименты). В полном Compose эти цели недоступны, и это нормально:
   # алерт «цель недоступна» их не учитывает.
   - job_name: api-local
     static_configs:
-      - targets: ["host.docker.internal:8080"]
+      # 8080 — одиночный api (make run), 8081–8084 — экземпляры эксперимента
+      # с масштабированием (loadtest/scale.sh).
+      - targets: ["host.docker.internal:8080", "host.docker.internal:8081", "host.docker.internal:8082",
+                  "host.docker.internal:8083", "host.docker.internal:8084"]
   - job_name: worker-local
     static_configs:
       - targets: ["host.docker.internal:9091"]

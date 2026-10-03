@@ -194,9 +194,11 @@ jobs:
           for i in $(seq 1 30); do
             down=$(curl -fsS http://127.0.0.1:9090/api/v1/targets | python3 -c "
           import json, sys
-          need = {'api', 'worker', 'postgres', 'redis', 'rabbitmq'}
-          up = {t['labels']['job'] for t in json.load(sys.stdin)['data']['activeTargets'] if t['health'] == 'up'}
-          print(' '.join(sorted(need - up)))")
+          from collections import Counter
+          # По два экземпляра api и воркера (ADR 023): Prometheus находит каждый через DNS.
+          need = {'api': 2, 'worker': 2, 'postgres': 1, 'redis': 1, 'rabbitmq': 1}
+          up = Counter(t['labels']['job'] for t in json.load(sys.stdin)['data']['activeTargets'] if t['health'] == 'up')
+          print(' '.join(sorted(j for j, n in need.items() if up[j] < n)))")
             [ -z "$down" ] && break
             sleep 2
           done

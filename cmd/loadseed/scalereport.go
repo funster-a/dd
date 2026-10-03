@@ -32,6 +32,10 @@ type capacitySummary struct {
 type scaleRun struct {
 	Instances, Rate int
 	K6              capacitySummary
+	// Медианная загрузка процессора на ступени, в процентах одного ядра
+	// (как в docker stats): на один экземпляр api, PostgreSQL, k6. Медиана —
+	// потому что первые и последние замеры попадают на запуск и остановку k6.
+	CPUAPI, CPUPostgres, CPUK6 float64
 }
 
 // sloP95MS — порог p95 для ёмкости: покупатель не должен ждать заказа дольше
@@ -53,6 +57,7 @@ func scaleReport(args []string) error {
 	fs := flag.NewFlagSet("scale-report", flag.ContinueOnError)
 	dir := fs.String("dir", "", "каталог серии (loadtest/results/raw/scale)")
 	out := fs.String("out", "", "куда положить CSV, таблицы и графики")
+	cpus := fs.Float64("cpus", 0.25, "лимит процессора экземпляра api в ядрах, как CPUS в scale.sh")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -76,6 +81,9 @@ func scaleReport(args []string) error {
 			fmt.Fprintln(os.Stderr, "skip", e.Name(), err)
 			continue
 		}
+		if err := readCPU(filepath.Join(*dir, e.Name(), "cpu.txt"), &r); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
 		runs = append(runs, r)
 	}
 	if len(runs) == 0 {
@@ -90,7 +98,7 @@ func scaleReport(args []string) error {
 	if err := writeScaleCSV(filepath.Join(*out, "results.csv"), runs); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(*out, "tables.md"), []byte(scaleTables(runs)), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(*out, "tables.md"), []byte(scaleTables(runs, *cpus)), 0o600); err != nil {
 		return err
 	}
 	for name, svg := range scaleCharts(runs) {
@@ -101,18 +109,68 @@ func scaleReport(args []string) error {
 	return nil
 }
 
+// readCPU разбирает строки «имя 12.34%» из docker stats.
+func readCPU(path string, r *scaleRun) error {
+	data, err := os.ReadFile(path) //nolint:gosec // путь задаёт автор отчёта
+	if err != nil {
+		return err
+	}
+	byName := map[string][]float64{}
+	for line := range strings.Lines(string(data)) {
+		name, pct, ok := strings.Cut(strings.TrimSpace(line), " ")
+		if !ok {
+			continue
+		}
+		v, err := strconv.ParseFloat(strings.TrimSuffix(pct, "%"), 64)
+		if err != nil {
+			continue
+		}
+		byName[name] = append(byName[name], v)
+	}
+	var api []float64
+	for name, vs := range byName {
+		m := median(vs)
+		switch {
+		case strings.HasPrefix(name, "dd-scale-api"):
+			api = append(api, m)
+		case strings.HasPrefix(name, "dd-scale-k6"):
+			r.CPUK6 = m
+		case strings.HasPrefix(name, "dd-postgres-") && !strings.Contains(name, "exporter"):
+			r.CPUPostgres = m
+		}
+	}
+	if len(api) > 0 {
+		var sum float64
+		for _, v := range api {
+			sum += v
+		}
+		r.CPUAPI = sum / float64(len(api))
+	}
+	return nil
+}
+
+func median(vs []float64) float64 {
+	s := slices.Clone(vs)
+	slices.Sort(s)
+	if len(s)%2 == 1 {
+		return s[len(s)/2]
+	}
+	return (s[len(s)/2-1] + s[len(s)/2]) / 2
+}
+
 func writeScaleCSV(path string, runs []scaleRun) error {
 	f, err := os.Create(path) //nolint:gosec // путь задаёт автор отчёта
 	if err != nil {
 		return err
 	}
 	w := csv.NewWriter(f)
-	_ = w.Write([]string{"instances", "rate", "achieved_rps", "requests", "created", "taken", "errors", "dropped", "p50_ms", "p95_ms", "p99_ms", "within_slo"})
+	_ = w.Write([]string{"instances", "rate", "achieved_rps", "requests", "created", "taken", "errors", "dropped", "p50_ms", "p95_ms", "p99_ms", "within_slo", "cpu_api_pct", "cpu_postgres_pct", "cpu_k6_pct"})
 	ff := func(v float64) string { return strconv.FormatFloat(v, 'f', 1, 64) }
 	for _, r := range runs {
 		_ = w.Write([]string{strconv.Itoa(r.Instances), strconv.Itoa(r.Rate), ff(r.K6.AchievedRPS), ff(r.K6.Requests),
 			ff(r.K6.Created), ff(r.K6.Taken), ff(r.K6.Errors), ff(r.K6.Dropped),
-			ff(r.K6.OrderMS["med"]), ff(r.K6.OrderMS["p(95)"]), ff(r.K6.OrderMS["p(99)"]), strconv.FormatBool(r.withinSLO())})
+			ff(r.K6.OrderMS["med"]), ff(r.K6.OrderMS["p(95)"]), ff(r.K6.OrderMS["p(99)"]), strconv.FormatBool(r.withinSLO()),
+			ff(r.CPUAPI), ff(r.CPUPostgres), ff(r.CPUK6)})
 	}
 	w.Flush()
 	if err := w.Error(); err != nil {
@@ -158,7 +216,7 @@ func levels(runs []scaleRun) []int {
 	return ns
 }
 
-func scaleTables(runs []scaleRun) string {
+func scaleTables(runs []scaleRun, cpus float64) string {
 	var b strings.Builder
 	b.WriteString("<!-- Сгенерировано: go run ./cmd/loadseed scale-report. Не править руками. -->\n\n")
 	fmt.Fprintf(&b, "Ёмкость — самый большой поток заказов, при котором p95 < %d мс, ошибок < 1%% и k6 успевал выпускать запросы.\n\n", sloP95MS)
@@ -171,16 +229,18 @@ func scaleTables(runs []scaleRun) string {
 		}
 		fmt.Fprintf(&b, "| %d | %s |\n", n, cs)
 	}
-	b.WriteString("\n| Экземпляров | Поток, задано | Поток, получено | p50, мс | p95, мс | p99, мс | Ошибок | Не выпущено k6 | В пределах SLO |\n")
-	b.WriteString("|---:|---:|---:|---:|---:|---:|---:|---:|---|\n")
+	fmt.Fprintf(&b, "\nCPU — медиана за ступень в процентах одного ядра, как в docker stats. У экземпляра api лимит %s%%; в скобках — доля лимита.\n\n", fmtNum(cpus*100))
+	b.WriteString("| Экземпляров | Поток, задано | Поток, получено | p50, мс | p95, мс | p99, мс | Ошибок | Не выпущено k6 | В пределах SLO | CPU экземпляра api | CPU PostgreSQL | CPU k6 |\n")
+	b.WriteString("|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|\n")
 	for _, r := range runs {
 		ok := "нет"
 		if r.withinSLO() {
 			ok = "да"
 		}
-		fmt.Fprintf(&b, "| %d | %d | %s | %s | %s | %s | %s (%.1f%%) | %s | %s |\n", r.Instances, r.Rate, fmtNum(round1(r.K6.AchievedRPS)),
+		fmt.Fprintf(&b, "| %d | %d | %s | %s | %s | %s | %s (%.1f%%) | %s | %s | %.0f%% (%.0f%%) | %.0f%% | %.0f%% |\n", r.Instances, r.Rate, fmtNum(round1(r.K6.AchievedRPS)),
 			fmtNum(round1(r.K6.OrderMS["med"])), fmtNum(round1(r.K6.OrderMS["p(95)"])), fmtNum(round1(r.K6.OrderMS["p(99)"])),
-			fmtNum(r.K6.Errors), r.errorShare()*100, fmtNum(r.K6.Dropped), ok)
+			fmtNum(r.K6.Errors), r.errorShare()*100, fmtNum(r.K6.Dropped), ok,
+			r.CPUAPI, r.CPUAPI/cpus, r.CPUPostgres, r.CPUK6)
 	}
 	return b.String()
 }
@@ -206,9 +266,9 @@ func scaleCharts(runs []scaleRun) map[string]string {
 	}
 	return map[string]string{
 		"capacity.svg": barChart("Ёмкость: заказов в секунду в пределах SLO",
-			fmt.Sprintf("Самый большой поток, при котором p95 < %d мс и ошибок < 1%%. У каждого экземпляра — пол-ядра.", sloP95MS), "заказов в секунду", caps),
+			fmt.Sprintf("Самый большой поток, при котором p95 < %d мс и ошибок < 1%%. У каждого экземпляра — четверть ядра.", sloP95MS), "заказов в секунду", caps),
 		"p95-by-rate.svg": lineChart(chartSpec{
-			title: "Время ответа p95 при постоянном потоке заказов", subtitle: "Ступени по 15 секунд. Ось Y обрезана сверху: за SLO линии уходят в секунды.",
+			title: "Время ответа p95 при постоянном потоке заказов", subtitle: "Ступени по 20 секунд после прогрева. За пределом ёмкости линии уходят в секунды.",
 			unit: "мс", series: ss, xLabel: "заказов в секунду (задано)",
 		}),
 	}

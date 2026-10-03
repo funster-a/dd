@@ -1,15 +1,22 @@
 #!/usr/bin/env bash
 # Горизонтальное масштабирование api (ADR 023): ёмкость при 1, 2 и 4
 # экземплярах api за балансировщиком. Каждый экземпляр — контейнер с лимитом
-# процессора CPUS (по умолчанию пол-ядра): так экземпляр ведёт себя как
-# отдельный узел, а не делит все ядра машины с соседями.
+# процессора CPUS (по умолчанию четверть ядра): так экземпляр ведёт себя как
+# отдельный небольшой узел, а не делит все ядра машины с соседями. Лимит
+# маленький нарочно: на стенде из 4 vCPU рядом работают PostgreSQL, k6 и
+# nginx, и с большими узлами общая машина кончается раньше, чем api.
+#
+# Перед каждой конфигурацией — прогрев WARM (кэш сессий и пулы соединений
+# новых экземпляров), он в отчёт не входит. На каждой ступени docker stats
+# раз в пару секунд пишет загрузку процессора экземпляров api, PostgreSQL и
+# k6 в cpu.txt: по ней видно, где узкое место.
 #
 # Для каждого числа экземпляров — ступени постоянного потока заказов RATES
 # (сценарий loadtest/capacity.js) по DURATION. Ёмкость — самая высокая
 # ступень, где p95 ниже SLO и ошибок меньше 1%. Стратегия захвата — redis.
 # Инвариант проверяется после каждого числа экземпляров.
 #
-#   LEVELS="1 2 4" RATES="100 200 300 400 600 800" DURATION=20s loadtest/scale.sh
+#   LEVELS="1 2 4" RATES="100 200 300 400 500 600" DURATION=20s loadtest/scale.sh
 #
 # Нужны make infra-up и make migrate-up; порт 8080 должен быть свободен
 # (полный Compose со своим api-lb — остановить).
@@ -18,11 +25,12 @@ cd "$(dirname "$0")/.."
 
 N=${N:-5000}          # покупателей с сессиями
 LEVELS=${LEVELS:-"1 2 4"}
-RATES=${RATES:-"100 200 300 400 600 800"}
+RATES=${RATES:-"100 200 300 400 500 600"}
 DURATION=${DURATION:-20s}
 ROWS=${ROWS:-100}      # зал ROWS × SEATS мест: больше, чем покупателей, чтобы
 SEATS=${SEATS:-60}     # корзины покупателей не съели зал целиком
-CPUS=${CPUS:-0.5}
+CPUS=${CPUS:-0.25}
+WARM=${WARM:-"100 20s"} # поток и длительность прогрева
 POOL=${POOL:-20} # соединений с базой у каждого экземпляра; 4 × 20 < max_connections 100
 K6_IMAGE=${K6_IMAGE:-grafana/k6:latest}
 RUNTIME_IMAGE=${RUNTIME_IMAGE:-gcr.io/distroless/static-debian13:nonroot}
@@ -39,6 +47,14 @@ go build -o "$DATA/loadseed" ./cmd/loadseed
 "$DATA/loadseed" buyers -n "$N" -out "$DATA/buyers.json"
 
 cleanup() { docker rm -f $(docker ps -aq --filter name=dd-scale-) >/dev/null 2>&1 || true; }
+
+# k6 rate duration summary-path — один прогон сценария capacity.js.
+k6run() {
+  docker run --rm --name dd-scale-k6 --user 0 --network host -v "$PWD:/work" -w /work \
+    -e RATE="$1" -e DURATION="$2" \
+    -e EVENT="/work/$lvl/event.json" -e BUYERS="/work/$DATA/buyers.json" \
+    -e SUMMARY="/work/$3" "$K6_IMAGE" run --quiet loadtest/capacity.js
+}
 trap cleanup EXIT
 
 start_level() {
@@ -71,13 +87,19 @@ for n in $LEVELS; do
   mkdir -p "$lvl"
   "$DATA/loadseed" event -rows "$ROWS" -seats "$SEATS" -out "$lvl/event.json"
   event=$(python3 -c "import json;print(json.load(open('$lvl/event.json'))['event_id'])")
+  read -r wrate wdur <<<"$WARM"
+  k6run "$wrate" "$wdur" "$lvl/warm.json" >"$lvl/warm.log" 2>&1 || true
+  sleep 5
   for rate in $RATES; do
     dir="$OUT/scale__api${n}__${rate}__1"
     mkdir -p "$dir"
-    docker run --rm --user 0 --network host -v "$PWD:/work" -w /work \
-      -e RATE="$rate" -e DURATION="$DURATION" \
-      -e EVENT="/work/$lvl/event.json" -e BUYERS="/work/$DATA/buyers.json" \
-      -e SUMMARY="/work/$dir/summary.json" "$K6_IMAGE" run --quiet loadtest/capacity.js >"$dir/k6.log" 2>&1 || true
+    : >"$dir/cpu.txt"
+    k6run "$rate" "$DURATION" "$dir/summary.json" >"$dir/k6.log" 2>&1 &
+    k6pid=$!
+    while kill -0 "$k6pid" 2>/dev/null; do
+      docker stats --no-stream --format '{{.Name}} {{.CPUPerc}}' 2>/dev/null | grep -E '^(dd-scale-api|dd-scale-k6|dd-postgres-[0-9])' >>"$dir/cpu.txt" || true
+    done
+    wait "$k6pid" || true
     echo "scale api=$n rate=$rate $(tail -1 "$dir/k6.log" | cut -c1-220)"
     sleep 5
   done

@@ -135,8 +135,11 @@ func TestEventDraft(t *testing.T) {
 
 	upd := e.input("standup-night")
 	upd.Title = "Стендап: второй вечер"
+	// Очередь ожидания организатор выбирает сам; нужен старт продаж.
+	sales := upd.StartsAt.Add(-7 * 24 * time.Hour)
+	upd.SalesStartAt, upd.WaitingRoom = &sales, true
 	got, err := e.svc.UpdateEvent(ctx, e.org, ev.ID, upd)
-	if err != nil || got.Title != upd.Title {
+	if err != nil || got.Title != upd.Title || !got.WaitingRoom {
 		t.Fatalf("UpdateEvent() = %+v, %v", got, err)
 	}
 
@@ -167,9 +170,10 @@ func TestEventValidation(t *testing.T) {
 			s, e := in.StartsAt.Add(-time.Hour), in.StartsAt.Add(-2*time.Hour)
 			in.SalesStartAt, in.SalesEndAt = &s, &e
 		}, "sales_end_at"},
-		"too many tickets":   {func(in *EventInput) { in.MaxTicketsPerBuyer = 51 }, "max_tickets_per_buyer"},
-		"map of other venue": {func(in *EventInput) { in.VenueID = otherVenue.ID }, "seat_map_id"},
-		"malformed seat map": {func(in *EventInput) { in.SeatMapID = "nope" }, "seat_map_id"},
+		"too many tickets":          {func(in *EventInput) { in.MaxTicketsPerBuyer = 51 }, "max_tickets_per_buyer"},
+		"queue without sales start": {func(in *EventInput) { in.WaitingRoom = true }, "waiting_room"},
+		"map of other venue":        {func(in *EventInput) { in.VenueID = otherVenue.ID }, "seat_map_id"},
+		"malformed seat map":        {func(in *EventInput) { in.SeatMapID = "nope" }, "seat_map_id"},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {

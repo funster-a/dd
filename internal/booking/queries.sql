@@ -1,7 +1,7 @@
 -- Запросы модуля booking (ADR 011). Сгенерировать: make sqlc
 
 -- name: GetBookableEvent :one
-SELECT id, organizer_id, status, admission, starts_at, sales_start_at, sales_end_at, max_tickets_per_buyer
+SELECT id, organizer_id, status, admission, starts_at, sales_start_at, sales_end_at, max_tickets_per_buyer, waiting_room
 FROM events WHERE id = @id;
 
 -- name: LockPendingOrder :one
@@ -118,7 +118,7 @@ SET status = 'available', hold_order_id = NULL, hold_expires_at = NULL
 WHERE hold_order_id = ANY(@order_ids::uuid[]) AND status = 'held';
 
 -- name: GetPublishedEventStatus :one
-SELECT status, sales_start_at FROM events WHERE id = @id;
+SELECT status, sales_start_at, waiting_room FROM events WHERE id = @id;
 
 -- name: ListTakenSeats :many
 -- Занятые места с рядом: проданные и под действующим холдом.

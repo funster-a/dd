@@ -52,10 +52,10 @@ ORDER BY name, id;
 -- name: CreateEvent :one
 INSERT INTO events (organizer_id, venue_id, seat_map_id, admission, slug, title, description, age_rating,
                     starts_at, ends_at, sales_start_at, sales_end_at,
-                    max_tickets_per_buyer, refund_deadline_hours)
+                    max_tickets_per_buyer, refund_deadline_hours, waiting_room)
 VALUES (@organizer_id, @venue_id, @seat_map_id, @admission, @slug, @title, @description, @age_rating,
         @starts_at, @ends_at, @sales_start_at, @sales_end_at,
-        @max_tickets_per_buyer, @refund_deadline_hours)
+        @max_tickets_per_buyer, @refund_deadline_hours, @waiting_room)
 RETURNING *;
 
 -- name: UpdateDraftEvent :one
@@ -66,7 +66,7 @@ SET venue_id = @venue_id, seat_map_id = @seat_map_id, admission = @admission, sl
     starts_at = @starts_at, ends_at = @ends_at,
     sales_start_at = @sales_start_at, sales_end_at = @sales_end_at,
     max_tickets_per_buyer = @max_tickets_per_buyer, refund_deadline_hours = @refund_deadline_hours,
-    updated_at = now()
+    waiting_room = @waiting_room, updated_at = now()
 WHERE organizer_id = @organizer_id AND id = @id AND status = 'draft'
 RETURNING *;
 

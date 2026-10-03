@@ -171,7 +171,7 @@ func (q *Queries) ExpireDueOrders(ctx context.Context, arg ExpireDueOrdersParams
 
 const getBookableEvent = `-- name: GetBookableEvent :one
 
-SELECT id, organizer_id, status, admission, starts_at, sales_start_at, sales_end_at, max_tickets_per_buyer
+SELECT id, organizer_id, status, admission, starts_at, sales_start_at, sales_end_at, max_tickets_per_buyer, waiting_room
 FROM events WHERE id = $1
 `
 
@@ -184,6 +184,7 @@ type GetBookableEventRow struct {
 	SalesStartAt       *time.Time
 	SalesEndAt         *time.Time
 	MaxTicketsPerBuyer int32
+	WaitingRoom        bool
 }
 
 // Запросы модуля booking (ADR 011). Сгенерировать: make sqlc
@@ -199,6 +200,7 @@ func (q *Queries) GetBookableEvent(ctx context.Context, id string) (GetBookableE
 		&i.SalesStartAt,
 		&i.SalesEndAt,
 		&i.MaxTicketsPerBuyer,
+		&i.WaitingRoom,
 	)
 	return i, err
 }
@@ -245,18 +247,19 @@ func (q *Queries) GetEventStatus(ctx context.Context, id string) (string, error)
 }
 
 const getPublishedEventStatus = `-- name: GetPublishedEventStatus :one
-SELECT status, sales_start_at FROM events WHERE id = $1
+SELECT status, sales_start_at, waiting_room FROM events WHERE id = $1
 `
 
 type GetPublishedEventStatusRow struct {
 	Status       string
 	SalesStartAt *time.Time
+	WaitingRoom  bool
 }
 
 func (q *Queries) GetPublishedEventStatus(ctx context.Context, id string) (GetPublishedEventStatusRow, error) {
 	row := q.db.QueryRow(ctx, getPublishedEventStatus, id)
 	var i GetPublishedEventStatusRow
-	err := row.Scan(&i.Status, &i.SalesStartAt)
+	err := row.Scan(&i.Status, &i.SalesStartAt, &i.WaitingRoom)
 	return i, err
 }
 

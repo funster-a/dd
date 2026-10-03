@@ -71,8 +71,27 @@ func queueEnv(t *testing.T, rate int) (*env, time.Time) {
 	e := newEnv(t, true, 10, 10, 0)
 	e.svc = NewService(e.db.Pool, e.rdb, quietLog(), WithQueue(DefaultQueueConfig(rate)))
 	start := time.Now().Add(time.Hour).Truncate(time.Second)
-	e.exec(t, `UPDATE events SET sales_start_at = $1 WHERE id = $2`, start, e.eventID)
+	e.exec(t, `UPDATE events SET sales_start_at = $1, waiting_room = true WHERE id = $2`, start, e.eventID)
 	return e, start
+}
+
+// Очередь — выбор организатора: без него событие со стартом продаж
+// продаётся напрямую.
+func TestQueueOffForEvent(t *testing.T) {
+	e, start := queueEnv(t, 1)
+	e.exec(t, `UPDATE events SET waiting_room = false WHERE id = $1`, e.eventID)
+	ctx := t.Context()
+	at := start.Add(time.Second)
+	buyer := e.buyer(t)
+	if st, err := e.svc.JoinQueue(ctx, buyer, e.eventID, at); err != nil || st.State != "not_required" {
+		t.Errorf("join without a queue = %+v, %v", st, err)
+	}
+	if _, err := e.svc.CreateOrder(ctx, buyer, e.eventID, seatsReq(seat(1, 1)), at); err != nil {
+		t.Errorf("order without a queue: %s", fmtErr(err))
+	}
+	if a := e.availability(t); a.Queue != nil {
+		t.Errorf("availability queue = %+v, want none", a.Queue)
+	}
 }
 
 func TestQueue(t *testing.T) {

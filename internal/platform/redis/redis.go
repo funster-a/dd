@@ -6,16 +6,22 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
 )
 
+// loggerOnce: логгер go-redis глобальный. Ставится один раз на процесс —
+// иначе новый клиент перезаписывал бы его, пока соединения другого клиента
+// в фоне пишут в лог (гонка, найдена тестом с недоступным Redis).
+var loggerOnce sync.Once
+
 // NewClient создаёт клиент. Соединение открывается при первом запросе.
 // Внутренние сообщения go-redis перенаправляются в log, чтобы все логи
 // процесса оставались в JSON.
 func NewClient(addr string, log *slog.Logger) *goredis.Client {
-	goredis.SetLogger(slogAdapter{log: log})
+	loggerOnce.Do(func() { goredis.SetLogger(slogAdapter{log: log}) })
 	// ContextTimeoutEnabled: дедлайн контекста ограничивает и чтение/запись,
 	// иначе /readyz ждал бы ReadTimeout (5 с) вместо своего бюджета.
 	return goredis.NewClient(&goredis.Options{Addr: addr, ContextTimeoutEnabled: true})

@@ -40,6 +40,7 @@ type Event struct {
 	CoverImageKey       *string
 	CoverVideoKey       *string
 	Admission           string
+	WaitingRoom         bool
 }
 
 type EventSeat struct {

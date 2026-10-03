@@ -5,8 +5,17 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+
 	"github.com/funster-a/dd/internal/booking"
 )
+
+// expiredTotal — сколько неоплаченных заказов закрыто по истечении холда.
+var expiredTotal = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "dd_booking_orders_expired_total",
+	Help: "Неоплаченные заказы, закрытые воркером по истечении холда.",
+})
 
 // Как часто закрывать просроченные заказы. Место с истёкшим холдом можно
 // купить и до очистки (захват считает такой холд свободным); очистка
@@ -31,6 +40,7 @@ func expireOrders(ctx context.Context, book *booking.Service, log *slog.Logger) 
 				break
 			}
 			if n > 0 {
+				expiredTotal.Add(float64(n))
 				log.Info("orders expired", slog.Int("count", n))
 			}
 			if n < expireBatch {

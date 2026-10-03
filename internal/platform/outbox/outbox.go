@@ -114,5 +114,6 @@ func (r *Relay) RelayOnce(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	publishedTotal.Add(float64(len(published)))
 	return len(published), pubErr
 }

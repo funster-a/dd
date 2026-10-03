@@ -57,7 +57,7 @@ describe('cart', () => {
 
   it('respects taken seats and the ticket limit', () => {
     const cart = emptyCart()
-    const taken = takenSet({ taken: [s2!.ref], general: [], service_fee_bps: 500, queue: null })
+    const taken = takenSet({ taken: [s2!.ref], sections: [], general: [], service_fee_bps: 500, queue: null })
     expect(toggleSeat(cart, s1!, taken, 2)).toBe(true)
     expect(toggleSeat(cart, s2!, taken, 2)).toBe(false)
     expect(setZoneQuantity(cart, 'Фан-зона', 5, 100, 2)).toBe(1)

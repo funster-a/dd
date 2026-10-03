@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import SeatMapView from '@/components/SeatMap.vue'
+import StadiumPlanView from '@/components/StadiumPlan.vue'
 import VenueForm from '@/components/org/VenueForm.vue'
 import { ApiError, orgApi } from '@/api/client'
 import type { OrgSeatMap, OrgVenue, VenueInput } from '@/api/types'
 import { useToast } from '@/composables/toast'
 import { explain } from '@/lib/eventForm'
 import { buildSeatMap, emptyCart } from '@/lib/seatmap'
+import { buildPlan } from '@/lib/plan'
+import { plural } from '@/lib/format'
 
 const props = defineProps<{ id: string }>()
 const toast = useToast()
@@ -49,12 +52,24 @@ async function save(v: VenueInput) {
 
 const preview = computed(() => {
   const m = maps.value.find((x) => x.id === open.value)
-  return m ? buildSeatMap(m.layout, []) : null
+  // У стадиона превью — план секторов, а не 24 тысячи мест (ADR 024).
+  return m && !m.layout.plan ? buildSeatMap(m.layout, []) : null
+})
+const previewPlan = computed(() => {
+  const m = maps.value.find((x) => x.id === open.value)
+  return m ? buildPlan(m.layout, [], undefined) : null
 })
 const noTaken = new Set<string>()
 const cart = emptyCart()
 const summary = (m: OrgSeatMap) =>
-  m.layout.sections.map((s) => (s.kind === 'general' ? `${s.name} · ${s.capacity} вход` : `${s.name} · ${s.rows?.length ?? 0} р.`)).join('  ·  ')
+  m.layout.plan
+    ? planSummary(m)
+    : m.layout.sections.map((s) => (s.kind === 'general' ? `${s.name} · ${s.capacity} вход` : `${s.name} · ${s.rows?.length ?? 0} р.`)).join('  ·  ')
+
+function planSummary(m: OrgSeatMap): string {
+  const stands = new Set(m.layout.sections.map((s) => s.stand).filter(Boolean))
+  return `${stands.size} ${plural(stands.size, 'трибуна', 'трибуны', 'трибун')} · ${m.layout.sections.length} ${plural(m.layout.sections.length, 'сектор', 'сектора', 'секторов')}`
+}
 </script>
 
 <template>
@@ -105,6 +120,7 @@ const summary = (m: OrgSeatMap) =>
           </li>
         </ul>
         <div class="maps__preview">
+          <StadiumPlanView v-if="previewPlan" :plan="previewPlan" hint="План площадки: наведите на сектор, чтобы увидеть трибуну" />
           <SeatMapView v-if="preview?.sections.length" :key="open ?? ''" :map="preview" :taken="noTaken" :cart="cart" disabled />
           <ul v-if="preview?.zones.length" class="zones">
             <li v-for="z in preview.zones" :key="z.name"><b>{{ z.name }}</b> <span class="mono">вход · {{ z.capacity }} чел.</span></li>

@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import SeatMapView from '@/components/SeatMap.vue'
+import StadiumPlanView from '@/components/StadiumPlan.vue'
 import ZonePicker from '@/components/ZonePicker.vue'
 import BottomSheet from '@/components/BottomSheet.vue'
 import { ApiError, api, newKey } from '@/api/client'
@@ -10,6 +11,7 @@ import { useAuth } from '@/composables/auth'
 import { useToast } from '@/composables/toast'
 import { dayMonth, fullDate, money, tickets, time, weekday } from '@/lib/format'
 import { queueView } from '@/lib/queue'
+import { buildPlan } from '@/lib/plan'
 import { buildSeatMap, cartCount, cartFee, cartTotal, emptyCart, setZoneQuantity, takenSet, toggleSeat, type MapSeat } from '@/lib/seatmap'
 
 const props = defineProps<{ org: string; slug: string }>()
@@ -30,7 +32,16 @@ let clock: ReturnType<typeof setInterval> | undefined
 // Часы страницы: продажи и очередь открываются по времени, без перезагрузки.
 const now = ref(Date.now())
 
-const map = computed(() => (event.value?.layout ? buildSeatMap(event.value.layout, event.value.prices) : null))
+// У большой площадки (ADR 024) сначала план с секторами; места рисуются
+// только в выбранном секторе, и занятость грузится только для него.
+const sector = ref<string | null>(null)
+const plan = computed(() => (event.value?.layout ? buildPlan(event.value.layout, event.value.prices, availability.value?.sections) : null))
+const map = computed(() => {
+  const e = event.value
+  if (!e?.layout) return null
+  return e.layout.plan ? buildSeatMap(e.layout, e.prices, sector.value ?? '') : buildSeatMap(e.layout, e.prices)
+})
+const sectorInfo = computed(() => plan.value?.sectors.find((s) => s.name === sector.value) ?? null)
 const taken = computed(() => takenSet(availability.value))
 const zoneAvailable = computed(() => Object.fromEntries((availability.value?.general ?? []).map((g) => [g.section, g.available])))
 const zoneQuantities = computed(() => Object.fromEntries(cart.general))
@@ -133,7 +144,8 @@ async function load() {
 async function refresh() {
   if (!event.value) return
   try {
-    availability.value = await api.availability(event.value.id)
+    const q = event.value.layout?.plan ? (sector.value ? { section: sector.value } : { summary: true }) : {}
+    availability.value = await api.availability(event.value.id, q)
     // Место, которое заняли, пока покупатель выбирал, уходит из корзины.
     for (const [key] of cart.seats) if (taken.value.has(key)) cart.seats.delete(key)
   } catch {
@@ -153,7 +165,11 @@ onBeforeUnmount(() => {
   clearInterval(clock)
   clearTimeout(queuePoll)
 })
-watch(() => [props.org, props.slug], load)
+watch(() => [props.org, props.slug], () => {
+  sector.value = null
+  load()
+})
+watch(sector, () => refresh())
 
 function onToggle(s: MapSeat) {
   if (!event.value) return
@@ -347,7 +363,16 @@ const cartLines = computed(() => [
         </ul>
       </div>
 
-      <SeatMapView v-if="map.sections.length" :map="map" :taken="taken" :cart="cart" @toggle="onToggle" />
+      <template v-if="plan">
+        <StadiumPlanView v-if="!sector" :plan="plan" @select="sector = $event" />
+        <div v-else class="sector-head">
+          <button class="btn btn--ghost" type="button" @click="sector = null">← Все сектора</button>
+          <p class="sector-head__title">
+            <b>{{ sector }}</b><template v-if="sectorInfo?.stand"> · {{ sectorInfo.stand }}</template>
+          </p>
+        </div>
+      </template>
+      <SeatMapView v-if="map.sections.length" :key="sector ?? ''" :map="map" :taken="taken" :cart="cart" @toggle="onToggle" />
       <div v-if="map.zones.length" class="seats__zones">
         <h3 class="seats__subtitle">Входные зоны</h3>
         <ZonePicker :zones="map.zones" :available="zoneAvailable" :quantities="zoneQuantities" @change="onZone" />
@@ -719,5 +744,18 @@ const cartLines = computed(() => [
 }
 .stub::after {
   right: -8px;
+}
+.sector-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-3);
+}
+.sector-head__title {
+  color: var(--ink-2);
+}
+.sector-head__title b {
+  color: var(--ink);
 }
 </style>

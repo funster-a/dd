@@ -39,6 +39,7 @@ export interface SeatMap {
   width: number
   height: number
   stageY: number
+  stageLabel: string
   sections: MapSection[]
   zones: GeneralZone[]
   // Категории по убыванию цены: для легенды и цвета мест.
@@ -47,7 +48,10 @@ export interface SeatMap {
 
 export const seatKey = (r: SeatRef): string => `${r.section}\u001f${r.row}\u001f${r.seat}`
 
-export function buildSeatMap(layout: Layout, prices: PriceCategory[]): SeatMap {
+// only — нарисовать один сектор: у большой площадки места показываются
+// внутри выбранного на плане сектора (ADR 024). Пустая строка — ни одного
+// сектора, только входные зоны и категории.
+export function buildSeatMap(layout: Layout, prices: PriceCategory[], only?: string): SeatMap {
   const byPrice = [...prices].sort((a, b) => b.price_tiyn - a.price_tiyn || a.name.localeCompare(b.name))
   const color = new Map<string, number>()
   const priceOf = new Map<string, number>()
@@ -58,7 +62,7 @@ export function buildSeatMap(layout: Layout, prices: PriceCategory[]): SeatMap {
     }
   })
 
-  const seated = layout.sections.filter((s) => s.kind === 'seat')
+  const seated = layout.sections.filter((s) => s.kind === 'seat' && (only === undefined || s.name === only))
   const widest = Math.max(1, ...seated.flatMap((s) => (s.rows ?? []).map((r) => r.seats.length)))
   const contentW = widest * PITCH
   const width = contentW + LABEL_W * 2
@@ -114,6 +118,7 @@ export function buildSeatMap(layout: Layout, prices: PriceCategory[]): SeatMap {
     width,
     height: Math.max(y, 120),
     stageY: 20,
+    stageLabel: layout.plan?.field_label ? layout.plan.field_label.toUpperCase() : 'СЦЕНА',
     sections,
     zones,
     categories: byPrice.map((p, i) => ({ name: p.name, priceTiyn: p.price_tiyn, color: (i % 6) + 1 })),

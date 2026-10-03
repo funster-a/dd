@@ -77,6 +77,8 @@ func (s *Service) OrganizerRoutes(extra ...func(chi.Router)) http.Handler {
 	r.Get("/venues/{venueID}/seat-maps", s.handleListSeatMaps)
 	r.With(idem).Post("/venues/{venueID}/seat-maps", s.handleCreateSeatMap)
 	r.Get("/seat-maps/{seatMapID}", s.handleGetSeatMap)
+	r.Get("/seat-map-templates", s.handleListTemplates)
+	r.Get("/seat-map-templates/{templateID}", s.handleGetTemplate)
 
 	r.Get("/events", s.handleListEvents)
 	r.With(idem).Post("/events", s.handleCreateEvent)

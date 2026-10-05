@@ -363,6 +363,8 @@ STRATEGIES=redis LEVELS=500 REPEATS=1 ./loadtest/run.sh   # быстрый пр�
 ./loadtest/queue.sh                                 # очередь ожидания при старте продаж (ADR 020)
 ./loadtest/scale.sh                                 # ёмкость при 1, 2, 4 экземплярах api (ADR 023)
 ./loadtest/storm.sh                                 # штурм стадиона: концерт, 5000 покупателей, с очередью и без (ADR 026)
+./loadtest/chaos.sh                                 # отказ экземпляра api посреди продажи: kill и stop (ADR 027)
+go run ./cmd/loadseed chaos-report -series "после=loadtest/results/raw/chaos" -out docs/experiments/<папка>
 go run ./cmd/loadseed storm-report -dir loadtest/results/raw/storm -out docs/experiments/<папка>
 go run ./cmd/loadseed scale-report -dir loadtest/results/raw/scale -out docs/experiments/<папка>
 go run ./cmd/loadseed queue-report -dir loadtest/results/raw/queue -out docs/experiments/<папка>

@@ -42,6 +42,8 @@ type Plan struct {
 	Field [4]float64 `json:"field"`
 	// FieldLabel — подпись поля: «Поле», «Сцена», «Ринг».
 	FieldLabel string `json:"field_label"`
+	// Stage — сцена на плане концерта (ADR 025): x, y, ширина, высота.
+	Stage *[4]float64 `json:"stage,omitempty"`
 }
 
 // Point — точка контура сектора в координатах плана.
@@ -213,6 +215,9 @@ func (p *Plan) validate() error {
 	f := p.Field
 	if !(f[2] > 0 && f[3] > 0 && f[0] >= 0 && f[1] >= 0 && f[0]+f[2] <= p.Width && f[1]+f[3] <= p.Height) {
 		return &ValidationError{Field: "layout.plan.field", Message: "must be [x, y, width, height] inside the plan"}
+	}
+	if st := p.Stage; st != nil && !(st[2] > 0 && st[3] > 0 && st[0] >= 0 && st[1] >= 0 && st[0]+st[2] <= p.Width && st[1]+st[3] <= p.Height) {
+		return &ValidationError{Field: "layout.plan.stage", Message: "must be [x, y, width, height] inside the plan"}
 	}
 	p.FieldLabel = strings.TrimSpace(p.FieldLabel)
 	if n := utf8.RuneCountInString(p.FieldLabel); n > maxLabelLen {

@@ -14,15 +14,22 @@ import (
 )
 
 // seedStadium публикует событие на Центральном стадионе Алматы по шаблону
-// (ADR 024): 59 секторов, 23 804 места, цены — пример из шаблона. Для
+// (ADR 024, 025): футбол — 59 секторов и 23 804 места, концерт — фан-зоны
+// на поле и сектора без закрытых за сценой. Цены — пример из шаблона. Для
 // просмотра плана в браузере и для штурма стадиона.
 func seedStadium(ctx context.Context, pool *pgxpool.Pool, args []string) error {
 	fs := flag.NewFlagSet("stadium", flag.ContinueOnError)
 	out := fs.String("out", "stadium.json", "куда записать событие")
+	kind := fs.String("template", "football", "football или concert")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	tpl, err := catalog.GetSeatMapTemplate("almaty-central-stadium")
+	id, title, slug, maxTickets := "almaty-central-stadium", "Демо-матч на Центральном стадионе", "match", int32(6)
+	if *kind == "concert" {
+		// Как на концерте Ye в Алматы: не больше четырёх билетов в одни руки.
+		id, title, slug, maxTickets = "almaty-central-stadium-concert", "Демо-концерт на Центральном стадионе", "concert", 4
+	}
+	tpl, err := catalog.GetSeatMapTemplate(id)
 	if err != nil {
 		return err
 	}
@@ -47,8 +54,8 @@ func seedStadium(ctx context.Context, pool *pgxpool.Pool, args []string) error {
 	starts := time.Now().Add(30 * 24 * time.Hour).UTC().Truncate(time.Minute)
 	refund := int32(24)
 	ev, err := cat.CreateEvent(ctx, org.ID, catalog.EventInput{
-		VenueID: venue.ID, Admission: "ticketed", SeatMapID: sm.ID, Slug: "match", Title: "Демо-матч на Центральном стадионе",
-		AgeRating: "0+", StartsAt: starts, EndsAt: starts.Add(2 * time.Hour), MaxTicketsPerBuyer: 6, RefundDeadlineHours: &refund,
+		VenueID: venue.ID, Admission: "ticketed", SeatMapID: sm.ID, Slug: slug, Title: title,
+		AgeRating: "0+", StartsAt: starts, EndsAt: starts.Add(2 * time.Hour), MaxTicketsPerBuyer: maxTickets, RefundDeadlineHours: &refund,
 	})
 	if err != nil {
 		return err
@@ -69,6 +76,9 @@ func seedStadium(ctx context.Context, pool *pgxpool.Pool, args []string) error {
 	}
 	sectors := make([]sector, 0, len(tpl.Layout.Sections))
 	for _, s := range tpl.Layout.Sections {
+		if s.Kind != catalog.KindSeat {
+			continue
+		}
 		sec := sector{Name: s.Name}
 		for _, r := range s.Rows {
 			sec.Rows = append(sec.Rows, len(r.Seats))
@@ -76,6 +86,6 @@ func seedStadium(ctx context.Context, pool *pgxpool.Pool, args []string) error {
 		sectors = append(sectors, sec)
 	}
 	return writeJSON(*out, map[string]any{
-		"event_id": ev.ID, "seats_total": res.Seats, "path": "/e/" + org.Slug + "/match", "sectors": sectors,
+		"event_id": ev.ID, "seats_total": res.Seats, "path": "/e/" + org.Slug + "/" + slug, "sectors": sectors,
 	})
 }

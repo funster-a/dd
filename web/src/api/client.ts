@@ -1,4 +1,5 @@
 import type {
+  SeatMapTemplate,
   Availability,
   EventInput,
   EventReport,
@@ -117,7 +118,15 @@ export const api = {
   upcoming: () => request<UpcomingEvent[]>('/v1/public/events', { auth: false }),
   event: (org: string, slug: string) =>
     request<PublicEvent>(`/v1/public/events/${encodeURIComponent(org)}/${encodeURIComponent(slug)}`, { auth: false }),
-  availability: (eventId: string) => request<Availability>(`/v1/events/${eventId}/availability`, { auth: false }),
+  // section — места только этого сектора, summary — только сводка по
+  // секторам: так план стадиона не грузит 24 тысячи мест (ADR 024).
+  availability: (eventId: string, q: { section?: string; summary?: boolean } = {}) => {
+    const p = new URLSearchParams()
+    if (q.summary) p.set('view', 'summary')
+    else if (q.section) p.set('section', q.section)
+    const qs = p.size ? `?${p}` : ''
+    return request<Availability>(`/v1/events/${eventId}/availability${qs}`, { auth: false })
+  },
 
   requestCode: (phone: string) =>
     request<{ resend_after_seconds: number }>('/v1/auth/codes', { method: 'POST', body: { kind: 'buyer', phone }, auth: false }),
@@ -164,6 +173,8 @@ export const orgApi = {
   updateVenue: (id: string, v: VenueInput) => org<OrgVenue>(`/venues/${id}`, { method: 'PUT', body: v, idempotencyKey: newKey() }),
   seatMaps: (venueId: string) => org<{ seat_maps: OrgSeatMap[] }>(`/venues/${venueId}/seat-maps`).then((r) => r.seat_maps),
   seatMap: (id: string) => org<OrgSeatMap>(`/seat-maps/${id}`),
+  seatMapTemplates: () => org<{ templates: SeatMapTemplate[] }>('/seat-map-templates').then((r) => r.templates),
+  seatMapTemplate: (id: string) => org<SeatMapTemplate>(`/seat-map-templates/${id}`),
   createSeatMap: (venueId: string, name: string, layout: Layout, key: string) =>
     org<OrgSeatMap>(`/venues/${venueId}/seat-maps`, { method: 'POST', body: { name, layout }, idempotencyKey: key }),
 

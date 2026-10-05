@@ -7,6 +7,7 @@
 //	loadseed report -dir <results>             таблица и графики
 //	loadseed queue-report -dir <results>       то же для серии с очередью (ADR 020)
 //	loadseed scale-report -dir <results>       ёмкость при 1, 2, 4 экземплярах api (ADR 023)
+//	loadseed stadium -out stadium.json         событие на Центральном стадионе Алматы (ADR 024)
 //
 // Покупатели и события создаются кодом модулей — тем же, что в продукте.
 // Инструмент работает рядом с базой и Redis и не публикуется.
@@ -27,7 +28,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: loadseed buyers|event|check|report|queue-report|scale-report [flags]")
+		fmt.Fprintln(os.Stderr, "usage: loadseed buyers|event|stadium|check|report|queue-report|scale-report [flags]")
 		os.Exit(2)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -65,6 +66,8 @@ func run(ctx context.Context, cmd string, args []string) error {
 		return seedBuyers(ctx, pool, rdb, args)
 	case "event":
 		return seedEvent(ctx, pool, args)
+	case "stadium":
+		return seedStadium(ctx, pool, args)
 	case "check":
 		return check(ctx, pool, args)
 	default:

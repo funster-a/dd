@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import SeatMapView from '@/components/SeatMap.vue'
+import StadiumPlanView from '@/components/StadiumPlan.vue'
 import { orgApi } from '@/api/client'
 import type { OrgSeatMap, PriceCategory } from '@/api/types'
 import { useToast } from '@/composables/toast'
@@ -8,6 +9,7 @@ import { explain } from '@/lib/eventForm'
 import { money } from '@/lib/format'
 import { parseTenge, tengeInput } from '@/lib/money'
 import { buildSeatMap, emptyCart } from '@/lib/seatmap'
+import { buildPlan } from '@/lib/plan'
 
 // Ценовые категории события: название, цена и сектора схемы. Каждому
 // сектору — ровно одна цена; превью схемы красится по категориям.
@@ -59,15 +61,15 @@ function addRow() {
 
 const parsed = computed(() => rows.map((r) => ({ name: r.name.trim(), price_tiyn: parseTenge(r.price), sections: r.sections })))
 
-// Превью: схема с текущими (ещё не сохранёнными) ценами.
-const preview = computed(() =>
-  buildSeatMap(
-    props.seatMap.layout,
-    parsed.value
-      .filter((p) => p.sections.length)
-      .map((p, i) => ({ id: String(i), name: p.name || '—', price_tiyn: p.price_tiyn ?? 0, currency: 'KZT', sections: p.sections })),
-  ),
+// Превью: схема с текущими (ещё не сохранёнными) ценами. У стадиона —
+// план секторов вместо 24 тысяч мест (ADR 024).
+const draftCategories = computed(() =>
+  parsed.value
+    .filter((p) => p.sections.length)
+    .map((p, i) => ({ id: String(i), name: p.name || '—', price_tiyn: p.price_tiyn ?? 0, currency: 'KZT', sections: p.sections })),
 )
+const preview = computed(() => buildSeatMap(props.seatMap.layout, draftCategories.value, props.seatMap.layout.plan ? '' : undefined))
+const previewPlan = computed(() => buildPlan(props.seatMap.layout, draftCategories.value, undefined))
 // Цвет категории — как на превью: схема красит категории по убыванию цены.
 const colorOf = (name: string) => preview.value.categories.find((c) => c.name === (name.trim() || '—'))?.color ?? 0
 const noTaken = new Set<string>()
@@ -131,6 +133,7 @@ async function save() {
           <span class="cat__dot"></span>{{ c.name }} <span class="mono">{{ money(c.priceTiyn) }}</span>
         </li>
       </ul>
+      <StadiumPlanView v-if="previewPlan" :plan="previewPlan" hint="Цвет сектора — его ценовая категория" />
       <SeatMapView v-if="preview.sections.length" :map="preview" :taken="noTaken" :cart="cart" disabled />
       <p v-if="preview.zones.length" class="zones mono">
         Входные зоны: <span v-for="z in preview.zones" :key="z.name">{{ z.name }} · {{ z.capacity }} · {{ money(z.priceTiyn) }}</span>

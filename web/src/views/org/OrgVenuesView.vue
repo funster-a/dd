@@ -3,9 +3,10 @@ import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import VenueForm from '@/components/org/VenueForm.vue'
 import { newKey, orgApi } from '@/api/client'
-import type { OrgVenue, VenueInput } from '@/api/types'
+import type { OrgVenue, SeatMapTemplate, VenueInput } from '@/api/types'
 import { useToast } from '@/composables/toast'
 import { explain } from '@/lib/eventForm'
+import { plural } from '@/lib/format'
 
 const route = useRoute()
 const router = useRouter()
@@ -16,10 +17,41 @@ const busy = ref(false)
 const error = ref('')
 let key = newKey()
 
+const templates = ref<SeatMapTemplate[]>([])
+const fromTemplate = ref('')
+let templateKeys = { venue: newKey(), map: newKey() }
+
 onMounted(async () => {
+  orgApi
+    .seatMapTemplates()
+    .then((t) => (templates.value = t))
+    .catch(() => {})
   venues.value = await orgApi.venues().catch(() => [])
   if (venues.value.length === 0) adding.value = true
 })
+
+// Площадка по шаблону (ADR 024): площадка и готовая схема в один шаг.
+// Ключи идемпотентности общие на попытку: повтор после сбоя сети не
+// создаст вторую площадку.
+async function createFromTemplate(t: SeatMapTemplate) {
+  fromTemplate.value = t.id
+  error.value = ''
+  try {
+    const full = await orgApi.seatMapTemplate(t.id)
+    const venue = await orgApi.createVenue(
+      { name: t.venue_name, address: t.address, timezone: 'Asia/Almaty', latitude: null, longitude: null },
+      templateKeys.venue,
+    )
+    await orgApi.createSeatMap(venue.id, t.name, full.layout!, templateKeys.map)
+    templateKeys = { venue: newKey(), map: newKey() }
+    toast.show('Площадка со схемой добавлена', 'ok')
+    await router.push({ name: 'org-venue', params: { id: venue.id } })
+  } catch (e) {
+    toast.show(explain(e), 'error')
+  } finally {
+    fromTemplate.value = ''
+  }
+}
 
 async function create(v: VenueInput) {
   busy.value = true
@@ -51,6 +83,21 @@ async function create(v: VenueInput) {
     <section v-if="adding" class="card card--form">
       <h2 class="h2">Новая площадка</h2>
       <VenueForm submit-label="Добавить" :busy="busy" :error="error" @submit="create" @cancel="adding = false" />
+    </section>
+
+    <section v-if="templates.length" class="templates">
+      <h2 class="h2">Готовые схемы площадок</h2>
+      <ul class="grid">
+        <li v-for="t in templates" :key="t.id" class="card card--template">
+          <span class="card__name">{{ t.venue_name }}</span>
+          <span class="card__addr">{{ t.address }}</span>
+          <span class="card__tz mono">{{ t.seat_count.toLocaleString('ru-RU') }} {{ plural(t.seat_count, 'место', 'места', 'мест') }}</span>
+          <span class="card__note">{{ t.note }}</span>
+          <button type="button" class="btn btn--sm" :disabled="!!fromTemplate" @click="createFromTemplate(t)">
+            {{ fromTemplate === t.id ? 'Добавляем…' : 'Добавить со схемой' }}
+          </button>
+        </li>
+      </ul>
     </section>
 
     <div v-if="!venues" class="grid">
@@ -109,6 +156,15 @@ async function create(v: VenueInput) {
 }
 .card--form {
   max-width: 720px;
+}
+.card--template .btn {
+  justify-self: start;
+  margin-top: var(--space-3);
+}
+.card__note {
+  margin-top: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--ink-3);
 }
 .card--venue {
   color: inherit;

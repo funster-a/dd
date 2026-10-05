@@ -18,14 +18,34 @@ const (
 	maxLabelLen     = 20
 	maxSectionName  = 100
 	maxGeneralSeats = 50_000
+	maxStandName    = 100
+	maxOutlinePts   = 64
+	maxPlanSide     = 10_000
 )
 
 // Layout — схема зала: сектора с рядами и местами и входные зоны
 // (виртуальные места, spec.md). Хранится как документ в seat_maps.layout;
 // при публикации события из неё генерируются строки event_seats (ADR 005).
 type Layout struct {
+	// Plan — план большой площадки (ADR 024): размер и поле. Если он есть,
+	// сайт сначала показывает план с секторами, а места — внутри выбранного
+	// сектора. У залов без плана схема рисуется целиком, как раньше.
+	Plan     *Plan     `json:"plan,omitempty"`
 	Sections []Section `json:"sections"`
 }
+
+// Plan — система координат плана площадки и то, вокруг чего стоят трибуны.
+type Plan struct {
+	Width  float64 `json:"width"`
+	Height float64 `json:"height"`
+	// Field — прямоугольник поля или сцены: x, y, ширина, высота.
+	Field [4]float64 `json:"field"`
+	// FieldLabel — подпись поля: «Поле», «Сцена», «Ринг».
+	FieldLabel string `json:"field_label"`
+}
+
+// Point — точка контура сектора в координатах плана.
+type Point [2]float64
 
 // Section — сектор. kind = "seat": ряды и места; kind = "general":
 // входная зона только с вместимостью.
@@ -34,6 +54,11 @@ type Section struct {
 	Kind     string `json:"kind"`
 	Rows     []Row  `json:"rows,omitempty"`
 	Capacity int    `json:"capacity,omitempty"`
+	// Stand — трибуна, к которой относится сектор («Западная трибуна»).
+	Stand string `json:"stand,omitempty"`
+	// Outline — контур сектора на плане, многоугольник. Обязателен, если у
+	// схемы есть план, и запрещён без плана.
+	Outline []Point `json:"outline,omitempty"`
 }
 
 // Row — ряд сектора с местами.
@@ -90,11 +115,19 @@ func (l *Layout) validate() error {
 	if len(l.Sections) == 0 || len(l.Sections) > maxSections {
 		return &ValidationError{Field: "layout.sections", Message: fmt.Sprintf("must contain 1-%d sections", maxSections)}
 	}
+	if l.Plan != nil {
+		if err := l.Plan.validate(); err != nil {
+			return err
+		}
+	}
 	names := make(map[string]bool, len(l.Sections))
 	total := 0
 	for i := range l.Sections {
 		s := &l.Sections[i]
 		path := fmt.Sprintf("layout.sections[%d]", i)
+		if err := s.validateGeometry(l.Plan, path); err != nil {
+			return err
+		}
 		s.Name = strings.TrimSpace(s.Name)
 		if n := utf8.RuneCountInString(s.Name); n == 0 || n > maxSectionName {
 			return &ValidationError{Field: path + ".name", Message: fmt.Sprintf("must be 1-%d characters", maxSectionName)}
@@ -171,6 +204,43 @@ func validateRows(rows []Row, path string) (int, error) {
 		n += len(r.Seats)
 	}
 	return n, nil
+}
+
+func (p *Plan) validate() error {
+	if !(p.Width > 0 && p.Width <= maxPlanSide && p.Height > 0 && p.Height <= maxPlanSide) {
+		return &ValidationError{Field: "layout.plan", Message: fmt.Sprintf("width and height must be in (0, %d]", maxPlanSide)}
+	}
+	f := p.Field
+	if !(f[2] > 0 && f[3] > 0 && f[0] >= 0 && f[1] >= 0 && f[0]+f[2] <= p.Width && f[1]+f[3] <= p.Height) {
+		return &ValidationError{Field: "layout.plan.field", Message: "must be [x, y, width, height] inside the plan"}
+	}
+	p.FieldLabel = strings.TrimSpace(p.FieldLabel)
+	if n := utf8.RuneCountInString(p.FieldLabel); n > maxLabelLen {
+		return &ValidationError{Field: "layout.plan.field_label", Message: fmt.Sprintf("must be at most %d characters", maxLabelLen)}
+	}
+	return nil
+}
+
+func (s *Section) validateGeometry(plan *Plan, path string) error {
+	s.Stand = strings.TrimSpace(s.Stand)
+	if utf8.RuneCountInString(s.Stand) > maxStandName {
+		return &ValidationError{Field: path + ".stand", Message: fmt.Sprintf("must be at most %d characters", maxStandName)}
+	}
+	if plan == nil {
+		if len(s.Outline) > 0 {
+			return &ValidationError{Field: path + ".outline", Message: "outline needs layout.plan"}
+		}
+		return nil
+	}
+	if len(s.Outline) < 3 || len(s.Outline) > maxOutlinePts {
+		return &ValidationError{Field: path + ".outline", Message: fmt.Sprintf("must have 3-%d points on a plan", maxOutlinePts)}
+	}
+	for k, pt := range s.Outline {
+		if !(pt[0] >= 0 && pt[0] <= plan.Width && pt[1] >= 0 && pt[1] <= plan.Height) {
+			return &ValidationError{Field: fmt.Sprintf("%s.outline[%d]", path, k), Message: "must lie inside the plan"}
+		}
+	}
+	return nil
 }
 
 func checkLabel(label, field string) error {

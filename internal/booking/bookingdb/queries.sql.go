@@ -111,6 +111,48 @@ func (q *Queries) CountOrderItems(ctx context.Context, orderID string) (int32, e
 	return column_1, err
 }
 
+const countSeatAvailability = `-- name: CountSeatAvailability :many
+SELECT section, count(*)::int AS total,
+       count(*) FILTER (WHERE status = 'available'
+                           OR (status = 'held' AND hold_expires_at <= $1::timestamptz))::int AS available
+FROM event_seats
+WHERE event_id = $2 AND kind = 'seat'
+GROUP BY section
+ORDER BY section
+`
+
+type CountSeatAvailabilityParams struct {
+	Now     time.Time
+	EventID string
+}
+
+type CountSeatAvailabilityRow struct {
+	Section   string
+	Total     int32
+	Available int32
+}
+
+// Свободные и все места с рядом по секторам — для плана площадки.
+func (q *Queries) CountSeatAvailability(ctx context.Context, arg CountSeatAvailabilityParams) ([]CountSeatAvailabilityRow, error) {
+	rows, err := q.db.Query(ctx, countSeatAvailability, arg.Now, arg.EventID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CountSeatAvailabilityRow{}
+	for rows.Next() {
+		var i CountSeatAvailabilityRow
+		if err := rows.Scan(&i.Section, &i.Total, &i.Available); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countUnrefundedTickets = `-- name: CountUnrefundedTickets :one
 SELECT count(*)::int FROM tickets t
 JOIN order_items i ON i.id = t.order_item_id
@@ -656,6 +698,47 @@ func (q *Queries) ListTakenSeats(ctx context.Context, arg ListTakenSeatsParams) 
 	items := []ListTakenSeatsRow{}
 	for rows.Next() {
 		var i ListTakenSeatsRow
+		if err := rows.Scan(&i.Section, &i.RowLabel, &i.SeatLabel); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTakenSeatsInSection = `-- name: ListTakenSeatsInSection :many
+SELECT section, row_label, seat_label FROM event_seats
+WHERE event_id = $1 AND kind = 'seat' AND section = $2
+  AND (status = 'sold' OR (status = 'held' AND hold_expires_at > $3::timestamptz))
+ORDER BY row_label, seat_label
+`
+
+type ListTakenSeatsInSectionParams struct {
+	EventID string
+	Section string
+	Now     time.Time
+}
+
+type ListTakenSeatsInSectionRow struct {
+	Section   string
+	RowLabel  *string
+	SeatLabel string
+}
+
+// Занятые места одного сектора: схема стадиона показывает места только
+// выбранного сектора (ADR 024).
+func (q *Queries) ListTakenSeatsInSection(ctx context.Context, arg ListTakenSeatsInSectionParams) ([]ListTakenSeatsInSectionRow, error) {
+	rows, err := q.db.Query(ctx, listTakenSeatsInSection, arg.EventID, arg.Section, arg.Now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListTakenSeatsInSectionRow{}
+	for rows.Next() {
+		var i ListTakenSeatsInSectionRow
 		if err := rows.Scan(&i.Section, &i.RowLabel, &i.SeatLabel); err != nil {
 			return nil, err
 		}

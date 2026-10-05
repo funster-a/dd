@@ -27,6 +27,20 @@ func TestParseLayoutValid(t *testing.T) {
 	}
 }
 
+func TestParseLayoutPlan(t *testing.T) {
+	raw := `{"plan":{"width":100,"height":80,"field":[30,20,40,40],"field_label":" Поле "},"sections":[
+		{"name":"Сектор 1","stand":" Западная трибуна ","kind":"seat","outline":[[30,62],[70,62],[75,78],[25,78]],
+		 "rows":[{"label":"1","seats":[{"label":"1"}]}]}
+	]}`
+	l, err := ParseLayout([]byte(raw))
+	if err != nil {
+		t.Fatalf("ParseLayout() error = %v", err)
+	}
+	if l.Plan.FieldLabel != "Поле" || l.Sections[0].Stand != "Западная трибуна" || len(l.Sections[0].Outline) != 4 {
+		t.Errorf("plan is not parsed: %+v %+v", l.Plan, l.Sections[0])
+	}
+}
+
 func TestParseLayoutInvalid(t *testing.T) {
 	seats := func(n int) string {
 		parts := make([]string, n)
@@ -55,6 +69,11 @@ func TestParseLayoutInvalid(t *testing.T) {
 		{"duplicate seat", `{"sections":[{"name":"A","kind":"seat","rows":[{"label":"1","seats":[{"label":"1"},{"label":"1"}]}]}]}`, "layout.sections[0].rows[0].seats[1].label"},
 		{"long label", `{"sections":[{"name":"A","kind":"seat","rows":[{"label":"123456789012345678901","seats":[{"label":"1"}]}]}]}`, "layout.sections[0].rows[0].label"},
 		{"x without y", `{"sections":[{"name":"A","kind":"seat","rows":[{"label":"1","seats":[{"label":"1","x":1}]}]}]}`, "layout.sections[0].rows[0].seats[0]"},
+		{"outline without plan", `{"sections":[{"name":"A","kind":"general","capacity":1,"outline":[[0,0],[1,0],[1,1]]}]}`, "layout.sections[0].outline"},
+		{"plan without outline", `{"plan":{"width":100,"height":100,"field":[10,10,20,20]},"sections":[{"name":"A","kind":"general","capacity":1}]}`, "layout.sections[0].outline"},
+		{"empty plan", `{"plan":{"width":0,"height":100,"field":[10,10,20,20]},"sections":[{"name":"A","kind":"general","capacity":1,"outline":[[0,0],[1,0],[1,1]]}]}`, "layout.plan"},
+		{"field outside plan", `{"plan":{"width":100,"height":100,"field":[90,10,20,20]},"sections":[{"name":"A","kind":"general","capacity":1,"outline":[[0,0],[1,0],[1,1]]}]}`, "layout.plan.field"},
+		{"outline outside plan", `{"plan":{"width":100,"height":100,"field":[10,10,20,20]},"sections":[{"name":"A","kind":"general","capacity":1,"outline":[[0,0],[101,0],[1,1]]}]}`, "layout.sections[0].outline[1]"},
 		{"too many seats", `{"sections":[{"name":"A","kind":"general","capacity":50000},{"name":"B","kind":"seat","rows":[{"label":"1","seats":[` + seats(1) + `]}]}]}`, "layout"},
 	}
 	for _, tt := range tests {

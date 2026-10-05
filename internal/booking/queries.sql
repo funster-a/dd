@@ -127,6 +127,24 @@ WHERE event_id = @event_id AND kind = 'seat'
   AND (status = 'sold' OR (status = 'held' AND hold_expires_at > @now::timestamptz))
 ORDER BY section, row_label, seat_label;
 
+-- name: ListTakenSeatsInSection :many
+-- Занятые места одного сектора: схема стадиона показывает места только
+-- выбранного сектора (ADR 024).
+SELECT section, row_label, seat_label FROM event_seats
+WHERE event_id = @event_id AND kind = 'seat' AND section = @section
+  AND (status = 'sold' OR (status = 'held' AND hold_expires_at > @now::timestamptz))
+ORDER BY row_label, seat_label;
+
+-- name: CountSeatAvailability :many
+-- Свободные и все места с рядом по секторам — для плана площадки.
+SELECT section, count(*)::int AS total,
+       count(*) FILTER (WHERE status = 'available'
+                           OR (status = 'held' AND hold_expires_at <= @now::timestamptz))::int AS available
+FROM event_seats
+WHERE event_id = @event_id AND kind = 'seat'
+GROUP BY section
+ORDER BY section;
+
 -- name: CountGeneralAvailable :many
 SELECT section, count(*) FILTER (WHERE status = 'available')::int AS available
 FROM event_seats

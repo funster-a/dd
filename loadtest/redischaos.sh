@@ -94,6 +94,14 @@ start_api() {
   docker logs "dd-chaos-api-$i" >&2; return 1
 }
 
+# Лимит соединений балансировщика выше стандартного (1024 на процесс): за
+# долгий простой копятся тысячи ждущих повторов, и стандартный лимит рвал бы
+# соединения стенда, а не приложения.
+cat >"$OUT/nginx.conf" <<'NGINX'
+worker_processes auto;
+events { worker_connections 16384; }
+http { include /etc/nginx/conf.d/*.conf; }
+NGINX
 cat >"$OUT/lb.conf" <<'NGINX'
 upstream api { server 127.0.0.1:8081 max_fails=1 fail_timeout=5s; server 127.0.0.1:8082 max_fails=1 fail_timeout=5s; keepalive 64; }
 server {
@@ -117,7 +125,8 @@ for v in $VARIANTS; do
     env $(redis_env "$stand") DATABASE_URL="$DB_URL" "$DATA/loadseed" buyers -n $((RATE * dur_s + 100)) -out "$BUYERS"
     start_api 1 "$stand"
     start_api 2 "$stand"
-    docker run -d --name dd-chaos-lb --network host -v "$PWD/$OUT/lb.conf:/etc/nginx/conf.d/default.conf:ro" "$LB_IMAGE" >/dev/null
+    docker run -d --name dd-chaos-lb --network host -v "$PWD/$OUT/nginx.conf:/etc/nginx/nginx.conf:ro" \
+      -v "$PWD/$OUT/lb.conf:/etc/nginx/conf.d/default.conf:ro" "$LB_IMAGE" >/dev/null
     for _ in $(seq 1 50); do curl -fs localhost:8080/readyz >/dev/null && break; sleep 0.2; done
 
     dir="$OUT/chaos__${stand}-${fault}__${RATE}__${rep}"

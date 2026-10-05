@@ -153,6 +153,49 @@ func (q *Queries) CountSeatAvailability(ctx context.Context, arg CountSeatAvaila
 	return items, nil
 }
 
+const countSectionAvailability = `-- name: CountSectionAvailability :many
+SELECT section, count(*)::int AS total,
+       count(*) FILTER (WHERE status = 'available'
+                           OR (status = 'held' AND hold_expires_at <= $1::timestamptz))::int AS available
+FROM event_seats
+WHERE event_id = $2 AND kind = 'seat' AND section = $3
+GROUP BY section
+`
+
+type CountSectionAvailabilityParams struct {
+	Now     time.Time
+	EventID string
+	Section string
+}
+
+type CountSectionAvailabilityRow struct {
+	Section   string
+	Total     int32
+	Available int32
+}
+
+// То же для одного сектора: открытому сектору не нужна сводка по всему
+// стадиону (ADR 026).
+func (q *Queries) CountSectionAvailability(ctx context.Context, arg CountSectionAvailabilityParams) ([]CountSectionAvailabilityRow, error) {
+	rows, err := q.db.Query(ctx, countSectionAvailability, arg.Now, arg.EventID, arg.Section)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CountSectionAvailabilityRow{}
+	for rows.Next() {
+		var i CountSectionAvailabilityRow
+		if err := rows.Scan(&i.Section, &i.Total, &i.Available); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countUnrefundedTickets = `-- name: CountUnrefundedTickets :one
 SELECT count(*)::int FROM tickets t
 JOIN order_items i ON i.id = t.order_item_id

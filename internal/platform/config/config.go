@@ -61,6 +61,9 @@ type Config struct {
 	// IPTicketLimit — сколько билетов на событие можно взять с одного
 	// IP-адреса (ADR 020). 0 — без лимита.
 	IPTicketLimit int
+	// SummaryTTL — сколько экземпляр api отдаёт сводку занятости по
+	// секторам из памяти (ADR 026). 0 — считать на каждый запрос.
+	SummaryTTL time.Duration
 }
 
 // PaymentConfig — параметры платёжного провайдера. Значения по умолчанию
@@ -130,6 +133,15 @@ func Load() (Config, error) {
 		errs = append(errs, errors.New("SHUTDOWN_TIMEOUT: must be positive"))
 	}
 	cfg.ShutdownTimeout = timeout
+
+	ttl, err := time.ParseDuration(getenv("AVAILABILITY_SUMMARY_TTL", "1s"))
+	switch {
+	case err != nil:
+		errs = append(errs, fmt.Errorf("AVAILABILITY_SUMMARY_TTL: %w", err))
+	case ttl < 0 || ttl > time.Minute:
+		errs = append(errs, errors.New("AVAILABILITY_SUMMARY_TTL: must be between 0 and 1m"))
+	}
+	cfg.SummaryTTL = ttl
 
 	if _, _, err := net.SplitHostPort(cfg.HTTPAddr); err != nil {
 		errs = append(errs, fmt.Errorf("HTTP_ADDR: %w", err))

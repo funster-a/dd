@@ -602,23 +602,67 @@ func TestAvailabilitySummaryAndSection(t *testing.T) {
 		}
 		return a
 	}
-	want := []SectionAvailability{{Section: "Партер", Available: 4, Total: 6}}
+	parter := []SectionAvailability{{Section: "Партер", Available: 4, Total: 6}}
 
 	for name, tc := range map[string]struct {
 		q     AvailabilityQuery
 		taken int
+		want  []SectionAvailability
 	}{
-		"all":           {AvailabilityQuery{}, 2},
-		"summary":       {AvailabilityQuery{Summary: true}, 0},
-		"section":       {AvailabilityQuery{Section: "Партер"}, 2},
-		"other section": {AvailabilityQuery{Section: "Сектор 12"}, 0},
+		"all":     {AvailabilityQuery{}, 2, parter},
+		"summary": {AvailabilityQuery{Summary: true}, 0, parter},
+		"section": {AvailabilityQuery{Section: "Партер"}, 2, parter},
+		// Чужой сектор: ни мест, ни счётчиков — сводку по всему залу режим
+		// сектора не считает.
+		"other section": {AvailabilityQuery{Section: "Сектор 12"}, 0, nil},
 	} {
 		a := load(tc.q)
 		if len(a.Taken) != tc.taken {
 			t.Errorf("%s: taken = %v, want %d seats", name, a.Taken, tc.taken)
 		}
-		if !slices.Equal(a.Sections, want) {
-			t.Errorf("%s: sections = %+v, want %+v", name, a.Sections, want)
+		if !slices.Equal(a.Sections, tc.want) {
+			t.Errorf("%s: sections = %+v, want %+v", name, a.Sections, tc.want)
 		}
+	}
+}
+
+func TestSummaryCache(t *testing.T) {
+	e := newEnv(t, false, 1, 4, 0)
+	ctx := t.Context()
+	free := func() int32 {
+		t.Helper()
+		b, err := e.svc.GetAvailability(ctx, e.eventID, AvailabilityQuery{Summary: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var a Availability
+		if err := json.Unmarshal(b, &a); err != nil {
+			t.Fatal(err)
+		}
+		return a.Sections[0].Available
+	}
+	e.svc.summaryTTL = time.Hour
+	if got := free(); got != 4 {
+		t.Fatalf("free = %d, want 4", got)
+	}
+	if _, err := e.svc.CreateOrder(ctx, e.buyer(t), e.eventID, seatsReq(seat(1, 1)), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	// Сводка из памяти ещё старая, места одного сектора — всегда свежие.
+	if got := free(); got != 4 {
+		t.Errorf("cached free = %d, want 4", got)
+	}
+	b, err := e.svc.GetAvailability(ctx, e.eventID, AvailabilityQuery{Section: "Партер"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sec Availability
+	if err := json.Unmarshal(b, &sec); err != nil || len(sec.Taken) != 1 {
+		t.Errorf("section taken = %+v, %v", sec.Taken, err)
+	}
+	// Без кэша сводка свежая.
+	e.svc.summaryTTL = 0
+	if got := free(); got != 3 {
+		t.Errorf("uncached free = %d, want 3", got)
 	}
 }

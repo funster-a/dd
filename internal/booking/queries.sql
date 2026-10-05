@@ -145,6 +145,16 @@ WHERE event_id = @event_id AND kind = 'seat'
 GROUP BY section
 ORDER BY section;
 
+-- name: CountSectionAvailability :many
+-- То же для одного сектора: открытому сектору не нужна сводка по всему
+-- стадиону (ADR 026).
+SELECT section, count(*)::int AS total,
+       count(*) FILTER (WHERE status = 'available'
+                           OR (status = 'held' AND hold_expires_at <= @now::timestamptz))::int AS available
+FROM event_seats
+WHERE event_id = @event_id AND kind = 'seat' AND section = @section
+GROUP BY section;
+
 -- name: CountGeneralAvailable :many
 SELECT section, count(*) FILTER (WHERE status = 'available')::int AS available
 FROM event_seats

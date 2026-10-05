@@ -160,6 +160,7 @@ npm run typecheck    # vue-tsc
 | `SERVICE_FEE_BPS` | `500` | сервисный сбор с покупателя в сотых долях процента, 500 = 5 % (ADR 019) |
 | `METRICS_ADDR` | `:9091` | адрес `/metrics` воркера (ADR 022) |
 | `QUEUE_ADMIT_PER_SECOND` | `50` | очередь ожидания при старте продаж: сколько покупателей в секунду пропускать, `0` — без очереди (ADR 020) |
+| `AVAILABILITY_SUMMARY_TTL` | `1s` | сколько экземпляр api отдаёт сводку занятости по секторам (план стадиона) из памяти, `0` — без кэша (ADR 026) |
 | `IP_TICKET_LIMIT` | `40` | билетов на событие с одного IP-адреса, `0` — без лимита (ADR 020) |
 | `TRUSTED_PROXIES` | loopback и частные сети | сети обратных прокси, которым api верит в `X-Forwarded-For` (ADR 020) |
 
@@ -361,6 +362,8 @@ STRATEGIES=redis LEVELS=500 REPEATS=1 ./loadtest/run.sh   # быстрый пр�
 ./loadtest/redis-failure.sh                         # отказ Redis в середине прогона
 ./loadtest/queue.sh                                 # очередь ожидания при старте продаж (ADR 020)
 ./loadtest/scale.sh                                 # ёмкость при 1, 2, 4 экземплярах api (ADR 023)
+./loadtest/storm.sh                                 # штурм стадиона: концерт, 5000 покупателей, с очередью и без (ADR 026)
+go run ./cmd/loadseed storm-report -dir loadtest/results/raw/storm -out docs/experiments/<папка>
 go run ./cmd/loadseed scale-report -dir loadtest/results/raw/scale -out docs/experiments/<папка>
 go run ./cmd/loadseed queue-report -dir loadtest/results/raw/queue -out docs/experiments/<папка>
 go run ./cmd/loadseed report -dir loadtest/results/raw/<серия> -out docs/experiments/<папка>

@@ -24,11 +24,14 @@ const HoldTTL = 10 * time.Minute
 
 // Service — бронирование мест и статусы заказа.
 type Service struct {
-	pool  *pgxpool.Pool
-	q     *bookingdb.Queries
-	holds *holdStore // nil — без Redis, только база
-	log   *slog.Logger
-	group singleflight.Group
+	pool *pgxpool.Pool
+	// summaries — сводка занятости по секторам в памяти на summaryTTL.
+	summaries  summaryCache
+	summaryTTL time.Duration
+	q          *bookingdb.Queries
+	holds      *holdStore // nil — без Redis, только база
+	log        *slog.Logger
+	group      singleflight.Group
 
 	strategy Strategy
 	metrics  *holdMetrics

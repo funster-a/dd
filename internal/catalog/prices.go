@@ -15,24 +15,35 @@ import (
 // maxPriceTiyn — 100 млн тенге: защита от опечатки лишними нулями.
 const maxPriceTiyn = 100_000_000_00
 
-// PriceInput — ценовая категория и сектора схемы, которые ею продаются.
+// PriceInput — ценовая категория: сектора схемы, которые ею продаются
+// целиком, и диапазоны рядов в других секторах (ADR 025).
 type PriceInput struct {
-	Name      string   `json:"name"`
-	PriceTiyn int64    `json:"price_tiyn"`
-	Sections  []string `json:"sections"`
+	Name      string     `json:"name"`
+	PriceTiyn int64      `json:"price_tiyn"`
+	Sections  []string   `json:"sections"`
+	Rows      []RowRange `json:"rows,omitempty"`
+}
+
+// RowRange — ряды сектора с From по To включительно в порядке схемы.
+type RowRange struct {
+	Section string `json:"section"`
+	From    string `json:"from"`
+	To      string `json:"to"`
 }
 
 // PriceCategory — ценовая категория события. Деньги — целые тиыны (правило 5).
 type PriceCategory struct {
-	ID        string   `json:"id"`
-	Name      string   `json:"name"`
-	PriceTiyn int64    `json:"price_tiyn"`
-	Currency  string   `json:"currency"`
-	Sections  []string `json:"sections"`
+	ID        string     `json:"id"`
+	Name      string     `json:"name"`
+	PriceTiyn int64      `json:"price_tiyn"`
+	Currency  string     `json:"currency"`
+	Sections  []string   `json:"sections"`
+	Rows      []RowRange `json:"rows"`
 }
 
-// SetPrices заменяет цены черновика: каждый сектор схемы должен продаваться
-// ровно одной категорией.
+// SetPrices заменяет цены черновика: каждое место схемы должно продаваться
+// ровно одной категорией — через свой сектор целиком или через диапазон
+// рядов.
 func (s *Service) SetPrices(ctx context.Context, organizerID, eventID string, in []PriceInput) ([]PriceCategory, error) {
 	var out []PriceCategory
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
@@ -73,7 +84,19 @@ func (s *Service) SetPrices(ctx context.Context, organizerID, eventID string, in
 					return fmt.Errorf("assign section price: %w", err)
 				}
 			}
-			out = append(out, PriceCategory{ID: pc.ID, Name: pc.Name, PriceTiyn: pc.PriceTiyn, Currency: pc.Currency, Sections: p.Sections})
+			for _, rr := range p.Rows {
+				if err := q.CreateRowPrice(ctx, catalogdb.CreateRowPriceParams{
+					OrganizerID: organizerID, EventID: eventID, Section: rr.Section,
+					RowFrom: rr.From, RowTo: rr.To, PriceCategoryID: pc.ID,
+				}); err != nil {
+					return fmt.Errorf("assign row price: %w", err)
+				}
+			}
+			rows := p.Rows
+			if rows == nil {
+				rows = []RowRange{}
+			}
+			out = append(out, PriceCategory{ID: pc.ID, Name: pc.Name, PriceTiyn: pc.PriceTiyn, Currency: pc.Currency, Sections: p.Sections, Rows: rows})
 		}
 		return nil
 	})
@@ -93,17 +116,28 @@ func (s *Service) GetPrices(ctx context.Context, organizerID, eventID string) ([
 	if err != nil {
 		return nil, fmt.Errorf("list section prices: %w", err)
 	}
+	ranges, err := s.q.ListRowPrices(ctx, catalogdb.ListRowPricesParams{OrganizerID: organizerID, EventID: eventID})
+	if err != nil {
+		return nil, fmt.Errorf("list row prices: %w", err)
+	}
 	sections := make(map[string][]string, len(cats))
 	for _, l := range links {
 		sections[l.PriceCategoryID] = append(sections[l.PriceCategoryID], l.Section)
 	}
+	rows := make(map[string][]RowRange, len(cats))
+	for _, r := range ranges {
+		rows[r.PriceCategoryID] = append(rows[r.PriceCategoryID], RowRange{Section: r.Section, From: r.RowFrom, To: r.RowTo})
+	}
 	out := make([]PriceCategory, 0, len(cats))
 	for _, c := range cats {
-		secs := sections[c.ID]
+		secs, rr := sections[c.ID], rows[c.ID]
 		if secs == nil {
 			secs = []string{}
 		}
-		out = append(out, PriceCategory{ID: c.ID, Name: c.Name, PriceTiyn: c.PriceTiyn, Currency: c.Currency, Sections: secs})
+		if rr == nil {
+			rr = []RowRange{}
+		}
+		out = append(out, PriceCategory{ID: c.ID, Name: c.Name, PriceTiyn: c.PriceTiyn, Currency: c.Currency, Sections: secs, Rows: rr})
 	}
 	return out, nil
 }
@@ -112,12 +146,14 @@ func validatePrices(in []PriceInput, layout Layout) error {
 	if len(in) == 0 {
 		return &ValidationError{Field: "categories", Message: "at least one price category is required"}
 	}
-	known := make(map[string]bool, len(layout.Sections))
-	for _, sec := range layout.Sections {
-		known[sec.Name] = true
+	byName := make(map[string]*Section, len(layout.Sections))
+	for i := range layout.Sections {
+		byName[layout.Sections[i].Name] = &layout.Sections[i]
 	}
 	names := make(map[string]bool, len(in))
-	assigned := make(map[string]bool, len(known))
+	assigned := make(map[string]bool, len(byName))
+	// rowOwner[сектор][индекс ряда] — ряд уже продаётся какой-то категорией.
+	rowOwner := make(map[string][]bool)
 	for i := range in {
 		p := &in[i]
 		path := fmt.Sprintf("categories[%d]", i)
@@ -132,28 +168,83 @@ func validatePrices(in []PriceInput, layout Layout) error {
 		if p.PriceTiyn < 0 || p.PriceTiyn > maxPriceTiyn {
 			return &ValidationError{Field: path + ".price_tiyn", Message: "must be a non-negative amount in tiyn, at most 100 000 000 KZT"}
 		}
-		if len(p.Sections) == 0 {
-			return &ValidationError{Field: path + ".sections", Message: "must list at least one section"}
+		if len(p.Sections) == 0 && len(p.Rows) == 0 {
+			return &ValidationError{Field: path + ".sections", Message: "must list at least one section or row range"}
+		}
+		if p.Sections == nil {
+			p.Sections = []string{}
 		}
 		for j, sec := range p.Sections {
 			sec = strings.TrimSpace(sec)
 			p.Sections[j] = sec
 			field := fmt.Sprintf("%s.sections[%d]", path, j)
-			if !known[sec] {
+			if byName[sec] == nil {
 				return &ValidationError{Field: field, Message: fmt.Sprintf("section %q is not in the seat map", sec)}
 			}
-			if assigned[sec] {
+			if assigned[sec] || rowOwner[sec] != nil {
 				return &ValidationError{Field: field, Message: fmt.Sprintf("section %q already has a price", sec)}
 			}
 			assigned[sec] = true
 		}
+		for j := range p.Rows {
+			rr := &p.Rows[j]
+			field := fmt.Sprintf("%s.rows[%d]", path, j)
+			rr.Section, rr.From, rr.To = strings.TrimSpace(rr.Section), strings.TrimSpace(rr.From), strings.TrimSpace(rr.To)
+			sec := byName[rr.Section]
+			if sec == nil {
+				return &ValidationError{Field: field + ".section", Message: fmt.Sprintf("section %q is not in the seat map", rr.Section)}
+			}
+			if sec.Kind != KindSeat {
+				return &ValidationError{Field: field + ".section", Message: fmt.Sprintf("section %q has no rows", rr.Section)}
+			}
+			if assigned[rr.Section] {
+				return &ValidationError{Field: field + ".section", Message: fmt.Sprintf("section %q already has a price as a whole", rr.Section)}
+			}
+			from, to := rowIndex(sec, rr.From), rowIndex(sec, rr.To)
+			if from < 0 || to < 0 {
+				return &ValidationError{Field: field, Message: fmt.Sprintf("rows %q-%q are not in section %q", rr.From, rr.To, rr.Section)}
+			}
+			if from > to {
+				return &ValidationError{Field: field, Message: "from must not come after to"}
+			}
+			owner := rowOwner[rr.Section]
+			if owner == nil {
+				owner = make([]bool, len(sec.Rows))
+				rowOwner[rr.Section] = owner
+			}
+			for k := from; k <= to; k++ {
+				if owner[k] {
+					return &ValidationError{Field: field, Message: fmt.Sprintf("row %q of section %q already has a price", sec.Rows[k].Label, rr.Section)}
+				}
+				owner[k] = true
+			}
+		}
 	}
 	for _, sec := range layout.Sections {
-		if !assigned[sec.Name] {
+		if assigned[sec.Name] {
+			continue
+		}
+		owner := rowOwner[sec.Name]
+		if owner == nil {
 			return &ValidationError{Field: "categories", Message: fmt.Sprintf("section %q has no price", sec.Name)}
+		}
+		for k, ok := range owner {
+			if !ok {
+				return &ValidationError{Field: "categories", Message: fmt.Sprintf("row %q of section %q has no price", sec.Rows[k].Label, sec.Name)}
+			}
 		}
 	}
 	return nil
+}
+
+// rowIndex — номер ряда с подписью label в секторе или -1.
+func rowIndex(sec *Section, label string) int {
+	for i, r := range sec.Rows {
+		if r.Label == label {
+			return i
+		}
+	}
+	return -1
 }
 
 func eventLayout(ctx context.Context, q *catalogdb.Queries, organizerID, seatMapID string) (Layout, error) {

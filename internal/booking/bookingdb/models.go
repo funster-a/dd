@@ -43,6 +43,15 @@ type Event struct {
 	WaitingRoom         bool
 }
 
+type EventRowPrice struct {
+	OrganizerID     string
+	EventID         string
+	Section         string
+	RowFrom         string
+	RowTo           string
+	PriceCategoryID string
+}
+
 type EventSeat struct {
 	ID              string
 	OrganizerID     string

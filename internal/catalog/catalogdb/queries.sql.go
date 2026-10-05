@@ -218,6 +218,32 @@ func (q *Queries) CreatePriceCategory(ctx context.Context, arg CreatePriceCatego
 	return i, err
 }
 
+const createRowPrice = `-- name: CreateRowPrice :exec
+INSERT INTO event_row_prices (organizer_id, event_id, section, row_from, row_to, price_category_id)
+VALUES ($1, $2, $3, $4, $5, $6)
+`
+
+type CreateRowPriceParams struct {
+	OrganizerID     string
+	EventID         string
+	Section         string
+	RowFrom         string
+	RowTo           string
+	PriceCategoryID string
+}
+
+func (q *Queries) CreateRowPrice(ctx context.Context, arg CreateRowPriceParams) error {
+	_, err := q.db.Exec(ctx, createRowPrice,
+		arg.OrganizerID,
+		arg.EventID,
+		arg.Section,
+		arg.RowFrom,
+		arg.RowTo,
+		arg.PriceCategoryID,
+	)
+	return err
+}
+
 const createSeatMap = `-- name: CreateSeatMap :one
 INSERT INTO seat_maps (organizer_id, venue_id, name, layout)
 VALUES ($1, $2, $3, $4)
@@ -707,6 +733,48 @@ func (q *Queries) ListPriceCategories(ctx context.Context, arg ListPriceCategori
 			&i.PriceTiyn,
 			&i.Currency,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRowPrices = `-- name: ListRowPrices :many
+SELECT section, row_from, row_to, price_category_id FROM event_row_prices
+WHERE organizer_id = $1 AND event_id = $2 ORDER BY section, row_from
+`
+
+type ListRowPricesParams struct {
+	OrganizerID string
+	EventID     string
+}
+
+type ListRowPricesRow struct {
+	Section         string
+	RowFrom         string
+	RowTo           string
+	PriceCategoryID string
+}
+
+func (q *Queries) ListRowPrices(ctx context.Context, arg ListRowPricesParams) ([]ListRowPricesRow, error) {
+	rows, err := q.db.Query(ctx, listRowPrices, arg.OrganizerID, arg.EventID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRowPricesRow{}
+	for rows.Next() {
+		var i ListRowPricesRow
+		if err := rows.Scan(
+			&i.Section,
+			&i.RowFrom,
+			&i.RowTo,
+			&i.PriceCategoryID,
 		); err != nil {
 			return nil, err
 		}

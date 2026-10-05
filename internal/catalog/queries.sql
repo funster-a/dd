@@ -102,6 +102,14 @@ RETURNING *;
 INSERT INTO event_section_prices (organizer_id, event_id, section, price_category_id)
 VALUES (@organizer_id, @event_id, @section, @price_category_id);
 
+-- name: CreateRowPrice :exec
+INSERT INTO event_row_prices (organizer_id, event_id, section, row_from, row_to, price_category_id)
+VALUES (@organizer_id, @event_id, @section, @row_from, @row_to, @price_category_id);
+
+-- name: ListRowPrices :many
+SELECT section, row_from, row_to, price_category_id FROM event_row_prices
+WHERE organizer_id = @organizer_id AND event_id = @event_id ORDER BY section, row_from;
+
 -- name: ListPriceCategories :many
 SELECT * FROM price_categories WHERE organizer_id = @organizer_id AND event_id = @event_id ORDER BY price_tiyn DESC, name;
 

@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/funster-a/dd/internal/platform/auth"
+	pgdb "github.com/funster-a/dd/internal/platform/db"
 	"github.com/funster-a/dd/internal/platform/httpx"
 	"github.com/funster-a/dd/internal/platform/idempotency/idempotencydb"
 )
@@ -36,6 +37,13 @@ const (
 	// staleAfter — через сколько незавершённый ключ считается брошенным
 	// (процесс упал посреди запроса) и может быть занят заново.
 	staleAfter = time.Minute
+)
+
+// Снятие ключа после сбоя повторяется releaseEvery, пока не пройдёт
+// releaseFor (ADR 028). Переменные — чтобы тест не ждал секундами.
+var (
+	releaseEvery = 500 * time.Millisecond
+	releaseFor   = 30 * time.Second
 )
 
 // Middleware возвращает middleware идемпотентности.
@@ -65,6 +73,10 @@ func Middleware(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 
 			claimed, err := claim(r, q, scope, key, hash)
 			if err != nil {
+				if pgdb.Unavailable(err) {
+					httpx.WriteUnavailable(w, r, err)
+					return
+				}
 				log.Error("claim idempotency key", slog.Any("error", err))
 				httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
 				return
@@ -81,17 +93,13 @@ func Middleware(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 			ctx := context.WithoutCancel(r.Context())
 			if rec.status >= http.StatusInternalServerError {
 				// Сбой на нашей стороне не фиксируем: клиент должен иметь возможность повторить.
-				if err := q.Release(ctx, idempotencydb.ReleaseParams{Scope: scope, Key: key}); err != nil {
-					log.Error("release idempotency key", slog.Any("error", err))
-				}
+				release(ctx, q, scope, key, log)
 				return
 			}
 			if rec.truncated {
 				// Слишком большой ответ не сохранить целиком: снимаем ключ, как при сбое.
 				log.Warn("response too large to store for idempotency", slog.Int("limit", maxBodyBytes))
-				if err := q.Release(ctx, idempotencydb.ReleaseParams{Scope: scope, Key: key}); err != nil {
-					log.Error("release idempotency key", slog.Any("error", err))
-				}
+				release(ctx, q, scope, key, log)
 				return
 			}
 			if err := q.Complete(ctx, idempotencydb.CompleteParams{
@@ -104,6 +112,32 @@ func Middleware(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 			}
 		})
 	}
+}
+
+// release снимает незавершённый ключ после сбоя. Частый сбой — сама база
+// недоступна (переключение на реплику, ADR 028), и снять ключ сразу тоже не
+// выходит; тогда снятие повторяется в фоне до releaseFor. Иначе ключ живого
+// экземпляра висел бы «выполняется» до staleAfter, и повтор клиента минуту
+// получал бы 409.
+func release(ctx context.Context, q *idempotencydb.Queries, scope, key string, log *slog.Logger) {
+	err := q.Release(ctx, idempotencydb.ReleaseParams{Scope: scope, Key: key})
+	if err == nil {
+		return
+	}
+	log.Warn("release idempotency key, will retry", slog.Any("error", err))
+	go func() {
+		deadline := time.Now().Add(releaseFor)
+		for time.Now().Before(deadline) {
+			time.Sleep(releaseEvery)
+			rctx, cancel := context.WithTimeout(ctx, releaseEvery)
+			err := q.Release(rctx, idempotencydb.ReleaseParams{Scope: scope, Key: key})
+			cancel()
+			if err == nil {
+				return
+			}
+		}
+		log.Error("release idempotency key", slog.Any("error", err))
+	}()
 }
 
 // claim занимает ключ; брошенный незавершённый ключ — занятый давно или
@@ -139,6 +173,10 @@ func replay(w http.ResponseWriter, r *http.Request, q *idempotencydb.Queries,
 		return
 	}
 	if err != nil {
+		if pgdb.Unavailable(err) {
+			httpx.WriteUnavailable(w, r, err)
+			return
+		}
 		log.Error("load idempotency key", slog.Any("error", err))
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
 		return

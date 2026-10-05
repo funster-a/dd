@@ -155,7 +155,10 @@ PY
     acked=$(wc -l <"$dir/acked.txt")
     present=0
     if [[ $acked -gt 0 ]]; then
-      present=$(psql_on "$p" "SELECT count(*) FROM orders WHERE id = ANY('{$(paste -sd, "$dir/acked.txt")}'::uuid[])")
+      # Тысячи id не помещаются в аргумент: через stdin во временную таблицу.
+      present=$({ echo "CREATE TEMP TABLE acked (id uuid); COPY acked FROM STDIN;"; cat "$dir/acked.txt"; echo '\.'
+        echo "SELECT count(*) FROM orders JOIN acked USING (id);"; } |
+        docker exec -i -e PGPASSWORD=dd-admin "dd-ha-pg-$p-1" psql -U postgres -d dd -h 127.0.0.1 -qAt -f - | tail -1)
     fi
     echo "{\"orders\": $orders, \"buyers_with_two_orders\": $dups, \"acked\": $acked, \"acked_missing\": $((acked - present))}" >"$dir/dups.json"
     echo "pgchaos $v #$rep invariant=$verdict acked=$acked missing=$((acked - present)) dups=$dups $(tail -1 "$dir/k6.log" | cut -c1-160)"

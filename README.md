@@ -198,7 +198,7 @@ curl -X POST localhost:8080/v1/admin/organizers \
 | `GET/POST /venues/{id}/seat-maps`, `GET /seat-maps/{id}` | схемы залов |
 | `GET /seat-map-templates`, `GET /seat-map-templates/{id}` | готовые схемы площадок, например Центральный стадион Алматы (ADR 024) |
 | `GET/POST /events`, `GET/PUT /events/{id}` | события (черновик меняется целиком) |
-| `GET/PUT /events/{id}/prices` | ценовые категории и их секторы |
+| `GET/PUT /events/{id}/prices` | ценовые категории: сектора целиком и диапазоны рядов `rows` (ADR 025) |
 | `POST /events/{id}/media/uploads`, `PUT /events/{id}/media` | ссылка на загрузку обложки и её прикрепление |
 | `POST /events/{id}/publish` | публикация: проверка готовности и генерация мест |
 | `GET/POST /events/{id}/scanners`, `DELETE /scanners/{id}` | ссылки сканера для контролёров на входе |

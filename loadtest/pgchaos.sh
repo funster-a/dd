@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Переключение PostgreSQL посреди продажи (этап 4, ADR 028). Кластер из двух
+# Переключение PostgreSQL посреди продажи (этап 4, ADR 028). Кластер из трёх
 # узлов repmgr (deploy/ha), два экземпляра api за nginx, постоянный поток
 # заказов (loadtest/chaos.js). На KILL_AT-й секунде ведущий узел убивается
-# (SIGKILL), реплика повышается; на BACK_AT-й бывший ведущий поднимается и
-# встаёт репликой.
+# (SIGKILL), одна из реплик повышается; на BACK_AT-й бывший ведущий
+# поднимается и встаёт репликой.
 #
 #   VARIANTS="async:none:new async:kill:old async:kill:new sync:none:new sync:kill:new" REPEATS=3 loadtest/pgchaos.sh
 #
@@ -28,7 +28,7 @@ RUNTIME_IMAGE=${RUNTIME_IMAGE:-gcr.io/distroless/static-debian13:nonroot}
 LB_IMAGE=${LB_IMAGE:-nginx:1.29-alpine}
 OUT=${OUT:-loadtest/results/raw/pgchaos}
 HA=deploy/ha/docker-compose.pg-ha.yml
-HA_DSN="postgres://dd:dd@localhost:5433,localhost:5434/dd?sslmode=disable&target_session_attrs=read-write"
+HA_DSN="postgres://dd:dd@localhost:5433,localhost:5434,localhost:5435/dd?sslmode=disable&target_session_attrs=read-write"
 DATA=loadtest/.data
 mkdir -p "$OUT" "$DATA"
 
@@ -45,13 +45,13 @@ trap cleanup EXIT
 
 psql_on() { docker exec -e PGPASSWORD=dd-admin "dd-ha-pg-$1-1" psql -U postgres -d dd -h 127.0.0.1 -qAtc "$2"; }
 role() { psql_on "$1" "select pg_is_in_recovery()" 2>/dev/null || echo down; }
-primary() { for n in 0 1; do [[ $(role $n) == f ]] && { echo $n; return; }; done; echo none; }
-# Оба узла живы, один ведущий и реплика с ним в потоке.
+primary() { for n in 0 1 2; do [[ $(role $n) == f ]] && { echo $n; return; }; done; echo none; }
+# Все узлы живы: один ведущий и две реплики с ним в потоке.
 wait_cluster() {
   for _ in $(seq 1 120); do
     local p; p=$(primary)
-    if [[ $p != none ]] && [[ $(role $((1 - p))) == t ]] &&
-       [[ $(psql_on "$p" "select count(*) from pg_stat_replication where state = 'streaming'" 2>/dev/null) == 1 ]]; then
+    if [[ $p != none ]] &&
+       [[ $(psql_on "$p" "select count(*) from pg_stat_replication where state = 'streaming'" 2>/dev/null) == 2 ]]; then
       return 0
     fi
     sleep 1
@@ -64,10 +64,15 @@ setup_cluster() {
   local mode=$1
   [[ $cluster_mode == "$mode" ]] && { wait_cluster; return; }
   docker compose -f "$HA" down -v >/dev/null 2>&1 || true
+  docker compose -f "$HA" up -d --wait >/dev/null
+  wait_cluster
   if [[ $mode == sync ]]; then
-    SYNC=on SYNC_REPLICAS=1 docker compose -f "$HA" up -d --wait >/dev/null
-  else
-    docker compose -f "$HA" up -d --wait >/dev/null
+    # На каждом узле, а не только на ведущем: повышенная реплика остаётся
+    # синхронной (см. deploy/ha).
+    for n in 0 1 2; do
+      psql_on $n "ALTER SYSTEM SET synchronous_standby_names = 'ANY 1 (\"pg-0\",\"pg-1\",\"pg-2\")'" >/dev/null
+      psql_on $n "SELECT pg_reload_conf()" >/dev/null
+    done
   fi
   wait_cluster
   go tool -modfile=tools.mod goose -dir migrations postgres "$HA_DSN" up >/dev/null
@@ -117,6 +122,8 @@ for v in $VARIANTS; do
 
     dir="$OUT/chaos__${mode}-${fault}-${build}__${RATE}__${rep}"
     mkdir -p "$dir"
+    # Режим репликации на старте прогона: sync — реплики в кворуме, а не async.
+    psql_on "$(primary)" "SELECT string_agg(application_name || ':' || sync_state, ' ') FROM pg_stat_replication" >"$dir/replication.txt"
     DATABASE_URL="$HA_DSN" "$DATA/loadseed" event -rows 100 -seats 100 -out "$dir/event.json"
     event=$(python3 -c "import json;print(json.load(open('$dir/event.json'))['event_id'])")
 
@@ -128,8 +135,8 @@ for v in $VARIANTS; do
       victim=$(primary)
       docker kill "dd-ha-pg-$victim-1" >/dev/null
       echo "$(date +%s.%N) kill pg-$victim" >"$dir/events.txt"
-      for _ in $(seq 1 100); do [[ $(role $((1 - victim))) == f ]] && break; sleep 0.2; done
-      echo "$(date +%s.%N) promoted pg-$((1 - victim))" >>"$dir/events.txt"
+      for _ in $(seq 1 100); do p=$(primary); [[ $p != none && $p != "$victim" ]] && break; sleep 0.2; done
+      echo "$(date +%s.%N) promoted pg-$p" >>"$dir/events.txt"
       sleep $((BACK_AT - KILL_AT))
       docker start "dd-ha-pg-$victim-1" >/dev/null
       echo "$(date +%s.%N) back pg-$victim" >>"$dir/events.txt"

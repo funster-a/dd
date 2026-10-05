@@ -23,7 +23,9 @@ const ev = JSON.parse(open(__ENV.EVENT));
 
 export const options = {
   scenarios: {
-    flow: { executor: 'constant-arrival-rate', rate: RATE, timeUnit: '1s', duration: DURATION, preAllocatedVUs: RATE * 3, maxVUs: 3000 },
+    // VU с запасом: пока база переключается, покупатели ждут повторов, и без
+    // запаса k6 пропускает новые итерации.
+    flow: { executor: 'constant-arrival-rate', rate: RATE, timeUnit: '1s', duration: DURATION, preAllocatedVUs: RATE * 20, maxVUs: RATE * 40 },
   },
   summaryTrendStats: ['avg', 'med', 'p(95)', 'p(99)', 'max'],
   systemTags: ['status', 'name'],

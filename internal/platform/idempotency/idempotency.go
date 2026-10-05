@@ -106,21 +106,24 @@ func Middleware(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 	}
 }
 
-// claim занимает ключ; брошенный незавершённый ключ занимается заново.
+// claim занимает ключ; брошенный незавершённый ключ — занятый давно или
+// экземпляром, который перестал отмечаться (ADR 027), — занимается заново.
 func claim(r *http.Request, q *idempotencydb.Queries, scope, key string, hash []byte) (bool, error) {
 	ctx := r.Context()
-	n, err := q.Claim(ctx, idempotencydb.ClaimParams{Scope: scope, Key: key, RequestHash: hash})
+	me := currentOwner()
+	n, err := q.Claim(ctx, idempotencydb.ClaimParams{Scope: scope, Key: key, RequestHash: hash, Owner: me})
 	if err != nil || n == 1 {
 		return n == 1, err
 	}
 	released, err := q.ReleaseStale(ctx, idempotencydb.ReleaseStaleParams{
 		Scope: scope, Key: key,
-		StaleBefore: time.Now().Add(-staleAfter),
+		StaleBefore:   time.Now().Add(-staleAfter),
+		DeadAfterSecs: deadAfter.Seconds(),
 	})
 	if err != nil || released == 0 {
 		return false, err
 	}
-	n, err = q.Claim(ctx, idempotencydb.ClaimParams{Scope: scope, Key: key, RequestHash: hash})
+	n, err = q.Claim(ctx, idempotencydb.ClaimParams{Scope: scope, Key: key, RequestHash: hash, Owner: me})
 	return n == 1, err
 }
 

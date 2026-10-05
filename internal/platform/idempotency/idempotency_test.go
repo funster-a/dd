@@ -1,7 +1,9 @@
 package idempotency_test
 
 import (
+	"crypto/sha256"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
@@ -20,6 +22,7 @@ import (
 
 type harness struct {
 	srv   *httptest.Server
+	db    *dbtest.DB
 	calls atomic.Int64
 	fail  atomic.Bool
 	gate  chan struct{} // если не nil, обработчик ждёт его закрытия
@@ -28,7 +31,7 @@ type harness struct {
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	db := dbtest.New(t)
-	h := &harness{}
+	h := &harness{db: db}
 	r := chi.NewRouter()
 	// Участник из заголовка — чтобы проверить разделение ключей по пользователям.
 	r.Use(func(next http.Handler) http.Handler {
@@ -176,5 +179,60 @@ func TestConcurrentRequestsExecuteOnce(t *testing.T) {
 	}
 	if codes[http.StatusCreated] < 1 || codes[http.StatusCreated]+codes[http.StatusConflict] != n {
 		t.Fatalf("status codes = %v, want only 201 and 409", codes)
+	}
+}
+
+// Экземпляр упал посреди запроса (ADR 027): его ключ остался незавершённым.
+// Повтор с тем же ключом выполняется сразу, если владелец перестал
+// отмечаться, и получает 409, если владелец жив и ещё работает.
+func TestAbandonedKeyOfDeadOwner(t *testing.T) {
+	h := newHarness(t)
+	body := `{"x":1}`
+	sum := sha256.Sum256([]byte("POST /things\n" + strconv.Itoa(len(body)) + "\n" + body))
+	abandon := func(key, owner, seenAgo string) {
+		t.Helper()
+		if _, err := h.db.Pool.Exec(t.Context(),
+			`INSERT INTO api_instances (id, seen_at) VALUES ($1, now() - $2::interval)`, owner, seenAgo); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := h.db.Pool.Exec(t.Context(),
+			`INSERT INTO idempotency_keys (scope, key, request_hash, owner) VALUES ('anonymous POST /things', $1, $2, $3)`,
+			key, sum[:], owner); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	abandon("k-dead", "api-dead", "10 seconds")
+	if code, _, _ := h.post(t, "k-dead", "", body); code != http.StatusCreated || h.calls.Load() != 1 {
+		t.Fatalf("dead owner: status %d, calls %d; want 201 and one call", code, h.calls.Load())
+	}
+
+	abandon("k-alive", "api-alive", "0 seconds")
+	if code, _, _ := h.post(t, "k-alive", "", body); code != http.StatusConflict || h.calls.Load() != 1 {
+		t.Fatalf("alive owner: status %d, calls %d; want 409 and no new call", code, h.calls.Load())
+	}
+}
+
+func TestHeartbeatRegistersAndLeaves(t *testing.T) {
+	db := dbtest.New(t)
+	count := func() int {
+		t.Helper()
+		var n int
+		if err := db.Pool.QueryRow(t.Context(), `SELECT count(*) FROM api_instances WHERE seen_at > now() - interval '5 seconds'`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	stop, err := idempotency.Heartbeat(t.Context(), db.Pool.Config().ConnConfig, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count() != 1 {
+		t.Fatal("instance is not registered")
+	}
+	// Корректная остановка снимает отметку: ключи экземпляра сразу свободны.
+	stop()
+	if count() != 0 {
+		t.Fatal("instance is still registered after stop")
 	}
 }

@@ -30,6 +30,7 @@ import (
 	"github.com/funster-a/dd/internal/platform/config"
 	"github.com/funster-a/dd/internal/platform/db"
 	"github.com/funster-a/dd/internal/platform/httpx"
+	"github.com/funster-a/dd/internal/platform/idempotency"
 	"github.com/funster-a/dd/internal/platform/mq"
 	"github.com/funster-a/dd/internal/platform/observability"
 	"github.com/funster-a/dd/internal/platform/redis"
@@ -70,9 +71,17 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	// Владелец ключей идемпотентности (ADR 027): если экземпляр упадёт
+	// посреди запроса, повтор клиента на другом экземпляре не ждёт минуту.
+	stopHeartbeat, err := idempotency.Heartbeat(ctx, pool.Config().ConnConfig, log)
+	if err != nil {
+		pool.Close()
+		return fmt.Errorf("idempotency heartbeat: %w", err)
+	}
 	rdb := redis.NewClient(cfg.RedisAddr, log)
 	rmq := mq.New(cfg.RabbitMQURL)
 	closeDeps := func() {
+		stopHeartbeat()
 		pool.Close()
 		_ = rdb.Close()
 		_ = rmq.Close()

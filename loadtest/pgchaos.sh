@@ -86,7 +86,7 @@ start_api() {
   docker run -d --name "dd-chaos-api-$i" --network host \
     -v "$(realpath "$bin"):/api:ro" --entrypoint /api \
     -e HTTP_ADDR=":$((8080 + i))" -e LOG_LEVEL=warn -e BOOKING_STRATEGY=redis \
-    -e DATABASE_URL="$HA_DSN&pool_max_conns=$POOL" \
+    -e DATABASE_URL="$HA_DSN&pool_max_conns=$POOL${API_DSN_EXTRA:-}" \
     -e REDIS_ADDR=localhost:6379 -e RABBITMQ_URL=amqp://dd:dd@localhost:5672/ \
     -e IP_TICKET_LIMIT=0 -e QUEUE_ADMIT_PER_SECOND=0 "$RUNTIME_IMAGE" >/dev/null
   for _ in $(seq 1 50); do curl -fs "localhost:$((8080 + i))/readyz" >/dev/null && return; sleep 0.2; done

@@ -30,6 +30,19 @@ func pgChaosVariantRu(v string) string {
 	return fmt.Sprintf("%s, %s, %s", mode, fault, build)
 }
 
+// pgChaosShortRu — подпись линии на графике: там все варианты с отказом.
+func pgChaosShortRu(v string) string {
+	switch v {
+	case "async-kill-old":
+		return "Асинхронная, до исправления"
+	case "async-kill-new":
+		return "Асинхронная"
+	case "sync-kill-new":
+		return "Синхронная"
+	}
+	return v
+}
+
 func pgChaosReport(args []string) error {
 	fs := flag.NewFlagSet("pgchaos-report", flag.ContinueOnError)
 	in := fs.String("in", "", "каталог серии loadtest/pgchaos.sh")
@@ -123,7 +136,8 @@ func pgChaosTables(runs []chaosRun) string {
 }
 
 // pgChaosChart — неудачные попытки по секундам вокруг падения ведущего узла,
-// по варианту с отказом на линию, сумма по прогонам.
+// по варианту с отказом на линию, в среднем на прогон: прогонов у вариантов
+// может быть разное число.
 func pgChaosChart(runs []chaosRun) string {
 	colors := []string{"#eb6834", "#2a78d6", "#1baf7a", "#8a6bd1"}
 	var ss []series
@@ -134,26 +148,28 @@ func pgChaosChart(runs []chaosRun) string {
 		}
 		key := "pgchaos-" + v
 		seriesStyle[key] = struct{ color, marker string }{colors[i%len(colors)], []string{"circle", "square", "diamond", "circle"}[i%4]}
-		strategyRu[key] = pgChaosVariantRu(v)
+		strategyRu[key] = pgChaosShortRu(v)
 		i++
 		by := map[int]float64{}
+		n := 0.0
 		for _, r := range runs {
 			if r.Variant == v {
+				n++
 				for s, c := range r.FailedBySec {
 					by[s] += c
 				}
 			}
 		}
 		s := series{strategy: key}
-		for sec := -5; sec <= 30; sec++ {
-			c := by[sec]
+		for sec := -3; sec <= 20; sec++ {
+			c := round1(by[sec] / n)
 			s.points = append(s.points, point{x: strconv.Itoa(sec), stat: stat{Mean: c, Min: c, Max: c}})
 		}
 		ss = append(ss, s)
 	}
 	return lineChart(chartSpec{
 		title:    "Неудачные попытки заказа вокруг падения ведущего узла PostgreSQL",
-		subtitle: "SIGKILL ведущего узла в момент 0, сумма по прогонам. Повторы клиента с тем же ключом.",
+		subtitle: "SIGKILL ведущего узла в момент 0, в среднем на прогон. Повторы клиента с тем же ключом.",
 		unit:     "попыток", series: ss, xLabel: "секунд от падения ведущего",
 	})
 }

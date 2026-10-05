@@ -13,8 +13,8 @@ import (
 )
 
 const claim = `-- name: Claim :execrows
-INSERT INTO idempotency_keys (scope, key, request_hash)
-VALUES ($1, $2, $3)
+INSERT INTO idempotency_keys (scope, key, request_hash, owner)
+VALUES ($1, $2, $3, $4)
 ON CONFLICT (scope, key) DO NOTHING
 `
 
@@ -22,11 +22,17 @@ type ClaimParams struct {
 	Scope       string
 	Key         string
 	RequestHash []byte
+	Owner       *string
 }
 
 // Занимает ключ. 0 строк — ключ уже есть (выполнен, выполняется или брошен).
 func (q *Queries) Claim(ctx context.Context, arg ClaimParams) (int64, error) {
-	result, err := q.db.Exec(ctx, claim, arg.Scope, arg.Key, arg.RequestHash)
+	result, err := q.db.Exec(ctx, claim,
+		arg.Scope,
+		arg.Key,
+		arg.RequestHash,
+		arg.Owner,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -93,6 +99,34 @@ func (q *Queries) Get(ctx context.Context, arg GetParams) (GetRow, error) {
 	return i, err
 }
 
+const heartbeat = `-- name: Heartbeat :exec
+INSERT INTO api_instances (id) VALUES ($1)
+ON CONFLICT (id) DO UPDATE SET seen_at = now()
+`
+
+func (q *Queries) Heartbeat(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, heartbeat, id)
+	return err
+}
+
+const leave = `-- name: Leave :exec
+DELETE FROM api_instances WHERE id = $1
+`
+
+func (q *Queries) Leave(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, leave, id)
+	return err
+}
+
+const pruneInstances = `-- name: PruneInstances :exec
+DELETE FROM api_instances WHERE seen_at < now() - interval '1 hour'
+`
+
+func (q *Queries) PruneInstances(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, pruneInstances)
+	return err
+}
+
 const release = `-- name: Release :exec
 DELETE FROM idempotency_keys
 WHERE scope = $1 AND key = $2 AND completed_at IS NULL
@@ -110,19 +144,30 @@ func (q *Queries) Release(ctx context.Context, arg ReleaseParams) error {
 }
 
 const releaseStale = `-- name: ReleaseStale :execrows
-DELETE FROM idempotency_keys
-WHERE scope = $1 AND key = $2 AND completed_at IS NULL AND created_at < $3
+DELETE FROM idempotency_keys k
+WHERE k.scope = $1 AND k.key = $2 AND k.completed_at IS NULL
+  AND (k.created_at < $3
+       OR (k.owner IS NOT NULL AND NOT EXISTS (
+             SELECT 1 FROM api_instances i
+             WHERE i.id = k.owner AND i.seen_at > now() - make_interval(secs => $4::float8))))
 `
 
 type ReleaseStaleParams struct {
-	Scope       string
-	Key         string
-	StaleBefore time.Time
+	Scope         string
+	Key           string
+	StaleBefore   time.Time
+	DeadAfterSecs float64
 }
 
-// Снимает ключ, брошенный упавшим процессом.
+// Снимает ключ, брошенный упавшим процессом: занят давно или его владелец
+// перестал отмечаться в api_instances (ADR 027).
 func (q *Queries) ReleaseStale(ctx context.Context, arg ReleaseStaleParams) (int64, error) {
-	result, err := q.db.Exec(ctx, releaseStale, arg.Scope, arg.Key, arg.StaleBefore)
+	result, err := q.db.Exec(ctx, releaseStale,
+		arg.Scope,
+		arg.Key,
+		arg.StaleBefore,
+		arg.DeadAfterSecs,
+	)
 	if err != nil {
 		return 0, err
 	}

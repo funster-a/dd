@@ -11,6 +11,12 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type ApiInstance struct {
+	ID        string
+	StartedAt time.Time
+	SeenAt    time.Time
+}
+
 type Buyer struct {
 	ID        string
 	Phone     string
@@ -83,6 +89,7 @@ type IdempotencyKey struct {
 	CreatedAt           time.Time
 	CompletedAt         *time.Time
 	ResponseContentType *string
+	Owner               *string
 }
 
 type Order struct {

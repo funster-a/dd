@@ -11,6 +11,8 @@
 //	loadseed storm-report -dir <results>       отчёт по штурму стадиона (ADR 026)
 //	loadseed chaos-report -series до=<dir>,…  отказ экземпляра api посреди продажи (ADR 027)
 //	loadseed pgchaos-report -in <dir>         переключение PostgreSQL посреди продажи (ADR 028)
+//	loadseed redischaos-report -in <dir>      отказ Redis посреди продажи (ADR 029)
+//	loadseed holds-check -event <id>          холды мест в Redis против базы (ADR 029)
 //
 // Покупатели и события создаются кодом модулей — тем же, что в продукте.
 // Инструмент работает рядом с базой и Redis и не публикуется.
@@ -31,7 +33,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: loadseed buyers|event|stadium|check|report|queue-report|scale-report|storm-report|chaos-report|pgchaos-report [flags]")
+		fmt.Fprintln(os.Stderr, "usage: loadseed buyers|event|stadium|check|report|queue-report|scale-report|storm-report|chaos-report|pgchaos-report|redischaos-report|holds-check [flags]")
 		os.Exit(2)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -57,6 +59,8 @@ func run(ctx context.Context, cmd string, args []string) error {
 		return chaosReport(args)
 	case "pgchaos-report":
 		return pgChaosReport(args)
+	case "redischaos-report":
+		return redisChaosReport(args)
 	}
 	cfg, err := config.Load()
 	if err != nil {
@@ -70,9 +74,13 @@ func run(ctx context.Context, cmd string, args []string) error {
 	log := slog.New(slog.DiscardHandler)
 	switch cmd {
 	case "buyers":
-		rdb := redis.NewClient(cfg.RedisAddr, log)
+		rdb := redis.Open(cfg.RedisAddr, cfg.RedisMaster, cfg.RedisSentinels, log)
 		defer func() { _ = rdb.Close() }()
 		return seedBuyers(ctx, pool, rdb, args)
+	case "holds-check":
+		rdb := redis.Open(cfg.RedisAddr, cfg.RedisMaster, cfg.RedisSentinels, log)
+		defer func() { _ = rdb.Close() }()
+		return holdsCheck(ctx, pool, rdb, args)
 	case "event":
 		return seedEvent(ctx, pool, args)
 	case "stadium":

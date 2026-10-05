@@ -46,6 +46,14 @@ type chaosRun struct {
 		Acked        int `json:"acked"`
 		AckedMissing int `json:"acked_missing"`
 	}
+	// Холды Redis против базы после прогона (ADR 029); нули, если сверки не было.
+	Holds struct {
+		RedisHolds int `json:"redis_holds"`
+		DBHeld     int `json:"db_held"`
+		GhostFree  int `json:"ghost_free"`
+		GhostOther int `json:"ghost_other"`
+		Missing    int `json:"missing"`
+	}
 	// Секунд от отказа до следующего события в events.txt (повышение
 	// реплики при переключении PostgreSQL); NaN, если события нет.
 	Promote float64
@@ -122,6 +130,11 @@ func loadChaosRuns(label, dir string) ([]chaosRun, error) {
 		}
 		if err := readJSON(filepath.Join(p, "dups.json"), &r.Dups); err != nil {
 			return nil, err
+		}
+		if _, err := os.Stat(filepath.Join(p, "holds.json")); err == nil {
+			if err := readJSON(filepath.Join(p, "holds.json"), &r.Holds); err != nil {
+				return nil, err
+			}
 		}
 		if err := r.loadPoints(p); err != nil {
 			return nil, fmt.Errorf("%s: %w", p, err)

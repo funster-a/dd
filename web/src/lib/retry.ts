@@ -16,9 +16,12 @@ export function isTemporary(status: number, code?: string): boolean {
 }
 
 // Пауза перед повтором: сколько просит сервер (Retry-After, не больше 5 с),
-// иначе 0,25 с, затем вдвое больше, не дольше 4 с.
-export function retryDelayMs(attempt: number, retryAfter: string | null): number {
+// иначе 0,25 с, затем вдвое больше, не дольше 4 с. Пауза умножается на
+// случайное число от 0,5 до 1,5: иначе тысячи покупателей, ждавших один и тот
+// же сбой, повторяют в одну и ту же секунду и обрушивают сервис, как только
+// он поднялся (ADR 029).
+export function retryDelayMs(attempt: number, retryAfter: string | null, random: () => number = Math.random): number {
   const s = retryAfter === null ? NaN : Number(retryAfter)
-  if (Number.isFinite(s) && s >= 0) return Math.min(s, 5) * 1000
-  return Math.min(250 * 2 ** attempt, 4000)
+  const base = Number.isFinite(s) && s >= 0 ? Math.min(s, 5) * 1000 : Math.min(250 * 2 ** attempt, 4000)
+  return Math.round(base * (0.5 + random()))
 }

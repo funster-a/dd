@@ -7,8 +7,8 @@
 // одного запроса. Клиент ведёт себя как сайт (web/src/lib/retry.ts): при
 // обрыве, 502/503/504 и «запрос ещё выполняется» повторяет тот же запрос с
 // тем же ключом идемпотентности. Пауза — сколько просит Retry-After (не
-// больше 5 с), без него 0,25 с и вдвое больше, не дольше 4 с; всего не
-// дольше RETRY_FOR секунд.
+// больше 5 с), без него 0,25 с и вдвое больше, не дольше 4 с, умноженная на
+// случайное число от 0,5 до 1,5; всего не дольше RETRY_FOR секунд.
 import http from 'k6/http';
 import exec from 'k6/execution';
 import { sleep } from 'k6';
@@ -105,7 +105,8 @@ export default function () {
       return;
     }
     const ra = Number(res.headers['Retry-After']);
-    const wait = res.headers['Retry-After'] !== undefined && Number.isFinite(ra) ? Math.min(ra, 5) : Math.min(0.25 * 2 ** i, 4);
+    const base = res.headers['Retry-After'] !== undefined && Number.isFinite(ra) ? Math.min(ra, 5) : Math.min(0.25 * 2 ** i, 4);
+    const wait = base * (0.5 + Math.random());
     if (Date.now() + wait * 1000 - start > RETRY_FOR) {
       gaveUp.add(1, { outcome: 'tries' });
       return;

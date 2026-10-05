@@ -9,6 +9,7 @@
 //	loadseed scale-report -dir <results>       ёмкость при 1, 2, 4 экземплярах api (ADR 023)
 //	loadseed stadium -out stadium.json         событие на Центральном стадионе Алматы (ADR 024)
 //	loadseed storm-report -dir <results>       отчёт по штурму стадиона (ADR 026)
+//	loadseed chaos-report -series до=<dir>,…  отказ экземпляра api посреди продажи (ADR 027)
 //
 // Покупатели и события создаются кодом модулей — тем же, что в продукте.
 // Инструмент работает рядом с базой и Redis и не публикуется.
@@ -29,7 +30,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: loadseed buyers|event|stadium|check|report|queue-report|scale-report|storm-report [flags]")
+		fmt.Fprintln(os.Stderr, "usage: loadseed buyers|event|stadium|check|report|queue-report|scale-report|storm-report|chaos-report [flags]")
 		os.Exit(2)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -51,6 +52,8 @@ func run(ctx context.Context, cmd string, args []string) error {
 		return scaleReport(args)
 	case "storm-report":
 		return stormReport(args)
+	case "chaos-report":
+		return chaosReport(args)
 	}
 	cfg, err := config.Load()
 	if err != nil {

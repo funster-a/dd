@@ -236,3 +236,30 @@ func TestHeartbeatRegistersAndLeaves(t *testing.T) {
 		t.Fatal("instance is still registered after stop")
 	}
 }
+
+// Свой брошенный ключ (ADR 028): занятие ключа зафиксировалось, а
+// подтверждение потерялось вместе с базой, и запрос получил 503. Владелец —
+// этот же живой экземпляр, но ключ он не обрабатывает, поэтому повтор
+// выполняется сразу, а не ждёт минуту.
+func TestAbandonedOwnKey(t *testing.T) {
+	h := newHarness(t)
+	stop, err := idempotency.Heartbeat(t.Context(), h.db.Pool.Config().ConnConfig, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(stop)
+	var me string
+	if err := h.db.Pool.QueryRow(t.Context(), `SELECT id FROM api_instances`).Scan(&me); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"x":1}`
+	sum := sha256.Sum256([]byte("POST /things\n" + strconv.Itoa(len(body)) + "\n" + body))
+	if _, err := h.db.Pool.Exec(t.Context(),
+		`INSERT INTO idempotency_keys (scope, key, request_hash, owner) VALUES ('anonymous POST /things', 'k-own', $1, $2)`,
+		sum[:], me); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, _ := h.post(t, "k-own", "", body); code != http.StatusCreated || h.calls.Load() != 1 {
+		t.Fatalf("own abandoned key: status %d, calls %d; want 201 and one call", code, h.calls.Load())
+	}
+}

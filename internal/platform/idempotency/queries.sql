@@ -21,14 +21,21 @@ DELETE FROM idempotency_keys
 WHERE scope = @scope AND key = @key AND completed_at IS NULL;
 
 -- name: ReleaseStale :execrows
--- Снимает ключ, брошенный упавшим процессом: занят давно или его владелец
--- перестал отмечаться в api_instances (ADR 027).
+-- Снимает брошенный ключ: занят давно, его владелец перестал отмечаться в
+-- api_instances (ADR 027) или владелец — сам вызывающий экземпляр, который
+-- этот ключ сейчас не обрабатывает (ADR 028).
 DELETE FROM idempotency_keys k
 WHERE k.scope = @scope AND k.key = @key AND k.completed_at IS NULL
   AND (k.created_at < @stale_before
+       OR k.owner = sqlc.narg('self')
        OR (k.owner IS NOT NULL AND NOT EXISTS (
              SELECT 1 FROM api_instances i
              WHERE i.id = k.owner AND i.seen_at > now() - make_interval(secs => @dead_after_secs::float8))));
+
+-- name: ReleaseOwn :exec
+-- Снимает незавершённый ключ этого экземпляра (ADR 028).
+DELETE FROM idempotency_keys
+WHERE scope = @scope AND key = @key AND completed_at IS NULL AND owner = @owner;
 
 -- name: Heartbeat :exec
 INSERT INTO api_instances (id) VALUES (@id)

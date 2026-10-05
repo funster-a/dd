@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -71,9 +72,20 @@ func Middleware(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 			hash := requestHash(r, body)
 			log := httpx.Logger(r.Context()).With(slog.String("idempotency_scope", scope))
 
+			// Тот же ключ уже выполняется в этом экземпляре: повтор пришёл
+			// раньше, чем закончился первый запрос.
+			if !inflight.enter(scope, key) {
+				httpx.WriteError(w, http.StatusConflict, "request_in_progress", "request with this key is being processed, retry")
+				return
+			}
+			defer inflight.leave(scope, key)
+
 			claimed, err := claim(r, q, scope, key, hash)
 			if err != nil {
 				if pgdb.Unavailable(err) {
+					// Ключ мог заняться, а подтверждение — потеряться вместе с
+					// базой; тогда он остался бы «выполняется» за нами.
+					releaseLater(context.WithoutCancel(r.Context()), q, scope, key, log)
 					httpx.WriteUnavailable(w, r, err)
 					return
 				}
@@ -132,28 +144,73 @@ func WithKey(ctx context.Context, key string) context.Context {
 
 // release снимает незавершённый ключ после сбоя. Частый сбой — сама база
 // недоступна (переключение на реплику, ADR 028), и снять ключ сразу тоже не
-// выходит; тогда снятие повторяется в фоне до releaseFor. Иначе ключ живого
-// экземпляра висел бы «выполняется» до staleAfter, и повтор клиента минуту
-// получал бы 409.
+// выходит; тогда снятие повторяется в фоне. Иначе ключ живого экземпляра
+// висел бы «выполняется» до staleAfter, и повтор клиента минуту получал бы
+// 409.
 func release(ctx context.Context, q *idempotencydb.Queries, scope, key string, log *slog.Logger) {
 	err := q.Release(ctx, idempotencydb.ReleaseParams{Scope: scope, Key: key})
 	if err == nil {
 		return
 	}
 	log.Warn("release idempotency key, will retry", slog.Any("error", err))
+	releaseLater(ctx, q, scope, key, log)
+}
+
+// releaseLater снимает ключ этого экземпляра в фоне, каждые releaseEvery до
+// releaseFor, пока база не ответит. Ключ, занятый тем временем другим
+// экземпляром или снова выполняемый здесь, не трогается: снимается только
+// свой ключ, который этот экземпляр сейчас не обрабатывает.
+func releaseLater(ctx context.Context, q *idempotencydb.Queries, scope, key string, log *slog.Logger) {
+	me := currentOwner()
 	go func() {
-		deadline := time.Now().Add(releaseFor)
-		for time.Now().Before(deadline) {
+		var err error
+		for deadline := time.Now().Add(releaseFor); time.Now().Before(deadline); {
 			time.Sleep(releaseEvery)
+			if !inflight.enter(scope, key) {
+				return // повтор клиента уже выполняется здесь и сам решит судьбу ключа
+			}
 			rctx, cancel := context.WithTimeout(ctx, releaseEvery)
-			err := q.Release(rctx, idempotencydb.ReleaseParams{Scope: scope, Key: key})
+			if me == nil {
+				err = q.Release(rctx, idempotencydb.ReleaseParams{Scope: scope, Key: key})
+			} else {
+				err = q.ReleaseOwn(rctx, idempotencydb.ReleaseOwnParams{Scope: scope, Key: key, Owner: me})
+			}
 			cancel()
+			inflight.leave(scope, key)
 			if err == nil {
 				return
 			}
 		}
 		log.Error("release idempotency key", slog.Any("error", err))
 	}()
+}
+
+// inflight — ключи, которые этот экземпляр сейчас обрабатывает. Незавершённый
+// ключ с владельцем «этот экземпляр», которого здесь нет, брошен: занятие
+// ключа зафиксировалось, а подтверждение потерялось, или ключ не удалось
+// снять после сбоя (ADR 028).
+var inflight = keySet{m: map[string]struct{}{}}
+
+type keySet struct {
+	mu sync.Mutex
+	m  map[string]struct{}
+}
+
+func (s *keySet) enter(scope, key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	k := scope + "\x00" + key
+	if _, busy := s.m[k]; busy {
+		return false
+	}
+	s.m[k] = struct{}{}
+	return true
+}
+
+func (s *keySet) leave(scope, key string) {
+	s.mu.Lock()
+	delete(s.m, scope+"\x00"+key)
+	s.mu.Unlock()
 }
 
 // claim занимает ключ; брошенный незавершённый ключ — занятый давно или
@@ -168,6 +225,7 @@ func claim(r *http.Request, q *idempotencydb.Queries, scope, key string, hash []
 	released, err := q.ReleaseStale(ctx, idempotencydb.ReleaseStaleParams{
 		Scope: scope, Key: key,
 		StaleBefore:   time.Now().Add(-staleAfter),
+		Self:          me, // свой ключ, которого нет среди выполняемых, брошен
 		DeadAfterSecs: deadAfter.Seconds(),
 	})
 	if err != nil || released == 0 {

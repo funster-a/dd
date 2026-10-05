@@ -35,13 +35,22 @@ const now = ref(Date.now())
 // У большой площадки (ADR 024) сначала план с секторами; места рисуются
 // только в выбранном секторе, и занятость грузится только для него.
 const sector = ref<string | null>(null)
-const plan = computed(() => (event.value?.layout ? buildPlan(event.value.layout, event.value.prices, availability.value?.sections) : null))
+const plan = computed(() =>
+  event.value?.layout ? buildPlan(event.value.layout, event.value.prices, availability.value?.sections, availability.value?.general) : null,
+)
 const map = computed(() => {
   const e = event.value
   if (!e?.layout) return null
   return e.layout.plan ? buildSeatMap(e.layout, e.prices, sector.value ?? '') : buildSeatMap(e.layout, e.prices)
 })
 const sectorInfo = computed(() => plan.value?.sectors.find((s) => s.name === sector.value) ?? null)
+// Входные зоны: у зала — все под схемой, у стадиона — только выбранная на
+// плане фан-зона (ADR 025).
+const shownZones = computed(() => {
+  const zones = map.value?.zones ?? []
+  if (!plan.value) return zones
+  return zones.filter((z) => z.name === sector.value)
+})
 const taken = computed(() => takenSet(availability.value))
 const zoneAvailable = computed(() => Object.fromEntries((availability.value?.general ?? []).map((g) => [g.section, g.available])))
 const zoneQuantities = computed(() => Object.fromEntries(cart.general))
@@ -373,9 +382,9 @@ const cartLines = computed(() => [
         </div>
       </template>
       <SeatMapView v-if="map.sections.length" :key="sector ?? ''" :map="map" :taken="taken" :cart="cart" @toggle="onToggle" />
-      <div v-if="map.zones.length" class="seats__zones">
-        <h3 class="seats__subtitle">Входные зоны</h3>
-        <ZonePicker :zones="map.zones" :available="zoneAvailable" :quantities="zoneQuantities" @change="onZone" />
+      <div v-if="shownZones.length" class="seats__zones">
+        <h3 v-if="!plan" class="seats__subtitle">Входные зоны</h3>
+        <ZonePicker :zones="shownZones" :available="zoneAvailable" :quantities="zoneQuantities" @change="onZone" />
       </div>
       <p class="seats__note">
         Не больше {{ tickets(event.max_tickets_per_buyer) }} на покупателя. Места держатся за вами 10 минут, пока вы платите.
@@ -638,6 +647,15 @@ const cartLines = computed(() => [
 }
 .cat-6 {
   --c: var(--cat-6);
+}
+.cat-7 {
+  --c: var(--cat-7);
+}
+.cat-8 {
+  --c: var(--cat-8);
+}
+.cat-9 {
+  --c: var(--cat-9);
 }
 .event--with-cart {
   padding-bottom: 88px;

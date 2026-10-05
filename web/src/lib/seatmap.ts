@@ -1,4 +1,5 @@
 import type { Availability, Layout, PriceCategory, SeatRef } from '@/api/types'
+import { priceLookup } from './pricing'
 
 // Модель схемы зала для отрисовки в SVG. Если у всех мест сектора есть
 // координаты из редактора, место рисуется там; иначе ряды раскладываются
@@ -52,16 +53,8 @@ export const seatKey = (r: SeatRef): string => `${r.section}\u001f${r.row}\u001f
 // внутри выбранного на плане сектора (ADR 024). Пустая строка — ни одного
 // сектора, только входные зоны и категории.
 export function buildSeatMap(layout: Layout, prices: PriceCategory[], only?: string): SeatMap {
-  const byPrice = [...prices].sort((a, b) => b.price_tiyn - a.price_tiyn || a.name.localeCompare(b.name))
-  const color = new Map<string, number>()
-  const priceOf = new Map<string, number>()
-  byPrice.forEach((p, i) => {
-    for (const s of p.sections) {
-      color.set(s, (i % 6) + 1)
-      priceOf.set(s, p.price_tiyn)
-    }
-  })
-
+  // Цена — у сектора или у ряда (ADR 025).
+  const lk = priceLookup(layout, prices)
   const seated = layout.sections.filter((s) => s.kind === 'seat' && (only === undefined || s.name === only))
   const widest = Math.max(1, ...seated.flatMap((s) => (s.rows ?? []).map((r) => r.seats.length)))
   const contentW = widest * PITCH
@@ -73,8 +66,7 @@ export function buildSeatMap(layout: Layout, prices: PriceCategory[], only?: str
     const rows = sec.rows ?? []
     const all = rows.flatMap((r) => r.seats)
     const hasCoords = all.length > 0 && all.every((s) => typeof s.x === 'number' && typeof s.y === 'number')
-    const cat = color.get(sec.name) ?? 1
-    const price = priceOf.get(sec.name) ?? 0
+    const priced = (row: string) => lk.of(sec.name, row) ?? { color: 1, priceTiyn: 0 }
     const out: MapSection = { name: sec.name, x: 0, y, width, rowLabels: [], seats: [] }
     y += 26 // подпись сектора
 
@@ -91,7 +83,8 @@ export function buildSeatMap(layout: Layout, prices: PriceCategory[], only?: str
           const sx = LABEL_W + ((s.x as number) - minX) * scale + (contentW - spanX * scale) / 2
           const sy = y + ((s.y as number) - minY) * scale + RADIUS
           rowY = sy
-          out.seats.push(seat(sec.name, row.label, s.label, sx, sy, cat, price))
+          const p = priced(row.label)
+          out.seats.push(seat(sec.name, row.label, s.label, sx, sy, p.color, p.priceTiyn))
         }
         out.rowLabels.push({ label: row.label, y: rowY })
       }
@@ -101,7 +94,8 @@ export function buildSeatMap(layout: Layout, prices: PriceCategory[], only?: str
         const rowW = row.seats.length * PITCH
         const x0 = LABEL_W + (contentW - rowW) / 2 + PITCH / 2
         const cy = y + RADIUS
-        row.seats.forEach((s, i) => out.seats.push(seat(sec.name, row.label, s.label, x0 + i * PITCH, cy, cat, price)))
+        const p = priced(row.label)
+        row.seats.forEach((s, i) => out.seats.push(seat(sec.name, row.label, s.label, x0 + i * PITCH, cy, p.color, p.priceTiyn)))
         out.rowLabels.push({ label: row.label, y: cy })
         y += PITCH + ROW_GAP
       }
@@ -112,7 +106,10 @@ export function buildSeatMap(layout: Layout, prices: PriceCategory[], only?: str
 
   const zones: GeneralZone[] = layout.sections
     .filter((s) => s.kind === 'general')
-    .map((s) => ({ name: s.name, capacity: s.capacity ?? 0, category: color.get(s.name) ?? 1, priceTiyn: priceOf.get(s.name) ?? 0 }))
+    .map((s) => {
+      const p = lk.of(s.name)
+      return { name: s.name, capacity: s.capacity ?? 0, category: p?.color ?? 1, priceTiyn: p?.priceTiyn ?? 0 }
+    })
 
   return {
     width,
@@ -121,7 +118,7 @@ export function buildSeatMap(layout: Layout, prices: PriceCategory[], only?: str
     stageLabel: layout.plan?.field_label ? layout.plan.field_label.toUpperCase() : 'СЦЕНА',
     sections,
     zones,
-    categories: byPrice.map((p, i) => ({ name: p.name, priceTiyn: p.price_tiyn, color: (i % 6) + 1 })),
+    categories: lk.categories,
   }
 }
 

@@ -105,4 +105,13 @@ const emit = defineEmits<{ change: [zone: string, quantity: number] }>()
 .cat-6 {
   --c: var(--cat-6);
 }
+.cat-7 {
+  --c: var(--cat-7);
+}
+.cat-8 {
+  --c: var(--cat-8);
+}
+.cat-9 {
+  --c: var(--cat-9);
+}
 </style>

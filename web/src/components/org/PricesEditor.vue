@@ -10,66 +10,109 @@ import { money } from '@/lib/format'
 import { parseTenge, tengeInput } from '@/lib/money'
 import { buildSeatMap, emptyCart } from '@/lib/seatmap'
 import { buildPlan } from '@/lib/plan'
+import {
+  assignRows,
+  assignWhole,
+  fromRowRanges,
+  owners,
+  rowLabels,
+  toRowRanges,
+  type DraftCategory,
+  type DraftRange,
+} from '@/lib/pricing'
 
-// Ценовые категории события: название, цена и сектора схемы. Каждому
-// сектору — ровно одна цена; превью схемы красится по категориям.
+// Ценовые категории события: название, цена, сектора схемы целиком и ряды
+// внутри секторов (ADR 025). Каждому месту — ровно одна цена; превью схемы
+// красится по категориям.
 const props = defineProps<{ eventId: string; seatMap: OrgSeatMap; locked: boolean }>()
 const emit = defineEmits<{ saved: [categories: PriceCategory[]] }>()
 const toast = useToast()
 
-interface Row {
-  name: string
-  price: string
-  sections: string[]
-}
-const rows = reactive<Row[]>([])
+const rows = reactive<DraftCategory[]>([])
 const loaded = ref(false)
 const busy = ref(false)
 const error = ref('')
+const layout = computed(() => props.seatMap.layout)
 
-const sections = computed(() => props.seatMap.layout.sections.map((s) => s.name))
+const sections = computed(() => layout.value.sections.map((s) => s.name))
+const sectionOf = (name: string) => layout.value.sections.find((x) => x.name === name)
+const rowCount = (name: string) => sectionOf(name)?.rows?.length ?? 0
 const seatsIn = (name: string) => {
-  const s = props.seatMap.layout.sections.find((x) => x.name === name)
+  const s = sectionOf(name)
   return s?.kind === 'general' ? (s.capacity ?? 0) : (s?.rows ?? []).reduce((n, r) => n + r.seats.length, 0)
 }
-const owner = (section: string) => rows.findIndex((r) => r.sections.includes(section))
-const unpriced = computed(() => sections.value.filter((s) => owner(s) < 0))
+// Владельцы рядов сектора; у входной зоны «ряд» один — она сама.
+const ownersOf = (name: string) => owners(rows, name, Math.max(rowCount(name), 1))
+const wholeOwner = (name: string) => {
+  const o = ownersOf(name)
+  return o.every((x) => x === o[0]) ? o[0]! : -2 // -2 — сектор поделён по рядам
+}
+const unpriced = computed(() => sections.value.filter((s) => ownersOf(s).includes(-1)))
 
 onMounted(async () => {
   const cats = await orgApi.prices(props.eventId).catch(() => [] as PriceCategory[])
-  if (cats.length) rows.push(...cats.map((c) => ({ name: c.name, price: tengeInput(c.price_tiyn), sections: [...c.sections] })))
+  if (cats.length)
+    rows.push(
+      ...cats.map((c) => ({ name: c.name, price: tengeInput(c.price_tiyn), sections: [...c.sections], rows: fromRowRanges(layout.value, c.rows) })),
+    )
   // Первый раз — по категории на сектор: организатору остаётся вписать цены.
-  else rows.push(...sections.value.map((s) => ({ name: s, price: '', sections: [s] })))
+  else rows.push(...sections.value.map((s) => ({ name: s, price: '', sections: [s], rows: [] })))
   loaded.value = true
 })
 
+// У стадиона секторов десятки: категория показывает свои сектора, а все —
+// по кнопке «изменить сектора». В зале до 12 секторов видны сразу.
+const MANY_SECTIONS = 12
+const expanded = ref<number | null>(null)
+const chipsOf = (i: number) =>
+  sections.value.length <= MANY_SECTIONS || expanded.value === i
+    ? sections.value
+    : sections.value.filter((s) => rows[i]!.sections.includes(s) || ownersOf(s).includes(i))
+
 function toggle(i: number, section: string) {
-  if (props.locked) return
-  const row = rows[i]!
-  if (row.sections.includes(section)) {
-    row.sections = row.sections.filter((s) => s !== section)
-    return
-  }
-  const prev = owner(section)
-  if (prev >= 0) rows[prev]!.sections = rows[prev]!.sections.filter((s) => s !== section)
-  row.sections.push(section)
+  if (!props.locked) assignWhole(rows, i, section, rowCount(section))
+}
+
+// Форма «отдать ряды сектора категории»: сектор и ряды с — по.
+const rowForm = reactive<{ cat: number; section: string; from: number; to: number }>({ cat: -1, section: '', from: 0, to: 0 })
+const seatedSections = computed(() => layout.value.sections.filter((s) => s.kind === 'seat').map((s) => s.name))
+const formRows = computed(() => rowLabels(sectionOf(rowForm.section)))
+function openRowForm(i: number) {
+  rowForm.cat = i
+  rowForm.section = rowForm.section || seatedSections.value[0] || ''
+  rowForm.from = 0
+  rowForm.to = Math.min(2, Math.max(formRows.value.length - 1, 0))
+}
+function applyRows() {
+  if (rowForm.cat < 0 || !rowForm.section) return
+  assignRows(rows, rowForm.cat, rowForm.section, rowCount(rowForm.section), rowForm.from, rowForm.to)
+  rowForm.cat = -1
+}
+function dropRange(i: number, k: number) {
+  if (!props.locked) rows[i]!.rows.splice(k, 1)
+}
+const rangeLabel = (r: DraftRange) => {
+  const labels = rowLabels(sectionOf(r.section))
+  return r.from === r.to ? `ряд ${labels[r.from]}` : `ряды ${labels[r.from]}–${labels[r.to]}`
 }
 
 function addRow() {
-  rows.push({ name: `Категория ${rows.length + 1}`, price: '', sections: [] })
+  rows.push({ name: `Категория ${rows.length + 1}`, price: '', sections: [], rows: [] })
 }
 
-const parsed = computed(() => rows.map((r) => ({ name: r.name.trim(), price_tiyn: parseTenge(r.price), sections: r.sections })))
+const parsed = computed(() =>
+  rows.map((r) => ({ name: r.name.trim(), price_tiyn: parseTenge(r.price), sections: r.sections, rows: toRowRanges(layout.value, r.rows) })),
+)
 
 // Превью: схема с текущими (ещё не сохранёнными) ценами. У стадиона —
 // план секторов вместо 24 тысяч мест (ADR 024).
 const draftCategories = computed(() =>
   parsed.value
-    .filter((p) => p.sections.length)
-    .map((p, i) => ({ id: String(i), name: p.name || '—', price_tiyn: p.price_tiyn ?? 0, currency: 'KZT', sections: p.sections })),
+    .filter((p) => p.sections.length || p.rows.length)
+    .map((p, i) => ({ id: String(i), name: p.name || '—', price_tiyn: p.price_tiyn ?? 0, currency: 'KZT', sections: p.sections, rows: p.rows })),
 )
-const preview = computed(() => buildSeatMap(props.seatMap.layout, draftCategories.value, props.seatMap.layout.plan ? '' : undefined))
-const previewPlan = computed(() => buildPlan(props.seatMap.layout, draftCategories.value, undefined))
+const preview = computed(() => buildSeatMap(layout.value, draftCategories.value, layout.value.plan ? '' : undefined))
+const previewPlan = computed(() => buildPlan(layout.value, draftCategories.value, undefined))
 // Цвет категории — как на превью: схема красит категории по убыванию цены.
 const colorOf = (name: string) => preview.value.categories.find((c) => c.name === (name.trim() || '—'))?.color ?? 0
 const noTaken = new Set<string>()
@@ -77,13 +120,16 @@ const cart = emptyCart()
 
 async function save() {
   error.value = ''
-  const cats = parsed.value.filter((p) => p.sections.length)
+  const cats = parsed.value.filter((p) => p.sections.length || p.rows.length)
   if (unpriced.value.length) return void (error.value = `Без цены: ${unpriced.value.join(', ')}`)
   const bad = cats.find((c) => !c.name || c.price_tiyn === null)
   if (bad) return void (error.value = bad.name ? `«${bad.name}»: цена в тенге, например 5000 или 4 999,50` : 'У каждой категории должно быть название')
   busy.value = true
   try {
-    const saved = await orgApi.setPrices(props.eventId, cats.map((c) => ({ name: c.name, price_tiyn: c.price_tiyn!, sections: c.sections })))
+    const saved = await orgApi.setPrices(
+      props.eventId,
+      cats.map((c) => ({ name: c.name, price_tiyn: c.price_tiyn!, sections: c.sections, rows: c.rows })),
+    )
     toast.show('Цены сохранены', 'ok')
     emit('saved', saved)
   } catch (e) {
@@ -109,17 +155,55 @@ async function save() {
         </div>
         <div class="chips" role="group" :aria-label="`Сектора категории ${r.name}`">
           <button
-            v-for="s in sections"
+            v-for="s in chipsOf(i)"
             :key="s"
             type="button"
             class="chip-btn"
-            :class="{ 'is-on': r.sections.includes(s), 'is-other': !r.sections.includes(s) && owner(s) >= 0 }"
+            :class="{
+              'is-on': r.sections.includes(s),
+              'is-split': wholeOwner(s) === -2 && ownersOf(s).includes(i),
+              'is-other': !r.sections.includes(s) && wholeOwner(s) >= 0,
+            }"
             :aria-pressed="r.sections.includes(s)"
             :disabled="locked"
             @click="toggle(i, s)"
           >
             {{ s }} <span class="mono">{{ seatsIn(s) }}</span>
           </button>
+        </div>
+        <button
+          v-if="!locked && sections.length > MANY_SECTIONS"
+          type="button"
+          class="link link--chips"
+          @click="expanded = expanded === i ? null : i"
+        >
+          {{ expanded === i ? 'свернуть' : 'изменить сектора' }}
+        </button>
+        <ul v-if="r.rows.length" class="ranges">
+          <li v-for="(rr, k) in r.rows" :key="`${rr.section}-${rr.from}`">
+            {{ rr.section }} · {{ rangeLabel(rr) }}
+            <button v-if="!locked" type="button" class="icon icon--sm" aria-label="Убрать ряды" @click="dropRange(i, k)">×</button>
+          </li>
+        </ul>
+        <div v-if="!locked && seatedSections.length" class="rows-form">
+          <button v-if="rowForm.cat !== i" type="button" class="link" @click="openRowForm(i)">+ ряды сектора</button>
+          <template v-else>
+            <select v-model="rowForm.section" class="input input--sm" aria-label="Сектор" @change="rowForm.from = 0; rowForm.to = 0">
+              <option v-for="s in seatedSections" :key="s" :value="s">{{ s }}</option>
+            </select>
+            <label>ряды с
+              <select v-model.number="rowForm.from" class="input input--sm" aria-label="С ряда">
+                <option v-for="(l, k) in formRows" :key="k" :value="k">{{ l }}</option>
+              </select>
+            </label>
+            <label>по
+              <select v-model.number="rowForm.to" class="input input--sm" aria-label="По ряд">
+                <option v-for="(l, k) in formRows" :key="k" :value="k">{{ l }}</option>
+              </select>
+            </label>
+            <button type="button" class="btn btn--sm" @click="applyRows">Отдать категории</button>
+            <button type="button" class="link" @click="rowForm.cat = -1">отмена</button>
+          </template>
         </div>
         <p v-if="parsed[i]?.price_tiyn === 0" class="free">Бесплатные билеты: покупатель оформит заказ без оплаты.</p>
       </div>
@@ -254,6 +338,60 @@ async function save() {
   background: color-mix(in srgb, var(--c) 14%, var(--paper));
   color: var(--ink);
 }
+.chip-btn.is-split {
+  border: 1px dashed var(--c);
+  color: var(--ink);
+}
+.ranges {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-sm);
+}
+.ranges li {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.icon--sm {
+  width: 22px;
+  height: 22px;
+  font-size: 1.1rem;
+}
+.rows-form {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  font-size: var(--text-sm);
+}
+.rows-form label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.input--sm {
+  padding: 4px 8px;
+  width: auto;
+}
+.link--chips {
+  grid-column: 2;
+  justify-self: start;
+  font-size: var(--text-sm);
+}
+.link {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+}
 .chip-btn.is-other {
   opacity: 0.45;
   text-decoration: line-through;
@@ -326,4 +464,7 @@ async function save() {
 .cat-4 { --c: var(--cat-4); }
 .cat-5 { --c: var(--cat-5); }
 .cat-6 { --c: var(--cat-6); }
+.cat-7 { --c: var(--cat-7); }
+.cat-8 { --c: var(--cat-8); }
+.cat-9 { --c: var(--cat-9); }
 </style>

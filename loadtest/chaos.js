@@ -39,6 +39,9 @@ const gaveUp = new Counter('chaos_gave_up');
 const retries = new Counter('chaos_retries');
 const recovered = new Trend('chaos_recovery_ms', true); // от первой попытки до успеха после повторов
 const orderTime = new Trend('chaos_order_ms', true);
+// Подтверждённый заказ с его id: после переключения базы проверяется, что
+// каждый подтверждённый клиенту заказ в ней есть (ADR 028).
+const created = new Counter('chaos_created');
 
 function kind(res) {
   if (res.status === 0) return 'network';
@@ -77,6 +80,11 @@ export default function () {
     attempt.add(1, { outcome: k, try: i === 0 ? 'first' : 'retry' });
     orderTime.add(res.timings.duration);
     if (k === 'created') {
+      try {
+        created.add(1, { order: res.json().id });
+      } catch (_) {
+        // тело не разобрать — проверка потери его не учтёт
+      }
       if (i === 0) okFirst.add(1);
       else {
         okRetry.add(1);

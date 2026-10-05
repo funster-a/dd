@@ -160,15 +160,14 @@ for r in csv.DictReader(open(sys.argv[1])):
                 print(kv[6:])
 PY
     acked=$(wc -l <"$dir/acked.txt")
-    present=0
-    if [[ $acked -gt 0 ]]; then
-      # Тысячи id не помещаются в аргумент: через stdin во временную таблицу.
-      present=$({ echo "CREATE TEMP TABLE acked (id uuid); COPY acked FROM STDIN;"; cat "$dir/acked.txt"; echo '\.'
-        echo "SELECT count(*) FROM orders JOIN acked USING (id);"; } |
-        docker exec -i -e PGPASSWORD=dd-admin "dd-ha-pg-$p-1" psql -U postgres -d dd -h 127.0.0.1 -qAt -f - | tail -1)
-    fi
-    echo "{\"orders\": $orders, \"buyers_with_two_orders\": $dups, \"acked\": $acked, \"acked_missing\": $((acked - present))}" >"$dir/dups.json"
-    echo "pgchaos $v #$rep invariant=$verdict acked=$acked missing=$((acked - present)) dups=$dups $(tail -1 "$dir/k6.log" | cut -c1-160)"
+    # Тысячи id не помещаются в аргумент: через stdin во временную таблицу.
+    # Пропавшие id — в acked_missing.txt, для разбора.
+    { echo "CREATE TEMP TABLE acked (id uuid); COPY acked FROM STDIN;"; cat "$dir/acked.txt"; echo '\.'
+      echo "SELECT a.id FROM acked a LEFT JOIN orders o USING (id) WHERE o.id IS NULL;"; } |
+      docker exec -i -e PGPASSWORD=dd-admin "dd-ha-pg-$p-1" psql -U postgres -d dd -h 127.0.0.1 -qAt -f - >"$dir/acked_missing.txt"
+    missing=$(grep -c . "$dir/acked_missing.txt" || true)
+    echo "{\"orders\": $orders, \"buyers_with_two_orders\": $dups, \"acked\": $acked, \"acked_missing\": $missing}" >"$dir/dups.json"
+    echo "pgchaos $v #$rep invariant=$verdict acked=$acked missing=$missing dups=$dups $(tail -1 "$dir/k6.log" | cut -c1-160)"
     sleep 3
   done
 done

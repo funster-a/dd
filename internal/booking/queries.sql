@@ -67,8 +67,8 @@ WHERE s.id = picked.id AND p.id = s.price_category_id
 RETURNING s.id, s.section, s.row_label, s.seat_label, p.price_tiyn;
 
 -- name: InsertOrder :one
-INSERT INTO orders (id, organizer_id, event_id, buyer_id, email, total_tiyn, expires_at, client_ip)
-VALUES (@id, @organizer_id, @event_id, @buyer_id, @email, @total_tiyn, @expires_at, sqlc.narg(client_ip)::inet)
+INSERT INTO orders (id, organizer_id, event_id, buyer_id, email, total_tiyn, expires_at, client_ip, request_key)
+VALUES (@id, @organizer_id, @event_id, @buyer_id, @email, @total_tiyn, @expires_at, sqlc.narg(client_ip)::inet, sqlc.narg(request_key))
 RETURNING *;
 
 -- name: InsertOrderItems :exec
@@ -80,6 +80,9 @@ SELECT * FROM orders WHERE id = @id AND buyer_id = @buyer_id FOR UPDATE;
 
 -- name: GetBuyerOrder :one
 SELECT * FROM orders WHERE id = @id AND buyer_id = @buyer_id;
+
+-- name: GetOrderByRequestKey :one
+SELECT id, event_id FROM orders WHERE buyer_id = @buyer_id AND request_key = @request_key;
 
 -- name: ListOrderItems :many
 SELECT i.event_seat_id, s.kind, s.section, s.row_label, s.seat_label, i.price_tiyn, i.fee_tiyn

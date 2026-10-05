@@ -26,6 +26,7 @@ import type {
   TicketView,
   UpcomingEvent,
 } from './types'
+import { RETRY_FOR_MS, isTemporary, retryDelayMs } from '@/lib/retry'
 
 // Ошибка API в формате {"error": {"code", "message"}} (ADR 007).
 export class ApiError extends Error {
@@ -102,8 +103,35 @@ async function failure(res: Response, realm: Realm): Promise<ApiError> {
   return new ApiError(res.status, err.code ?? 'http_' + res.status, err.message ?? res.statusText)
 }
 
+// sendRetrying повторяет чтение и запросы с ключом идемпотентности при
+// временном сбое: обрыв, 502/503/504, «запрос ещё выполняется» (ADR 028).
+// Остальные запросы уходят один раз: их повтор мог бы выполнить действие
+// дважды.
+async function sendRetrying(path: string, opts: RequestOptions): Promise<Response> {
+  const safe = (opts.method ?? 'GET') === 'GET' || opts.idempotencyKey !== undefined
+  const deadline = Date.now() + RETRY_FOR_MS
+  for (let attempt = 0; ; attempt++) {
+    let res: Response | null = null
+    let netErr: unknown = null
+    try {
+      res = await send(path, opts)
+    } catch (e) {
+      netErr = e
+    }
+    let code: string | undefined
+    if (res?.status === 409) code = (await res.clone().json().catch(() => null))?.error?.code
+    const temporary = isTemporary(res?.status ?? 0, code)
+    const wait = retryDelayMs(attempt, res?.headers.get('Retry-After') ?? null)
+    if (!safe || !temporary || Date.now() + wait > deadline) {
+      if (res) return res
+      throw netErr
+    }
+    await new Promise((r) => setTimeout(r, wait))
+  }
+}
+
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
-  const res = await send(path, opts)
+  const res = await sendRetrying(path, opts)
   if (!res.ok) throw await failure(res, opts.realm ?? 'buyer')
   if (res.status === 204) return undefined as T
   return (await res.json()) as T

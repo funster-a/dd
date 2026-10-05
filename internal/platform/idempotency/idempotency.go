@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -21,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/funster-a/dd/internal/platform/auth"
+	pgdb "github.com/funster-a/dd/internal/platform/db"
 	"github.com/funster-a/dd/internal/platform/httpx"
 	"github.com/funster-a/dd/internal/platform/idempotency/idempotencydb"
 )
@@ -36,6 +38,13 @@ const (
 	// staleAfter — через сколько незавершённый ключ считается брошенным
 	// (процесс упал посреди запроса) и может быть занят заново.
 	staleAfter = time.Minute
+)
+
+// Снятие ключа после сбоя повторяется releaseEvery, пока не пройдёт
+// releaseFor (ADR 028). Переменные — чтобы тест не ждал секундами.
+var (
+	releaseEvery = 500 * time.Millisecond
+	releaseFor   = 30 * time.Second
 )
 
 // Middleware возвращает middleware идемпотентности.
@@ -63,8 +72,23 @@ func Middleware(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 			hash := requestHash(r, body)
 			log := httpx.Logger(r.Context()).With(slog.String("idempotency_scope", scope))
 
+			// Тот же ключ уже выполняется в этом экземпляре: повтор пришёл
+			// раньше, чем закончился первый запрос.
+			if !inflight.enter(scope, key) {
+				httpx.WriteError(w, http.StatusConflict, "request_in_progress", "request with this key is being processed, retry")
+				return
+			}
+			defer inflight.leave(scope, key)
+
 			claimed, err := claim(r, q, scope, key, hash)
 			if err != nil {
+				if pgdb.Unavailable(err) {
+					// Ключ мог заняться, а подтверждение — потеряться вместе с
+					// базой; тогда он остался бы «выполняется» за нами.
+					releaseLater(context.WithoutCancel(r.Context()), q, scope, key, log)
+					httpx.WriteUnavailable(w, r, err)
+					return
+				}
 				log.Error("claim idempotency key", slog.Any("error", err))
 				httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
 				return
@@ -75,23 +99,19 @@ func Middleware(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 			}
 
 			rec := &recorder{ResponseWriter: w, status: http.StatusOK}
-			next.ServeHTTP(rec, r)
+			next.ServeHTTP(rec, r.WithContext(WithKey(r.Context(), key)))
 
 			// Контекст запроса мог закончиться; сохранить результат нужно всё равно.
 			ctx := context.WithoutCancel(r.Context())
 			if rec.status >= http.StatusInternalServerError {
 				// Сбой на нашей стороне не фиксируем: клиент должен иметь возможность повторить.
-				if err := q.Release(ctx, idempotencydb.ReleaseParams{Scope: scope, Key: key}); err != nil {
-					log.Error("release idempotency key", slog.Any("error", err))
-				}
+				release(ctx, q, scope, key, log)
 				return
 			}
 			if rec.truncated {
 				// Слишком большой ответ не сохранить целиком: снимаем ключ, как при сбое.
 				log.Warn("response too large to store for idempotency", slog.Int("limit", maxBodyBytes))
-				if err := q.Release(ctx, idempotencydb.ReleaseParams{Scope: scope, Key: key}); err != nil {
-					log.Error("release idempotency key", slog.Any("error", err))
-				}
+				release(ctx, q, scope, key, log)
 				return
 			}
 			if err := q.Complete(ctx, idempotencydb.CompleteParams{
@@ -106,6 +126,93 @@ func Middleware(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 	}
 }
 
+type keyCtx struct{}
+
+// KeyFrom — ключ идемпотентности запроса, который сейчас выполняется. Модуль
+// пишет его в создаваемую сущность в той же транзакции, если повтор после
+// неизвестного исхода фиксации нельзя распознать иначе (ADR 028).
+func KeyFrom(ctx context.Context) string {
+	k, _ := ctx.Value(keyCtx{}).(string)
+	return k
+}
+
+// WithKey кладёт ключ в контекст; middleware делает это сам, функция нужна
+// тестам модулей.
+func WithKey(ctx context.Context, key string) context.Context {
+	return context.WithValue(ctx, keyCtx{}, key)
+}
+
+// release снимает незавершённый ключ после сбоя. Частый сбой — сама база
+// недоступна (переключение на реплику, ADR 028), и снять ключ сразу тоже не
+// выходит; тогда снятие повторяется в фоне. Иначе ключ живого экземпляра
+// висел бы «выполняется» до staleAfter, и повтор клиента минуту получал бы
+// 409.
+func release(ctx context.Context, q *idempotencydb.Queries, scope, key string, log *slog.Logger) {
+	err := q.Release(ctx, idempotencydb.ReleaseParams{Scope: scope, Key: key})
+	if err == nil {
+		return
+	}
+	log.Warn("release idempotency key, will retry", slog.Any("error", err))
+	releaseLater(ctx, q, scope, key, log)
+}
+
+// releaseLater снимает ключ этого экземпляра в фоне, каждые releaseEvery до
+// releaseFor, пока база не ответит. Ключ, занятый тем временем другим
+// экземпляром или снова выполняемый здесь, не трогается: снимается только
+// свой ключ, который этот экземпляр сейчас не обрабатывает.
+func releaseLater(ctx context.Context, q *idempotencydb.Queries, scope, key string, log *slog.Logger) {
+	me := currentOwner()
+	go func() {
+		var err error
+		for deadline := time.Now().Add(releaseFor); time.Now().Before(deadline); {
+			time.Sleep(releaseEvery)
+			if !inflight.enter(scope, key) {
+				return // повтор клиента уже выполняется здесь и сам решит судьбу ключа
+			}
+			rctx, cancel := context.WithTimeout(ctx, releaseEvery)
+			if me == nil {
+				err = q.Release(rctx, idempotencydb.ReleaseParams{Scope: scope, Key: key})
+			} else {
+				err = q.ReleaseOwn(rctx, idempotencydb.ReleaseOwnParams{Scope: scope, Key: key, Owner: me})
+			}
+			cancel()
+			inflight.leave(scope, key)
+			if err == nil {
+				return
+			}
+		}
+		log.Error("release idempotency key", slog.Any("error", err))
+	}()
+}
+
+// inflight — ключи, которые этот экземпляр сейчас обрабатывает. Незавершённый
+// ключ с владельцем «этот экземпляр», которого здесь нет, брошен: занятие
+// ключа зафиксировалось, а подтверждение потерялось, или ключ не удалось
+// снять после сбоя (ADR 028).
+var inflight = keySet{m: map[string]struct{}{}}
+
+type keySet struct {
+	mu sync.Mutex
+	m  map[string]struct{}
+}
+
+func (s *keySet) enter(scope, key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	k := scope + "\x00" + key
+	if _, busy := s.m[k]; busy {
+		return false
+	}
+	s.m[k] = struct{}{}
+	return true
+}
+
+func (s *keySet) leave(scope, key string) {
+	s.mu.Lock()
+	delete(s.m, scope+"\x00"+key)
+	s.mu.Unlock()
+}
+
 // claim занимает ключ; брошенный незавершённый ключ — занятый давно или
 // экземпляром, который перестал отмечаться (ADR 027), — занимается заново.
 func claim(r *http.Request, q *idempotencydb.Queries, scope, key string, hash []byte) (bool, error) {
@@ -118,6 +225,7 @@ func claim(r *http.Request, q *idempotencydb.Queries, scope, key string, hash []
 	released, err := q.ReleaseStale(ctx, idempotencydb.ReleaseStaleParams{
 		Scope: scope, Key: key,
 		StaleBefore:   time.Now().Add(-staleAfter),
+		Self:          me, // свой ключ, которого нет среди выполняемых, брошен
 		DeadAfterSecs: deadAfter.Seconds(),
 	})
 	if err != nil || released == 0 {
@@ -139,6 +247,10 @@ func replay(w http.ResponseWriter, r *http.Request, q *idempotencydb.Queries,
 		return
 	}
 	if err != nil {
+		if pgdb.Unavailable(err) {
+			httpx.WriteUnavailable(w, r, err)
+			return
+		}
 		log.Error("load idempotency key", slog.Any("error", err))
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
 		return

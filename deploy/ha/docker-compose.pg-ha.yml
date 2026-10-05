@@ -1,0 +1,82 @@
+# PostgreSQL с репликой и автоматическим переключением (этап 4, ADR 028).
+# Три узла repmgr: pg-0 начинает ведущим, pg-1 и pg-2 — потоковые реплики.
+# Если ведущий не отвечает RECONNECT_ATTEMPTS × RECONNECT_INTERVAL секунд,
+# repmgrd на репликах выбирает и повышает одну из них, вторая переходит к
+# новому ведущему. Вернувшийся бывший ведущий находит нового и встаёт
+# репликой.
+#
+# Приложение подключается к обоим узлам сразу и выбирает тот, что принимает
+# запись (pgx: несколько хостов и target_session_attrs=read-write):
+#   postgres://dd:dd@localhost:5433,localhost:5434,localhost:5435/dd?sslmode=disable&target_session_attrs=read-write
+#
+# Репликация по умолчанию асинхронная. Синхронная — ведущий подтверждает
+# фиксацию, только когда её получила хотя бы одна реплика — включается на
+# поднятом кластере, на каждом узле:
+#   ALTER SYSTEM SET synchronous_standby_names = 'ANY 1 ("pg-0","pg-1","pg-2")'; SELECT pg_reload_conf();
+# Не через настройки образа (POSTGRESQL_SYNCHRONOUS_COMMIT_MODE): он задаёт
+# её только начальному ведущему, и после первого переключения новый ведущий
+# молча становится асинхронным. И не в конфиге при старте: ведущий ждал бы
+# реплику, которой ещё нет, и инициализация базы зависла бы. Так делает
+# loadtest/pgchaos.sh (ADR 028). Образ — архивная
+# сборка Bitnami (bitnamilegacy): для стенда; продакшен — в ADR 028.
+name: dd-ha
+
+x-pg: &pg
+  image: bitnamilegacy/postgresql-repmgr:17
+  environment: &pgenv
+    POSTGRESQL_USERNAME: dd
+    POSTGRESQL_PASSWORD: dd
+    POSTGRESQL_DATABASE: dd
+    POSTGRESQL_POSTGRES_PASSWORD: dd-admin
+    REPMGR_USERNAME: repmgr
+    REPMGR_PASSWORD: repmgr
+    REPMGR_PRIMARY_HOST: pg-0
+    REPMGR_PARTNER_NODES: pg-0,pg-1,pg-2
+    REPMGR_RECONNECT_ATTEMPTS: ${RECONNECT_ATTEMPTS:-3}
+    REPMGR_RECONNECT_INTERVAL: ${RECONNECT_INTERVAL:-2}
+    POSTGRESQL_MAX_CONNECTIONS: "200"
+  # После SIGKILL в /tmp остаётся pid-файл repmgrd, и узел не стартует
+  # снова; tmpfs очищается при каждом запуске контейнера.
+  tmpfs: [/tmp]
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U dd -d dd -h 127.0.0.1"]
+    interval: 2s
+    timeout: 2s
+    retries: 30
+
+services:
+  pg-0:
+    <<: *pg
+    environment:
+      <<: *pgenv
+      REPMGR_NODE_NAME: pg-0
+      REPMGR_NODE_NETWORK_NAME: pg-0
+    ports: ["127.0.0.1:5433:5432"]
+    volumes:
+      - pg0:/bitnami/postgresql
+      - ./uuidv7.sql:/docker-entrypoint-initdb.d/00-uuidv7.sql:ro
+  pg-1:
+    <<: *pg
+    environment:
+      <<: *pgenv
+      REPMGR_NODE_NAME: pg-1
+      REPMGR_NODE_NETWORK_NAME: pg-1
+    ports: ["127.0.0.1:5434:5432"]
+    volumes:
+      - pg1:/bitnami/postgresql
+      - ./uuidv7.sql:/docker-entrypoint-initdb.d/00-uuidv7.sql:ro
+  pg-2:
+    <<: *pg
+    environment:
+      <<: *pgenv
+      REPMGR_NODE_NAME: pg-2
+      REPMGR_NODE_NETWORK_NAME: pg-2
+    ports: ["127.0.0.1:5435:5432"]
+    volumes:
+      - pg2:/bitnami/postgresql
+      - ./uuidv7.sql:/docker-entrypoint-initdb.d/00-uuidv7.sql:ro
+
+volumes:
+  pg0:
+  pg1:
+  pg2:

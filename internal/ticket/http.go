@@ -13,6 +13,7 @@ import (
 	"rsc.io/qr"
 
 	"github.com/funster-a/dd/internal/platform/auth"
+	pgdb "github.com/funster-a/dd/internal/platform/db"
 	"github.com/funster-a/dd/internal/platform/httpx"
 	"github.com/funster-a/dd/internal/platform/idempotency"
 )
@@ -116,6 +117,10 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) bool {
 	}
 	if v, ok := errors.AsType[*ValidationError](err); ok {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_"+v.Field, v.Error())
+		return true
+	}
+	if pgdb.Unavailable(err) {
+		httpx.WriteUnavailable(w, r, err)
 		return true
 	}
 	httpx.Logger(r.Context()).Error("ticket request failed", slog.Any("error", err))

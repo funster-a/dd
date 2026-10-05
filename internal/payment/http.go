@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/funster-a/dd/internal/platform/auth"
+	pgdb "github.com/funster-a/dd/internal/platform/db"
 	"github.com/funster-a/dd/internal/platform/httpx"
 	"github.com/funster-a/dd/internal/platform/idempotency"
 )
@@ -37,6 +38,10 @@ func (s *Service) handleStartPayment(w http.ResponseWriter, r *http.Request) {
 		default:
 			if pe, ok := errors.AsType[*PreconditionError](err); ok {
 				httpx.WriteError(w, http.StatusUnprocessableEntity, pe.Code, pe.Message)
+				return
+			}
+			if pgdb.Unavailable(err) {
+				httpx.WriteUnavailable(w, r, err)
 				return
 			}
 			httpx.Logger(r.Context()).Error("start payment failed", slog.Any("error", err))
@@ -66,6 +71,10 @@ func (s *Service) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusUnauthorized, "invalid_signature", err.Error())
 	default:
 		// 5xx: провайдер доставит уведомление повторно.
+		if pgdb.Unavailable(err) {
+			httpx.WriteUnavailable(w, r, err)
+			return
+		}
 		httpx.Logger(r.Context()).Error("payment webhook failed", slog.Any("error", err))
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
 	}

@@ -4,9 +4,11 @@
 //
 // Каждый заказ делает свой покупатель (покупатель = номер итерации), поэтому
 // «два заказа у одного покупателя» после прогона — это двойное выполнение
-// одного запроса. Клиент ведёт себя как сайт: при обрыве, 502/503/504 и
-// «запрос ещё выполняется» повторяет тот же запрос с тем же ключом
-// идемпотентности, с паузой, до MAX_TRIES раз.
+// одного запроса. Клиент ведёт себя как сайт (web/src/lib/retry.ts): при
+// обрыве, 502/503/504 и «запрос ещё выполняется» повторяет тот же запрос с
+// тем же ключом идемпотентности. Пауза — сколько просит Retry-After (не
+// больше 5 с), без него 0,25 с и вдвое больше, не дольше 4 с; всего не
+// дольше RETRY_FOR секунд.
 import http from 'k6/http';
 import exec from 'k6/execution';
 import { sleep } from 'k6';
@@ -16,14 +18,16 @@ import { Counter, Trend } from 'k6/metrics';
 const BASE = __ENV.API || 'http://localhost:8080';
 const RATE = Number(__ENV.RATE || 100);
 const DURATION = __ENV.DURATION || '60s';
-const MAX_TRIES = Number(__ENV.MAX_TRIES || 10);
+const RETRY_FOR = Number(__ENV.RETRY_FOR || 30) * 1000;
 
 const buyers = new SharedArray('buyers', () => JSON.parse(open(__ENV.BUYERS)).tokens);
 const ev = JSON.parse(open(__ENV.EVENT));
 
 export const options = {
   scenarios: {
-    flow: { executor: 'constant-arrival-rate', rate: RATE, timeUnit: '1s', duration: DURATION, preAllocatedVUs: RATE * 3, maxVUs: 3000 },
+    // VU с запасом: пока база переключается, покупатели ждут повторов, и без
+    // запаса k6 пропускает новые итерации.
+    flow: { executor: 'constant-arrival-rate', rate: RATE, timeUnit: '1s', duration: DURATION, preAllocatedVUs: RATE * 20, maxVUs: RATE * 40 },
   },
   summaryTrendStats: ['avg', 'med', 'p(95)', 'p(99)', 'max'],
   systemTags: ['status', 'name'],
@@ -39,6 +43,9 @@ const gaveUp = new Counter('chaos_gave_up');
 const retries = new Counter('chaos_retries');
 const recovered = new Trend('chaos_recovery_ms', true); // от первой попытки до успеха после повторов
 const orderTime = new Trend('chaos_order_ms', true);
+// Подтверждённый заказ с его id: после переключения базы проверяется, что
+// каждый подтверждённый клиенту заказ в ней есть (ADR 028).
+const created = new Counter('chaos_created');
 
 function kind(res) {
   if (res.status === 0) return 'network';
@@ -67,7 +74,7 @@ export default function () {
   const body = JSON.stringify({ seats: [seat], general: [], email: 'load@example.com' });
   const key = `chaos-${idx}-${Math.random()}`;
   const start = Date.now();
-  for (let i = 0; i < MAX_TRIES; i++) {
+  for (let i = 0; ; i++) {
     const res = http.post(`${BASE}/v1/events/${ev.event_id}/orders`, body, {
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, 'Idempotency-Key': key },
       timeout: '20s',
@@ -77,6 +84,11 @@ export default function () {
     attempt.add(1, { outcome: k, try: i === 0 ? 'first' : 'retry' });
     orderTime.add(res.timings.duration);
     if (k === 'created') {
+      try {
+        created.add(1, { order: res.json().id });
+      } catch (_) {
+        // тело не разобрать — проверка потери его не учтёт
+      }
       if (i === 0) okFirst.add(1);
       else {
         okRetry.add(1);
@@ -92,10 +104,15 @@ export default function () {
       gaveUp.add(1, { outcome: k });
       return;
     }
+    const ra = Number(res.headers['Retry-After']);
+    const wait = res.headers['Retry-After'] !== undefined && Number.isFinite(ra) ? Math.min(ra, 5) : Math.min(0.25 * 2 ** i, 4);
+    if (Date.now() + wait * 1000 - start > RETRY_FOR) {
+      gaveUp.add(1, { outcome: 'tries' });
+      return;
+    }
     retries.add(1);
-    sleep(Math.min(0.25 * 2 ** i, 4));
+    sleep(wait);
   }
-  gaveUp.add(1, { outcome: 'tries' });
 }
 
 export function handleSummary(data) {

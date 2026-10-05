@@ -41,7 +41,14 @@ type chaosRun struct {
 	Dups            struct {
 		Orders int `json:"orders"`
 		Dups   int `json:"buyers_with_two_orders"`
+		// Подтверждённые клиенту заказы и те из них, которых нет в базе
+		// (переключение PostgreSQL, ADR 028).
+		Acked        int `json:"acked"`
+		AckedMissing int `json:"acked_missing"`
 	}
+	// Секунд от отказа до следующего события в events.txt (повышение
+	// реплики при переключении PostgreSQL); NaN, если события нет.
+	Promote float64
 	// Неудачные попытки (не «создан» и не «место заняли») по секундам от
 	// отказа экземпляра и их причины.
 	FailedBySec map[int]float64
@@ -152,11 +159,18 @@ func (r *chaosRun) loadPoints(dir string) error {
 	r.FailedBySec = map[int]float64{}
 	r.FailReasons = map[string]float64{}
 	killAt := math.NaN()
+	r.Promote = math.NaN()
 	if f, err := os.Open(filepath.Join(dir, "events.txt")); err == nil { //nolint:gosec // путь задаёт автор отчёта
 		sc := bufio.NewScanner(f)
 		if sc.Scan() {
 			if ts, _, ok := strings.Cut(sc.Text(), " "); ok {
 				killAt, _ = strconv.ParseFloat(ts, 64)
+			}
+		}
+		if sc.Scan() {
+			if ts, what, ok := strings.Cut(sc.Text(), " "); ok && strings.HasPrefix(what, "promoted") {
+				at, _ := strconv.ParseFloat(ts, 64)
+				r.Promote = at - killAt
 			}
 		}
 		_ = f.Close()
@@ -292,8 +306,8 @@ func reasonRu(k string) string {
 		return "обрыв"
 	case "request_in_progress":
 		return "«запрос ещё выполняется»"
-	case "http_502":
-		return "502"
+	case "http_500", "http_502", "http_503", "http_504":
+		return strings.TrimPrefix(k, "http_")
 	}
 	return k
 }

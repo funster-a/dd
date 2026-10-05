@@ -106,6 +106,7 @@ type Order struct {
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 	ClientIp    *netip.Addr
+	RequestKey  *string
 }
 
 type OrderItem struct {

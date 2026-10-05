@@ -43,3 +43,11 @@ func DecodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
 	}
 	return nil
 }
+
+// WriteUnavailable — 503 с Retry-After: зависимость временно недоступна, тот
+// же запрос стоит повторить через несколько секунд (ADR 028).
+func WriteUnavailable(w http.ResponseWriter, r *http.Request, err error) {
+	Logger(r.Context()).Warn("dependency unavailable", "error", err)
+	w.Header().Set("Retry-After", "2")
+	WriteError(w, http.StatusServiceUnavailable, "service_unavailable", "service is temporarily unavailable, retry shortly")
+}

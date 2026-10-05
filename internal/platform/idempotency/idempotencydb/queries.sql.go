@@ -143,29 +143,50 @@ func (q *Queries) Release(ctx context.Context, arg ReleaseParams) error {
 	return err
 }
 
+const releaseOwn = `-- name: ReleaseOwn :exec
+DELETE FROM idempotency_keys
+WHERE scope = $1 AND key = $2 AND completed_at IS NULL AND owner = $3
+`
+
+type ReleaseOwnParams struct {
+	Scope string
+	Key   string
+	Owner *string
+}
+
+// Снимает незавершённый ключ этого экземпляра (ADR 028).
+func (q *Queries) ReleaseOwn(ctx context.Context, arg ReleaseOwnParams) error {
+	_, err := q.db.Exec(ctx, releaseOwn, arg.Scope, arg.Key, arg.Owner)
+	return err
+}
+
 const releaseStale = `-- name: ReleaseStale :execrows
 DELETE FROM idempotency_keys k
 WHERE k.scope = $1 AND k.key = $2 AND k.completed_at IS NULL
   AND (k.created_at < $3
+       OR k.owner = $4
        OR (k.owner IS NOT NULL AND NOT EXISTS (
              SELECT 1 FROM api_instances i
-             WHERE i.id = k.owner AND i.seen_at > now() - make_interval(secs => $4::float8))))
+             WHERE i.id = k.owner AND i.seen_at > now() - make_interval(secs => $5::float8))))
 `
 
 type ReleaseStaleParams struct {
 	Scope         string
 	Key           string
 	StaleBefore   time.Time
+	Self          *string
 	DeadAfterSecs float64
 }
 
-// Снимает ключ, брошенный упавшим процессом: занят давно или его владелец
-// перестал отмечаться в api_instances (ADR 027).
+// Снимает брошенный ключ: занят давно, его владелец перестал отмечаться в
+// api_instances (ADR 027) или владелец — сам вызывающий экземпляр, который
+// этот ключ сейчас не обрабатывает (ADR 028).
 func (q *Queries) ReleaseStale(ctx context.Context, arg ReleaseStaleParams) (int64, error) {
 	result, err := q.db.Exec(ctx, releaseStale,
 		arg.Scope,
 		arg.Key,
 		arg.StaleBefore,
+		arg.Self,
 		arg.DeadAfterSecs,
 	)
 	if err != nil {

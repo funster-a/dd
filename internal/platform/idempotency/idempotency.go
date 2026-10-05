@@ -87,7 +87,7 @@ func Middleware(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 			}
 
 			rec := &recorder{ResponseWriter: w, status: http.StatusOK}
-			next.ServeHTTP(rec, r)
+			next.ServeHTTP(rec, r.WithContext(WithKey(r.Context(), key)))
 
 			// Контекст запроса мог закончиться; сохранить результат нужно всё равно.
 			ctx := context.WithoutCancel(r.Context())
@@ -112,6 +112,22 @@ func Middleware(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 			}
 		})
 	}
+}
+
+type keyCtx struct{}
+
+// KeyFrom — ключ идемпотентности запроса, который сейчас выполняется. Модуль
+// пишет его в создаваемую сущность в той же транзакции, если повтор после
+// неизвестного исхода фиксации нельзя распознать иначе (ADR 028).
+func KeyFrom(ctx context.Context) string {
+	k, _ := ctx.Value(keyCtx{}).(string)
+	return k
+}
+
+// WithKey кладёт ключ в контекст; middleware делает это сам, функция нужна
+// тестам модулей.
+func WithKey(ctx context.Context, key string) context.Context {
+	return context.WithValue(ctx, keyCtx{}, key)
 }
 
 // release снимает незавершённый ключ после сбоя. Частый сбой — сама база

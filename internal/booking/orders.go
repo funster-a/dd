@@ -17,6 +17,7 @@ import (
 	"golang.org/x/sync/singleflight"
 
 	"github.com/funster-a/dd/internal/booking/bookingdb"
+	"github.com/funster-a/dd/internal/platform/idempotency"
 )
 
 // HoldTTL — сколько места держатся за неоплаченным заказом (CLAUDE.md).
@@ -182,6 +183,21 @@ type attempt struct {
 func (s *Service) createOrder(ctx context.Context, buyerID, eventID string, req OrderRequest, now time.Time, st *attempt) (Order, error) {
 	if uuid.Validate(eventID) != nil {
 		return Order{}, ErrNotFound
+	}
+	// Повтор запроса, чей заказ уже зафиксирован, хотя ответ до клиента не
+	// дошёл: база упала между фиксацией и ответом, и middleware
+	// идемпотентности снял свой ключ (ADR 028). Возвращается тот же заказ.
+	key := idempotency.KeyFrom(ctx)
+	if key != "" {
+		prev, err := s.q.GetOrderByRequestKey(ctx, bookingdb.GetOrderByRequestKeyParams{BuyerID: buyerID, RequestKey: &key})
+		switch {
+		case err == nil && prev.EventID == eventID:
+			return s.GetOrder(ctx, buyerID, prev.ID, now)
+		case err == nil:
+			return Order{}, &ConflictError{Code: "idempotency_key_reused", Message: "this idempotency key was used for another event"}
+		case !errors.Is(err, pgx.ErrNoRows):
+			return Order{}, fmt.Errorf("load order by request key: %w", err)
+		}
 	}
 	count, err := req.normalize()
 	if err != nil {
@@ -353,9 +369,9 @@ func (s *Service) createTx(ctx context.Context, ev bookingdb.GetBookableEventRow
 		// покупателя раньше, чем тот тронет места.
 		if _, err := q.InsertOrder(ctx, bookingdb.InsertOrderParams{
 			ID: orderID, OrganizerID: ev.OrganizerID, EventID: ev.ID, BuyerID: buyerID,
-			Email: req.Email, ExpiresAt: expires, ClientIp: ip,
+			Email: req.Email, ExpiresAt: expires, ClientIp: ip, RequestKey: nonEmpty(idempotency.KeyFrom(ctx)),
 		}); err != nil {
-			if uniqueConstraint(err) == "orders_one_pending_per_buyer_event_key" {
+			if c := uniqueConstraint(err); c == "orders_one_pending_per_buyer_event_key" || c == "orders_buyer_request_key" {
 				return &ConflictError{Code: "order_in_progress", Message: "another order for this event is being created, retry"}
 			}
 			return fmt.Errorf("insert order: %w", err)
@@ -642,4 +658,11 @@ func (s *Service) ListOrders(ctx context.Context, buyerID string) ([]OrderSummar
 		}
 	}
 	return out, nil
+}
+
+func nonEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }

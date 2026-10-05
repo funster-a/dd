@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/funster-a/dd/internal/platform/idempotency"
 )
 
 func TestOrderLifecycle(t *testing.T) {
@@ -281,6 +283,48 @@ func TestReplaceCart(t *testing.T) {
 			}
 			if o, _ := e.svc.GetOrder(ctx, buyer, second.ID, now); o.Status != "cancelled" {
 				t.Errorf("second order = %s, want cancelled", o.Status)
+			}
+			e.checkNoDoubleBooking(t)
+		})
+	}
+}
+
+// Повтор запроса, чей заказ уже зафиксирован, хотя ответ до клиента не дошёл
+// (база упала между фиксацией и ответом, ADR 028): middleware снял свой ключ,
+// и запрос выполняется заново. Возвращается тот же заказ, а не замена.
+func TestRetryAfterUnknownCommit(t *testing.T) {
+	for name, withRedis := range modes() {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t, withRedis, 1, 3, 0)
+			buyer := e.buyer(t)
+			now := time.Now()
+			ctx := idempotency.WithKey(t.Context(), "key-1")
+
+			first, err := e.svc.CreateOrder(ctx, buyer, e.eventID, seatsReq(seat(1, 1)), now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			again, err := e.svc.CreateOrder(ctx, buyer, e.eventID, seatsReq(seat(1, 1)), now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if again.ID != first.ID || again.Status != "pending" {
+				t.Errorf("retry = %s %s, want the first order %s pending", again.ID, again.Status, first.ID)
+			}
+			var orders int
+			if err := e.db.Pool.QueryRow(t.Context(), `SELECT count(*) FROM orders WHERE buyer_id = $1`, buyer).Scan(&orders); err != nil {
+				t.Fatal(err)
+			}
+			if orders != 1 {
+				t.Errorf("orders = %d, want 1", orders)
+			}
+			// Другой ключ — новый запрос: корзина заменяется, как обычно.
+			other, err := e.svc.CreateOrder(idempotency.WithKey(t.Context(), "key-2"), buyer, e.eventID, seatsReq(seat(1, 2)), now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if other.ID == first.ID {
+				t.Error("new key returned the old order")
 			}
 			e.checkNoDoubleBooking(t)
 		})

@@ -18,12 +18,16 @@ const track = computed(() => {
 
 function seatsLeft(s: PlanSector): string {
   if (s.available === null) return ''
-  if (s.available <= 0) return 'мест нет'
+  if (s.available <= 0) return s.kind === 'general' ? 'билетов нет' : 'мест нет'
+  if (s.kind === 'general') return `${s.available} ${plural(s.available, 'билет', 'билета', 'билетов')}`
   return `${s.available} ${plural(s.available, 'место', 'места', 'мест')}`
 }
 
+// Цена сектора: «от 120 000 ₸», если первые ряды продаются дешевле (ADR 025).
+const price = (s: PlanSector) => (s.priceVaries ? 'от ' : '') + money(s.priceTiyn)
+
 function label(s: PlanSector): string {
-  return [s.name, s.stand, seatsLeft(s), s.available ? money(s.priceTiyn) : ''].filter(Boolean).join(', ')
+  return [s.name, s.stand, seatsLeft(s), s.available ? price(s) : ''].filter(Boolean).join(', ')
 }
 
 function pick(s: PlanSector) {
@@ -36,7 +40,7 @@ function pick(s: PlanSector) {
     <p class="plan__hint mono" aria-live="polite">
       <template v-if="hovered">
         {{ hovered.name }} · {{ hovered.stand }} · {{ seatsLeft(hovered) }}
-        <b v-if="hovered.available">{{ money(hovered.priceTiyn) }}</b>
+        <b v-if="hovered.available">{{ price(hovered) }}</b>
       </template>
       <template v-else>{{ hint ?? 'Выберите сектор — места покажем на следующем шаге' }}</template>
     </p>
@@ -52,14 +56,32 @@ function pick(s: PlanSector) {
           :y2="plan.field[1] + plan.field[3]"
         />
         <circle class="plan__line" :cx="plan.field[0] + plan.field[2] / 2" :cy="plan.field[1] + plan.field[3] / 2" :r="plan.field[3] * 0.15" />
-        <text class="plan__field-label" :x="plan.field[0] + plan.field[2] / 2" :y="plan.field[1] + plan.field[3] + 26" text-anchor="middle">
+        <text
+          v-if="!plan.stage"
+          class="plan__field-label"
+          :x="plan.field[0] + plan.field[2] / 2"
+          :y="plan.field[1] + plan.field[3] + 26"
+          text-anchor="middle"
+        >
           {{ plan.fieldLabel.toUpperCase() }}
         </text>
+        <g v-if="plan.stage" class="plan__stage">
+          <rect :x="plan.stage[0]" :y="plan.stage[1]" :width="plan.stage[2]" :height="plan.stage[3]" rx="3" />
+          <text
+            :x="plan.stage[0] + plan.stage[2] / 2"
+            :y="plan.stage[1] + plan.stage[3] / 2"
+            text-anchor="middle"
+            :transform="`rotate(-90 ${plan.stage[0] + plan.stage[2] / 2} ${plan.stage[1] + plan.stage[3] / 2})`"
+            dominant-baseline="middle"
+          >
+            СЦЕНА
+          </text>
+        </g>
         <g
           v-for="s in plan.sectors"
           :key="s.name"
           class="sector"
-          :class="[`cat-${s.category}`, `sector--${fillLevel(s)}`, { 'sector--selected': s.name === selected }]"
+          :class="[`cat-${s.category}`, `sector--${fillLevel(s)}`, `sector--${s.kind}`, { 'sector--selected': s.name === selected }]"
           role="button"
           :tabindex="s.available === 0 ? -1 : 0"
           :aria-label="label(s)"
@@ -124,6 +146,18 @@ function pick(s: PlanSector) {
   letter-spacing: 0.3em;
   fill: var(--ink-3);
 }
+.plan__stage rect {
+  fill: var(--ink);
+}
+.plan__stage text {
+  font-size: 13px;
+  letter-spacing: 0.3em;
+  fill: var(--paper);
+}
+.sector--general text {
+  font-size: 15px;
+  letter-spacing: 0.04em;
+}
 .sector {
   cursor: pointer;
   outline: none;
@@ -186,5 +220,14 @@ function pick(s: PlanSector) {
 }
 .cat-6 {
   --c: var(--cat-6);
+}
+.cat-7 {
+  --c: var(--cat-7);
+}
+.cat-8 {
+  --c: var(--cat-8);
+}
+.cat-9 {
+  --c: var(--cat-9);
 }
 </style>

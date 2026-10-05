@@ -73,11 +73,18 @@ func (s *Service) generateSeats(ctx context.Context, q *catalogdb.Queries, organ
 	if err != nil {
 		return 0, fmt.Errorf("list section prices: %w", err)
 	}
-	priceOf := make(map[string]string, len(links))
-	for _, l := range links {
-		priceOf[l.Section] = l.PriceCategoryID
+	ranges, err := q.ListRowPrices(ctx, catalogdb.ListRowPricesParams{OrganizerID: organizerID, EventID: eventID})
+	if err != nil {
+		return 0, fmt.Errorf("list row prices: %w", err)
 	}
-	seats, err := seatRows(organizerID, eventID, layout, priceOf)
+	pm := priceMap{sections: make(map[string]string, len(links)), rows: map[string]map[string]string{}}
+	for _, l := range links {
+		pm.sections[l.Section] = l.PriceCategoryID
+	}
+	for _, r := range ranges {
+		pm.addRange(layout, r.Section, r.RowFrom, r.RowTo, r.PriceCategoryID)
+	}
+	seats, err := seatRows(organizerID, eventID, layout, pm)
 	if err != nil {
 		return 0, err
 	}
@@ -88,16 +95,52 @@ func (s *Service) generateSeats(ctx context.Context, q *catalogdb.Queries, organ
 	return n, nil
 }
 
+// priceMap — категория места: сектор целиком или ряд сектора (ADR 025).
+type priceMap struct {
+	sections map[string]string
+	rows     map[string]map[string]string // сектор → ряд → категория
+}
+
+func (pm priceMap) addRange(l Layout, section, from, to, category string) {
+	for i := range l.Sections {
+		sec := &l.Sections[i]
+		if sec.Name != section {
+			continue
+		}
+		a, b := rowIndex(sec, from), rowIndex(sec, to)
+		if a < 0 || b < a {
+			return // цены проверены при сохранении; схема черновика с тех пор не менялась
+		}
+		if pm.rows[section] == nil {
+			pm.rows[section] = map[string]string{}
+		}
+		for k := a; k <= b; k++ {
+			pm.rows[section][sec.Rows[k].Label] = category
+		}
+	}
+}
+
+func (pm priceMap) of(section, row string) (string, bool) {
+	if c, ok := pm.sections[section]; ok {
+		return c, true
+	}
+	c, ok := pm.rows[section][row]
+	return c, ok
+}
+
 // seatRows разворачивает схему в строки мест. Виртуальные места входной
 // зоны нумеруются 1..capacity и не имеют ряда.
-func seatRows(organizerID, eventID string, l Layout, priceOf map[string]string) ([]catalogdb.InsertEventSeatsParams, error) {
+func seatRows(organizerID, eventID string, l Layout, pm priceMap) ([]catalogdb.InsertEventSeatsParams, error) {
 	rows := make([]catalogdb.InsertEventSeatsParams, 0, l.SeatCount())
+	noPrice := func(what string) error {
+		return &PreconditionError{Code: "prices_incomplete", Message: what + " has no price"}
+	}
 	for _, sec := range l.Sections {
-		price, ok := priceOf[sec.Name]
-		if !ok {
-			return nil, &PreconditionError{Code: "prices_incomplete", Message: fmt.Sprintf("section %q has no price", sec.Name)}
-		}
 		if sec.Kind == KindGeneral {
+			price, ok := pm.of(sec.Name, "")
+			if !ok {
+				return nil, noPrice(fmt.Sprintf("section %q", sec.Name))
+			}
 			for i := 1; i <= sec.Capacity; i++ {
 				rows = append(rows, catalogdb.InsertEventSeatsParams{
 					OrganizerID: organizerID, EventID: eventID, PriceCategoryID: price,
@@ -108,6 +151,10 @@ func seatRows(organizerID, eventID string, l Layout, priceOf map[string]string) 
 		}
 		for _, r := range sec.Rows {
 			row := r.Label
+			price, ok := pm.of(sec.Name, row)
+			if !ok {
+				return nil, noPrice(fmt.Sprintf("row %q of section %q", row, sec.Name))
+			}
 			for _, st := range r.Seats {
 				rows = append(rows, catalogdb.InsertEventSeatsParams{
 					OrganizerID: organizerID, EventID: eventID, PriceCategoryID: price,

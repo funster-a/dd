@@ -9,12 +9,21 @@ export interface Venue {
   longitude: number | null
 }
 
+// Ряды сектора с from по to включительно в порядке схемы (ADR 025).
+export interface RowRange {
+  section: string
+  from: string
+  to: string
+}
+
 export interface PriceCategory {
   id: string
   name: string
   price_tiyn: number
   currency: string
   sections: string[]
+  // Части секторов, которые продаются этой категорией (ADR 025).
+  rows?: RowRange[]
 }
 
 export interface LayoutSeat {
@@ -44,6 +53,8 @@ export interface LayoutPlan {
   height: number
   field: [number, number, number, number]
   field_label: string
+  // Сцена концерта на плане (ADR 025).
+  stage?: [number, number, number, number]
 }
 
 export interface Layout {
@@ -295,6 +306,7 @@ export interface PriceInput {
   name: string
   price_tiyn: number
   sections: string[]
+  rows?: RowRange[]
 }
 
 export interface UploadTarget {

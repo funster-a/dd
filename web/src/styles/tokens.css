@@ -28,6 +28,10 @@
   --cat-4: #6d4a8a;
   --cat-5: #3e5a8a;
   --cat-6: #8a5a3e;
+  /* 7–9 — для стадионов, где категорий больше шести (ADR 025). */
+  --cat-7: #b8336a;
+  --cat-8: #5a7f2a;
+  --cat-9: #2a86b8;
 
   --font-sans: 'Onest Variable', 'Onest', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-serif: 'Playfair Display', Georgia, serif;
@@ -84,6 +88,10 @@
     --cat-2: #3fa59d;
     --cat-4: #a07bc0;
     --cat-5: #7b98c8;
+  --cat-8: #8bb45a;
+  --cat-9: #5fb0dc;
+    --cat-8: #8bb45a;
+    --cat-9: #5fb0dc;
     --shadow: 0 1px 0 rgba(0, 0, 0, 0.3), 0 16px 40px -20px rgba(0, 0, 0, 0.8);
     color-scheme: dark;
   }
@@ -109,6 +117,8 @@
   --cat-2: #3fa59d;
   --cat-4: #a07bc0;
   --cat-5: #7b98c8;
+  --cat-8: #8bb45a;
+  --cat-9: #5fb0dc;
   --shadow: 0 1px 0 rgba(0, 0, 0, 0.3), 0 16px 40px -20px rgba(0, 0, 0, 0.8);
   color-scheme: dark;
 }

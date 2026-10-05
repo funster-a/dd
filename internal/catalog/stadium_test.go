@@ -63,3 +63,58 @@ func TestAlmatyCentralRowsGrowOutward(t *testing.T) {
 		}
 	}
 }
+
+func TestAlmatyCentralConcert(t *testing.T) {
+	tpl, err := GetSeatMapTemplate("almaty-central-stadium-concert")
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := *tpl.Layout
+	raw, err := json.Marshal(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseLayout(raw); err != nil {
+		t.Fatalf("ParseLayout(concert) error = %v", err)
+	}
+	if l.Plan.Stage == nil {
+		t.Error("concert plan has no stage")
+	}
+	names := map[string]Section{}
+	for _, s := range l.Sections {
+		names[s.Name] = s
+	}
+	for _, closed := range []string{"Сектор 21", "Сектор 23", "Сектор 25"} {
+		if _, ok := names[closed]; ok {
+			t.Errorf("%s behind the stage is on sale", closed)
+		}
+	}
+	zones := 0
+	for _, z := range []string{"Gold", "Silver", "Bronze"} {
+		s, ok := names[z]
+		if !ok || s.Kind != KindGeneral || s.Stand != "Поле" {
+			t.Errorf("fan zone %s = %+v", z, s)
+		}
+		zones += s.Capacity
+	}
+	football := almatyCentralLayout()
+	closedSeats := 0
+	for _, s := range football.Sections {
+		if _, ok := names[s.Name]; !ok {
+			for _, r := range s.Rows {
+				closedSeats += len(r.Seats)
+			}
+		}
+	}
+	if got, want := l.SeatCount(), almatyCentralSeats-closedSeats+zones; got != want {
+		t.Errorf("SeatCount() = %d, want %d", got, want)
+	}
+	if err := validatePrices(tpl.Prices, l); err != nil {
+		t.Errorf("concert prices: %v", err)
+	}
+	// Первые три ряда нижнего яруса — в самой дешёвой категории.
+	cheapest := tpl.Prices[len(tpl.Prices)-1]
+	if cheapest.PriceTiyn != 120_000_00 || len(cheapest.Rows) != 9 || cheapest.Rows[0] != (RowRange{Section: "Сектор 1", From: "1", To: "3"}) {
+		t.Errorf("cheapest category = %+v", cheapest)
+	}
+}

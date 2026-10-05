@@ -5,7 +5,7 @@
 # loadtest/stadium.js, стратегия захвата — redis. Инвариант проверяется
 # после каждого прогона.
 #
-#   VARIANTS="nocache:0:0 off:0:1s q150:150:1s q300:300:1s" N=10000 REPEATS=2 loadtest/storm.sh
+#   VARIANTS="nocache:0:0 off:0:1s q150:150:1s q300:300:1s" N=5000 REPEATS=2 loadtest/storm.sh
 #
 # Вариант — метка:скорость пропуска очереди (0 — без очереди):время жизни
 # сводки по секторам в памяти api (AVAILABILITY_SUMMARY_TTL, 0 — без кэша).
@@ -14,7 +14,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-N=${N:-10000}
+N=${N:-5000} # больше на 16 ГБ не помещается сам k6: около 1 МБ на виртуального покупателя
 REPEATS=${REPEATS:-2}
 POOL=${POOL:-32}
 VARIANTS=${VARIANTS:-"nocache:0:0 off:0:1s q150:150:1s q300:300:1s"}

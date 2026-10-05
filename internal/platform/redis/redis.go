@@ -27,6 +27,25 @@ func NewClient(addr string, log *slog.Logger) *goredis.Client {
 	return goredis.NewClient(&goredis.Options{Addr: addr, ContextTimeoutEnabled: true})
 }
 
+// NewSentinelClient создаёт клиент, который находит ведущий Redis группы
+// master через Sentinel и переключается на новый ведущий после его смены
+// (ADR 029).
+func NewSentinelClient(master string, sentinels []string, log *slog.Logger) *goredis.Client {
+	loggerOnce.Do(func() { goredis.SetLogger(slogAdapter{log: log}) })
+	return goredis.NewFailoverClient(&goredis.FailoverOptions{
+		MasterName: master, SentinelAddrs: sentinels, ContextTimeoutEnabled: true,
+	})
+}
+
+// Open — клиент по настройкам процесса: через Sentinel, если адреса
+// Sentinel заданы, иначе к одному адресу.
+func Open(addr, master string, sentinels []string, log *slog.Logger) *goredis.Client {
+	if len(sentinels) > 0 {
+		return NewSentinelClient(master, sentinels, log)
+	}
+	return NewClient(addr, log)
+}
+
 type slogAdapter struct {
 	log *slog.Logger
 }

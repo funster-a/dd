@@ -78,7 +78,7 @@ func run() error {
 		pool.Close()
 		return fmt.Errorf("idempotency heartbeat: %w", err)
 	}
-	rdb := redis.NewClient(cfg.RedisAddr, log)
+	rdb := redis.Open(cfg.RedisAddr, cfg.RedisMaster, cfg.RedisSentinels, log)
 	rmq := mq.New(cfg.RabbitMQURL)
 	closeDeps := func() {
 		stopHeartbeat()

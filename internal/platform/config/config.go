@@ -30,6 +30,11 @@ type Config struct {
 	DatabaseURL string
 	// RedisAddr — адрес Redis в виде host:port.
 	RedisAddr string
+	// RedisSentinels — адреса Sentinel (ADR 029). Если заданы, ведущий Redis
+	// ищется через них по имени RedisMaster, а RedisAddr не используется.
+	RedisSentinels []string
+	// RedisMaster — имя группы в Sentinel.
+	RedisMaster string
 	// RabbitMQURL — строка подключения к RabbitMQ.
 	RabbitMQURL string
 	// AdminEmails — администраторы платформы (ADR 006), из ADMIN_EMAILS через запятую.
@@ -98,6 +103,7 @@ func Load() (Config, error) {
 		MetricsAddr: getenv("METRICS_ADDR", ":9091"),
 		DatabaseURL: getenv("DATABASE_URL", "postgres://dd:dd@localhost:5432/dd?sslmode=disable"),
 		RedisAddr:   getenv("REDIS_ADDR", "localhost:6379"),
+		RedisMaster: getenv("REDIS_MASTER", "dd"),
 		RabbitMQURL: getenv("RABBITMQ_URL", "amqp://dd:dd@localhost:5672/"),
 		S3: S3Config{
 			Endpoint:  getenv("S3_ENDPOINT", "http://localhost:8333"),
@@ -151,6 +157,16 @@ func Load() (Config, error) {
 	}
 	if _, _, err := net.SplitHostPort(cfg.RedisAddr); err != nil {
 		errs = append(errs, fmt.Errorf("REDIS_ADDR: %w", err))
+	}
+	for v := range strings.SplitSeq(os.Getenv("REDIS_SENTINELS"), ",") {
+		if v = strings.TrimSpace(v); v == "" {
+			continue
+		}
+		if _, _, err := net.SplitHostPort(v); err != nil {
+			errs = append(errs, fmt.Errorf("REDIS_SENTINELS: %w", err))
+			continue
+		}
+		cfg.RedisSentinels = append(cfg.RedisSentinels, v)
 	}
 	if err := validateURL(cfg.RabbitMQURL, "amqp", "amqps"); err != nil {
 		errs = append(errs, fmt.Errorf("RABBITMQ_URL: %w", err))

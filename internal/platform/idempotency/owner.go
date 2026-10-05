@@ -40,7 +40,7 @@ func Heartbeat(ctx context.Context, cfg *pgx.ConnConfig, log *slog.Logger) (stop
 	}
 	q := idempotencydb.New(conn)
 	if err := q.Heartbeat(ctx, id); err != nil {
-		_ = conn.Close(context.Background())
+		_ = conn.Close(ctx)
 		return nil, err
 	}
 	if err := q.PruneInstances(ctx); err != nil {
@@ -49,7 +49,10 @@ func Heartbeat(ctx context.Context, cfg *pgx.ConnConfig, log *slog.Logger) (stop
 	owner.Store(&id)
 	log.Info("idempotency owner registered", slog.String("instance", id))
 
-	ctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	// Отметка живёт до stop, а не до отмены контекста запуска; base — тот же
+	// контекст без отмены, для удаления отметки уже после остановки.
+	base := context.WithoutCancel(ctx)
+	ctx, cancel := context.WithCancel(base)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -58,7 +61,7 @@ func Heartbeat(ctx context.Context, cfg *pgx.ConnConfig, log *slog.Logger) (stop
 		for {
 			select {
 			case <-ctx.Done():
-				bg, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				bg, cancel := context.WithTimeout(base, 2*time.Second)
 				if err := q.Leave(bg, id); err != nil {
 					log.Warn("leave api instances", slog.Any("error", err))
 				}
@@ -71,7 +74,7 @@ func Heartbeat(ctx context.Context, cfg *pgx.ConnConfig, log *slog.Logger) (stop
 					log.Warn("idempotency heartbeat", slog.Any("error", err))
 					// Соединение могло порваться: пробуем открыть новое.
 					if c, err := pgx.ConnectConfig(hctx, cfg.Copy()); err == nil {
-						_ = conn.Close(context.Background())
+						_ = conn.Close(hctx)
 						conn, q = c, idempotencydb.New(c)
 					}
 				}

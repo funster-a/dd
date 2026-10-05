@@ -72,7 +72,7 @@ server {
 NGINX
 
 for v in $VARIANTS; do
-  for rep in $(seq 1 "$REPEATS"); do
+  for rep in ${REPS:-$(seq 1 "$REPEATS")}; do
     cleanup
     start_api 1
     start_api 2

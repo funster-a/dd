@@ -39,6 +39,9 @@ services:
 
   redis:
     image: redis:8.10.2-alpine
+    # Журнал (AOF, fsync раз в секунду): перезапуск теряет не больше секунды
+    # записей, а не все сессии со времени последнего снимка (ADR 029).
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
     ports:
       - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     volumes:

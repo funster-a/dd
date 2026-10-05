@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/funster-a/dd/internal/platform/auth"
+	pgdb "github.com/funster-a/dd/internal/platform/db"
 	"github.com/funster-a/dd/internal/platform/httpx"
 	"github.com/funster-a/dd/internal/platform/idempotency"
 )
@@ -124,6 +125,10 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) bool {
 	}
 	if errors.Is(err, ErrNotFound) {
 		httpx.WriteError(w, http.StatusNotFound, "not_found", "not found")
+		return true
+	}
+	if pgdb.Unavailable(err) {
+		httpx.WriteUnavailable(w, r, err)
 		return true
 	}
 	httpx.Logger(r.Context()).Error("booking request failed", slog.Any("error", err))

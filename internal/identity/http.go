@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/funster-a/dd/internal/platform/auth"
+	pgdb "github.com/funster-a/dd/internal/platform/db"
 	"github.com/funster-a/dd/internal/platform/httpx"
 )
 
@@ -49,6 +50,10 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 			return
 		}
 		if err != nil {
+			if pgdb.Unavailable(err) {
+				httpx.WriteUnavailable(w, r, err)
+				return
+			}
 			httpx.Logger(r.Context()).Error("authenticate", slog.Any("error", err))
 			httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
 			return
@@ -138,6 +143,10 @@ func (s *Service) writeError(w http.ResponseWriter, r *http.Request, err error) 
 	case errors.Is(err, ErrInvalidCode):
 		httpx.WriteError(w, http.StatusUnauthorized, "invalid_code", "code is invalid or expired")
 	default:
+		if pgdb.Unavailable(err) {
+			httpx.WriteUnavailable(w, r, err)
+			return true
+		}
 		httpx.Logger(r.Context()).Error("identity request failed", slog.Any("error", err))
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
 	}

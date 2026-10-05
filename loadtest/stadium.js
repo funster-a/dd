@@ -41,6 +41,11 @@ const won = new Counter('storm_won');
 const ticketsWon = new Counter('storm_tickets');
 const zoneTickets = new Counter('storm_zone_tickets');
 const conflicts = new Counter('storm_conflicts');
+// Причины отказа заказа: место заняли, в фан-зоне не хватило, другое.
+const conflictSeat = new Counter('storm_conflict_seat_taken');
+const conflictZone = new Counter('storm_conflict_not_enough');
+const conflictStale = new Counter('storm_conflict_no_seats_in_view'); // в снимке сектора нет k мест рядом
+const conflictOther = new Counter('storm_conflict_other');
 const soldOut = new Counter('storm_gave_up_sold_out');
 const triesOut = new Counter('storm_gave_up_tries');
 const failed = new Counter('storm_failed');
@@ -192,6 +197,7 @@ export default function (data) {
       const seats = seatsInSector(target[0], q.json().taken, k);
       if (!seats) {
         conflicts.add(1);
+        conflictStale.add(1);
         continue;
       }
       body = { seats, general: [] };
@@ -206,6 +212,15 @@ export default function (data) {
     }
     if (res.status === 409 || res.status === 422) {
       conflicts.add(1);
+      let code = '';
+      try {
+        code = res.json().error.code;
+      } catch (_) {
+        // тело не JSON
+      }
+      if (code === 'seat_taken') conflictSeat.add(1);
+      else if (code === 'not_enough_seats') conflictZone.add(1);
+      else conflictOther.add(1);
       continue;
     }
     failed.add(1);
@@ -230,6 +245,10 @@ export function handleSummary(data) {
     tickets: c('storm_tickets'),
     zone_tickets: c('storm_zone_tickets'),
     conflicts: c('storm_conflicts'),
+    conflict_seat_taken: c('storm_conflict_seat_taken'),
+    conflict_not_enough: c('storm_conflict_not_enough'),
+    conflict_no_seats_in_view: c('storm_conflict_no_seats_in_view'),
+    conflict_other: c('storm_conflict_other'),
     gave_up_sold_out: c('storm_gave_up_sold_out'),
     gave_up_tries: c('storm_gave_up_tries'),
     failed: c('storm_failed'),

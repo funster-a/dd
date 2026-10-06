@@ -12,6 +12,7 @@ FROM nginx:1.29-alpine
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /src/dist /usr/share/nginx/html
 ENV API_UPSTREAM=http://api:8080 \
-    MEDIA_ORIGIN=http://localhost:8333
+    MEDIA_ORIGIN=http://localhost:8333 \
+    NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1
 EXPOSE 80
 HEALTHCHECK --interval=10s --timeout=3s --retries=5 CMD wget -q -O /dev/null http://127.0.0.1/healthz || exit 1

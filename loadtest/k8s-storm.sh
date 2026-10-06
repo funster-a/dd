@@ -155,12 +155,14 @@ k -n $NS wait --for=condition=complete job/k6 --timeout=$((LEAD_S + 900))s || tr
 # Последняя строка вывода k6 — сводка (handleSummary пишет её в stdout).
 k -n $NS logs job/k6 | tail -1 >"$dir/summary.json"
 end_s=$(( $(date +%s) - start_ms / 1000 ))
-echo "storm finished at t=${end_s}s, recording scale-down for ${COOLDOWN_S}s"
+# Инвариант — сразу после штурма: через 10 минут неоплаченные заказы
+# истекают (холд, ADR 011), и проверять стало бы нечего.
+if "$DATA/loadseed" check -event "$event" -out "$dir/check.json"; then verdict=ok; else verdict=VIOLATED; fi
+echo "storm finished at t=${end_s}s, invariant $verdict, recording scale-down for ${COOLDOWN_S}s"
 sleep "$COOLDOWN_S"
 kill "$REC" 2>/dev/null || true
 REC=
 
-if "$DATA/loadseed" check -event "$event" -out "$dir/check.json"; then verdict=ok; else verdict=VIOLATED; fi
 python3 - "$dir/hpa.csv" "$end_s" "$verdict" <<'PY'
 import csv, sys
 rows = list(csv.DictReader(open(sys.argv[1])))

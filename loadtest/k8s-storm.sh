@@ -9,6 +9,11 @@
 #
 #   N=5000 RATE=150 loadtest/k8s-storm.sh
 #
+# В облаке — workflow «Kubernetes storm» (.github/workflows/k8s-storm.yml) на
+# раннере GitHub. API_CPU — запрос процессора пода api вместо 500m из base:
+# на машине в 4 ядра с запросом 500m места хватает только трём подам, и
+# потолок HPA был бы виден раньше, чем само масштабирование.
+#
 # Нужны docker, kind и kubectl. Кластер создаётся, если его нет, и остаётся
 # после прогона: kind delete cluster --name dd.
 #
@@ -25,6 +30,7 @@ N=${N:-5000} # k6 — около 1 МБ памяти на покупателя
 RATE=${RATE:-150}
 LEAD_S=${LEAD_S:-120}
 COOLDOWN_S=${COOLDOWN_S:-720} # стабилизация сжатия — 5 минут, затем по экземпляру в минуту
+API_CPU=${API_CPU:-}
 K6_IMAGE=${K6_IMAGE:-grafana/k6:latest}
 METRICS_SERVER=${METRICS_SERVER:-https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.8.0/components.yaml}
 OUT=${OUT:-loadtest/results/raw/k8s-storm}
@@ -52,6 +58,7 @@ k -n $NS rollout status statefulset/postgres --timeout=300s
 k -n $NS wait --for=condition=complete job/migrate --timeout=300s
 # Все покупатели k6 приходят с одного адреса (ADR 020); скорость очереди — как в ADR 026.
 k -n $NS set env deployment/api IP_TICKET_LIMIT=0 QUEUE_ADMIT_PER_SECOND="$RATE"
+if [[ -n $API_CPU ]]; then k -n $NS set resources deployment/api --requests=cpu="$API_CPU"; fi
 for d in api edge worker web; do k -n $NS rollout status deployment/$d --timeout=300s; done
 
 # Покупатели и событие создаются через проброшенный порт PostgreSQL.

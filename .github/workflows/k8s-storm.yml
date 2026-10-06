@@ -1,0 +1,66 @@
+# Эксперимент этапа 6 (ADR 032): автомасштабирование при штурме и обратное
+# сжатие. Кластер kind на раннере GitHub, сценарий — loadtest/k8s-storm.sh.
+# Запускается вручную: прогон идёт около получаса.
+name: Kubernetes storm
+
+on:
+  workflow_dispatch:
+    inputs:
+      buyers:
+        description: Покупателей в штурме
+        default: "5000"
+      rate:
+        description: Пропуск очереди, человек в секунду
+        default: "150"
+      api_cpu:
+        description: Запрос процессора пода api
+        default: "200m"
+      cooldown:
+        description: Секунд наблюдения после штурма
+        default: "720"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: k8s-storm
+  cancel-in-progress: false
+
+jobs:
+  storm:
+    name: Storm in kind
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Install kind
+        run: |
+          curl -fsSLo kind https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-amd64
+          sudo install kind /usr/local/bin/kind && rm kind
+          kind version
+          kubectl version --client
+      - name: Storm
+        env:
+          N: ${{ inputs.buyers }}
+          RATE: ${{ inputs.rate }}
+          API_CPU: ${{ inputs.api_cpu }}
+          COOLDOWN_S: ${{ inputs.cooldown }}
+          OUT: loadtest/results/raw/k8s-storm
+        run: loadtest/k8s-storm.sh
+      - name: Cluster state on failure
+        if: failure()
+        run: |
+          kubectl --context kind-dd -n dd get all,hpa,events -o wide || true
+          kubectl --context kind-dd -n dd logs job/k6 --tail=50 || true
+          kubectl --context kind-dd -n dd logs deployment/api --tail=100 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: k8s-storm
+          path: |
+            loadtest/results/raw/k8s-storm
+            !loadtest/results/raw/k8s-storm/**/buyers.json
+          if-no-files-found: warn

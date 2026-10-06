@@ -370,6 +370,8 @@ go run ./cmd/loadseed chaos-report -series "после=loadtest/results/raw/chao
 go run ./cmd/loadseed pgchaos-report -in loadtest/results/raw/pgchaos -out docs/experiments/<папка>
 ./loadtest/redischaos.sh                            # отказ Redis посреди продажи: один узел без журнала и с ним, Sentinel (ADR 029)
 go run ./cmd/loadseed redischaos-report -in loadtest/results/raw/redischaos -out docs/experiments/<папка>
+./loadtest/mqchaos.sh                               # отказ RabbitMQ посреди продажи: один узел и кластер из трёх (ADR 030)
+go run ./cmd/loadseed mqchaos-report -in loadtest/results/raw/mqchaos -out docs/experiments/<папка>
 go run ./cmd/loadseed storm-report -dir loadtest/results/raw/storm -out docs/experiments/<папка>
 go run ./cmd/loadseed scale-report -dir loadtest/results/raw/scale -out docs/experiments/<папка>
 go run ./cmd/loadseed queue-report -dir loadtest/results/raw/queue -out docs/experiments/<папка>

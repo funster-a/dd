@@ -269,12 +269,13 @@ services:
     build:
       context: ./web
     environment:
-      API_UPSTREAM: http://api:8080
+      # Через балансировщик: там кэш на краю для публичных страниц (ADR 031).
+      API_UPSTREAM: http://api-lb:8080
       MEDIA_ORIGIN: http://localhost:${S3_PORT:-8333}
     ports:
       - "127.0.0.1:${WEB_PORT:-8000}:80"
     depends_on:
-      api:
+      api-lb:
         condition: service_healthy
 
 configs:

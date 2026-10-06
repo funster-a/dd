@@ -189,7 +189,9 @@ func (s *Service) JoinQueue(ctx context.Context, buyerID, eventID string, now ti
 	if uuid.Validate(eventID) != nil {
 		return QueueStatus{}, ErrNotFound
 	}
-	ev, err := s.q.GetBookableEvent(ctx, eventID)
+	// Опрос очереди — тысячи запросов в минуту на старте продаж; событию
+	// хватает реплики (ADR 031).
+	ev, err := s.rq.GetBookableEvent(ctx, eventID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return QueueStatus{}, ErrNotFound
 	}

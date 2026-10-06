@@ -42,6 +42,10 @@ func ParseStrategy(s string) (Strategy, error) {
 // Option настраивает сервис бронирования.
 type Option func(*Service)
 
+// WithReader направляет чтения занятости мест и опрос очереди в r — обычно
+// реплики с запасным ведущим узлом (db.Reader, ADR 031).
+func WithReader(r bookingdb.DBTX) Option { return func(s *Service) { s.rq = bookingdb.New(r) } }
+
 // WithStrategy выбирает стратегию захвата мест. Стратегии «только база»
 // не используют Redis для холдов вовсе — так их честно сравнивать.
 func WithStrategy(st Strategy) Option { return func(s *Service) { s.strategy = st } }

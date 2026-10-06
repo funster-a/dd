@@ -67,6 +67,49 @@ func (q *Queries) CountGeneralAvailable(ctx context.Context, eventID string) ([]
 	return items, nil
 }
 
+const countGeneralAvailableInSection = `-- name: CountGeneralAvailableInSection :many
+SELECT z.section, (
+    SELECT count(*) FROM event_seats a
+    WHERE a.event_id = $1 AND a.kind = 'general' AND a.section = $2 AND a.status = 'available'
+)::int AS available
+FROM (SELECT section FROM event_seats
+      WHERE event_id = $1 AND kind = 'general' AND section = $2 LIMIT 1) z
+`
+
+type CountGeneralAvailableInSectionParams struct {
+	EventID string
+	Section string
+}
+
+type CountGeneralAvailableInSectionRow struct {
+	Section   string
+	Available int32
+}
+
+// Свободные места одной входной зоны — для открытого сектора (ADR 031). Счёт
+// идёт по частичному индексу свободных мест, а не по всем местам всех зон:
+// на старте продаж на стадионе этот запрос шёл на каждое открытие сектора.
+// Пусто, если сектор не входная зона.
+func (q *Queries) CountGeneralAvailableInSection(ctx context.Context, arg CountGeneralAvailableInSectionParams) ([]CountGeneralAvailableInSectionRow, error) {
+	rows, err := q.db.Query(ctx, countGeneralAvailableInSection, arg.EventID, arg.Section)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CountGeneralAvailableInSectionRow{}
+	for rows.Next() {
+		var i CountGeneralAvailableInSectionRow
+		if err := rows.Scan(&i.Section, &i.Available); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countIPTickets = `-- name: CountIPTickets :one
 SELECT count(*)::int FROM order_items i
 JOIN orders o ON o.id = i.order_id

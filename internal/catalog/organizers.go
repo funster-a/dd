@@ -23,6 +23,7 @@ var slugPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 type Service struct {
 	pool  *pgxpool.Pool
 	q     *catalogdb.Queries
+	rq    *catalogdb.Queries // список событий: хватает реплики (ADR 031)
 	store ObjectStore
 	cache Cache
 
@@ -39,9 +40,16 @@ func WithObjectStore(store ObjectStore) Option { return func(s *Service) { s.sto
 // WithCache подключает кэш публичных страниц; без него страницы строятся из базы.
 func WithCache(cache Cache) Option { return func(s *Service) { s.cache = cache } }
 
+// WithReader направляет чтение списка предстоящих событий в r — обычно
+// реплики с запасным ведущим узлом (db.Reader, ADR 031). Публичная страница
+// события строится с ведущего: её кэш сбрасывается при смене обложек, и
+// отстающая реплика вернула бы в кэш старую страницу.
+func WithReader(r catalogdb.DBTX) Option { return func(s *Service) { s.rq = catalogdb.New(r) } }
+
 // NewService создаёт сервис каталога.
 func NewService(pool *pgxpool.Pool, opts ...Option) *Service {
 	s := &Service{pool: pool, q: catalogdb.New(pool)}
+	s.rq = s.q
 	for _, opt := range opts {
 		opt(s)
 	}

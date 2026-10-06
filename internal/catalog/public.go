@@ -177,7 +177,7 @@ const upcomingLimit = 60
 
 // ListUpcoming возвращает ближайшие опубликованные события.
 func (s *Service) ListUpcoming(ctx context.Context, now time.Time) ([]UpcomingEvent, error) {
-	rows, err := s.q.ListUpcomingEvents(ctx, catalogdb.ListUpcomingEventsParams{Now: now, MaxRows: upcomingLimit})
+	rows, err := s.rq.ListUpcomingEvents(ctx, catalogdb.ListUpcomingEventsParams{Now: now, MaxRows: upcomingLimit})
 	if err != nil {
 		return nil, fmt.Errorf("list upcoming events: %w", err)
 	}

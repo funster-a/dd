@@ -37,9 +37,12 @@ const now = ref(Date.now())
 const sector = ref<string | null>(null)
 // Сводка по секторам приходит только в режиме плана; в режиме сектора
 // сервер считает один сектор (ADR 026), поэтому план помнит последнюю сводку.
+// То же со свободными местами фан-зон: в режиме сектора сервер считает
+// только открытую зону (ADR 031).
 const planCounts = ref<Availability['sections'] | undefined>(undefined)
+const planGeneral = ref<Availability['general'] | undefined>(undefined)
 const plan = computed(() =>
-  event.value?.layout ? buildPlan(event.value.layout, event.value.prices, planCounts.value, availability.value?.general) : null,
+  event.value?.layout ? buildPlan(event.value.layout, event.value.prices, planCounts.value, planGeneral.value) : null,
 )
 const map = computed(() => {
   const e = event.value
@@ -159,7 +162,10 @@ async function refresh() {
     const q = event.value.layout?.plan ? (sector.value ? { section: sector.value } : { summary: true }) : {}
     const a = await api.availability(event.value.id, q)
     availability.value = a
-    if (!('section' in q)) planCounts.value = a.sections
+    if (!('section' in q)) {
+      planCounts.value = a.sections
+      planGeneral.value = a.general
+    }
     // Место, которое заняли, пока покупатель выбирал, уходит из корзины.
     for (const [key] of cart.seats) if (taken.value.has(key)) cart.seats.delete(key)
   } catch {

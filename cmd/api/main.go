@@ -19,8 +19,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/funster-a/dd/internal/booking"
 	"github.com/funster-a/dd/internal/catalog"
@@ -77,10 +79,24 @@ func run() error {
 		pool.Close()
 		return fmt.Errorf("idempotency heartbeat: %w", err)
 	}
+	// Реплики для чтений занятости и списка событий (ADR 031). Без них
+	// Reader читает с ведущего узла.
+	var replica *pgxpool.Pool
+	if cfg.DatabaseReplicaURL != "" {
+		if replica, err = db.NewReplicaPool(ctx, cfg.DatabaseReplicaURL); err != nil {
+			stopHeartbeat()
+			pool.Close()
+			return fmt.Errorf("replica pool: %w", err)
+		}
+	}
+	reader := db.NewReader(replica, pool)
 	rdb := redis.Open(cfg.RedisAddr, cfg.RedisMaster, cfg.RedisSentinels, log)
 	closeDeps := func() {
 		stopHeartbeat()
 		pool.Close()
+		if replica != nil {
+			replica.Close()
+		}
 		_ = rdb.Close()
 	}
 
@@ -103,13 +119,15 @@ func run() error {
 		log.Warn("booking strategy for experiments, not for production", slog.String("strategy", string(strategy)))
 	}
 	book := booking.NewService(pool, rdb, log, booking.WithStrategy(strategy), booking.WithServiceFee(cfg.ServiceFeeBps),
-		booking.WithIPTicketLimit(cfg.IPTicketLimit), booking.WithSummaryTTL(cfg.SummaryTTL), booking.WithQueue(booking.DefaultQueueConfig(cfg.QueueAdmitPerSecond)))
+		booking.WithIPTicketLimit(cfg.IPTicketLimit), booking.WithSummaryTTL(cfg.SummaryTTL), booking.WithQueue(booking.DefaultQueueConfig(cfg.QueueAdmitPerSecond)),
+		booking.WithReader(reader))
 	pay := payment.NewService(pool,
 		payment.NewPSPClient(cfg.Payment.ProviderURL, cfg.Payment.APIKey, cfg.Payment.WebhookSecret),
 		payment.Config{ReturnURL: cfg.PublicBaseURL + "/payment/return", CallbackURL: cfg.Payment.CallbackURL}, log)
 	tickets := ticket.NewService(pool, ticket.LogMailer{Log: log},
 		ticket.Config{PublicBaseURL: cfg.PublicBaseURL, SigningKey: cfg.TicketSigningKey}, log)
-	cat := catalog.NewService(pool, catalog.WithObjectStore(objectStore{c: store}), catalog.WithCache(redis.NewCache(rdb)))
+	cat := catalog.NewService(pool, catalog.WithObjectStore(objectStore{c: store}), catalog.WithCache(redis.NewCache(rdb)),
+		catalog.WithReader(reader))
 
 	r := chi.NewRouter()
 	// Адрес покупателя за nginx — до всех лимитов по IP (ADR 020).
@@ -127,10 +145,7 @@ func run() error {
 	// RabbitMQ api не нужен: события уходят через outbox, публикует воркер.
 	r.Get("/readyz", httpx.Readyz(
 		map[string]httpx.Check{"postgres": pool.Ping},
-		map[string]httpx.Check{
-			"redis":   func(ctx context.Context) error { return rdb.Ping(ctx).Err() },
-			"storage": store.Ping,
-		}))
+		optionalChecks(rdb, store, replica)))
 	// Страницы для браузера покупателя: возврат после оплаты и билет по ссылке.
 	r.Get("/payment/return", payment.HandleReturn)
 	r.Get("/t/{token}", tickets.HandlePage)
@@ -199,4 +214,18 @@ func run() error {
 		return fmt.Errorf("shutdown http server: %w", shutdownErr)
 	}
 	return nil
+}
+
+// optionalChecks — зависимости, без которых api работает хуже, но работает
+// (ADR 030): Redis, хранилище файлов и реплики — без них чтения идут с
+// ведущего узла (ADR 031).
+func optionalChecks(rdb goredis.UniversalClient, store *storage.Client, replica *pgxpool.Pool) map[string]httpx.Check {
+	checks := map[string]httpx.Check{
+		"redis":   func(ctx context.Context) error { return rdb.Ping(ctx).Err() },
+		"storage": store.Ping,
+	}
+	if replica != nil {
+		checks["replica"] = replica.Ping
+	}
+	return checks
 }

@@ -28,6 +28,9 @@ type Config struct {
 	ShutdownTimeout time.Duration
 	// DatabaseURL — строка подключения к PostgreSQL.
 	DatabaseURL string
+	// DatabaseReplicaURL — реплики PostgreSQL для чтений, которым не нужна
+	// свежесть до миллисекунды (ADR 031); пусто — всё с DatabaseURL.
+	DatabaseReplicaURL string
 	// RedisAddr — адрес Redis в виде host:port.
 	RedisAddr string
 	// RedisSentinels — адреса Sentinel (ADR 029). Если заданы, ведущий Redis
@@ -99,12 +102,13 @@ type S3Config struct {
 // значения для локальной разработки, совпадающие с docker-compose.yml.
 func Load() (Config, error) {
 	cfg := Config{
-		HTTPAddr:    getenv("HTTP_ADDR", ":8080"),
-		MetricsAddr: getenv("METRICS_ADDR", ":9091"),
-		DatabaseURL: getenv("DATABASE_URL", "postgres://dd:dd@localhost:5432/dd?sslmode=disable"),
-		RedisAddr:   getenv("REDIS_ADDR", "localhost:6379"),
-		RedisMaster: getenv("REDIS_MASTER", "dd"),
-		RabbitMQURL: getenv("RABBITMQ_URL", "amqp://dd:dd@localhost:5672/"),
+		HTTPAddr:           getenv("HTTP_ADDR", ":8080"),
+		MetricsAddr:        getenv("METRICS_ADDR", ":9091"),
+		DatabaseURL:        getenv("DATABASE_URL", "postgres://dd:dd@localhost:5432/dd?sslmode=disable"),
+		DatabaseReplicaURL: os.Getenv("DATABASE_REPLICA_URL"),
+		RedisAddr:          getenv("REDIS_ADDR", "localhost:6379"),
+		RedisMaster:        getenv("REDIS_MASTER", "dd"),
+		RabbitMQURL:        getenv("RABBITMQ_URL", "amqp://dd:dd@localhost:5672/"),
 		S3: S3Config{
 			Endpoint:  getenv("S3_ENDPOINT", "http://localhost:8333"),
 			AccessKey: getenv("S3_ACCESS_KEY", "dd"),

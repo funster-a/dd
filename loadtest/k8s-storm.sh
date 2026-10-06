@@ -117,10 +117,12 @@ record >"$dir/hpa.csv" &
 REC=$!
 
 # k6 внутри кластера: сценарий и данные — из ConfigMap.
+# create, а не apply: apply хранит копию объекта в аннотации, а токены
+# покупателей не помещаются в её лимит 256 КБ.
 k -n $NS delete job k6 --ignore-not-found >/dev/null
+k -n $NS delete configmap k6-storm --ignore-not-found >/dev/null
 k -n $NS create configmap k6-storm --from-file=stadium.js=loadtest/stadium.js \
-  --from-file=event.json="$dir/event.json" --from-file=buyers.json="$dir/buyers.json" \
-  --dry-run=client -o yaml | k apply -f - >/dev/null
+  --from-file=event.json="$dir/event.json" --from-file=buyers.json="$dir/buyers.json" >/dev/null
 k -n $NS apply -f - >/dev/null <<YAML
 apiVersion: batch/v1
 kind: Job

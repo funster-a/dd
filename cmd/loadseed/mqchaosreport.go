@@ -120,8 +120,9 @@ func mqTables(runs []mqRun) string {
 			continue
 		}
 		k := float64(n)
+		dec := func(v float64) string { return strings.Replace(strconv.FormatFloat(v, 'f', 1, 64), ".", ",", 1) }
 		fmt.Fprintf(&b, "| %s | %d | %s | %d | %d | %s | %s | %s | %s |\n", mqNames[v], n, fmtNum(float64(orders)), missing, dead,
-			fmtNum(round1(p50/k)), fmtNum(round1(p95/k)), fmtNum(round1(p99/k)), fmtNum(round1(mx)))
+			dec(p50/k), dec(p95/k), dec(p99/k), dec(mx))
 	}
 	return b.String()
 }
@@ -156,7 +157,7 @@ func mqChart(runs []mqRun) string {
 	}
 	return lineChart(chartSpec{
 		title:    "Худшая задержка билета по секунде оплаты",
-		subtitle: "100 оплат в секунду; узел RabbitMQ убит на 20-й секунде, поднят на 40-й (кроме «узел потерян»). В среднем по прогонам.",
+		subtitle: "Узел RabbitMQ убит на 20-й секунде, поднят на 40-й. В среднем по прогонам.",
 		unit:     "секунд", series: ss, xLabel: "секунда оплаты от начала потока",
 	})
 }

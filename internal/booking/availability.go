@@ -143,7 +143,7 @@ func (s *Service) GetAvailability(ctx context.Context, eventID string, q Availab
 }
 
 func (s *Service) loadAvailability(ctx context.Context, eventID string, aq AvailabilityQuery, now time.Time) ([]byte, error) {
-	ev, err := s.q.GetPublishedEventStatus(ctx, eventID)
+	ev, err := s.rq.GetPublishedEventStatus(ctx, eventID)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && ev.Status != "published") {
 		return nil, ErrNotFound
 	}
@@ -154,7 +154,7 @@ func (s *Service) loadAvailability(ctx context.Context, eventID string, aq Avail
 	switch {
 	case aq.Summary:
 	case aq.Section != "":
-		rows, err := s.q.ListTakenSeatsInSection(ctx, bookingdb.ListTakenSeatsInSectionParams{EventID: eventID, Section: aq.Section, Now: now})
+		rows, err := s.rq.ListTakenSeatsInSection(ctx, bookingdb.ListTakenSeatsInSectionParams{EventID: eventID, Section: aq.Section, Now: now})
 		if err != nil {
 			return nil, fmt.Errorf("list taken seats in section: %w", err)
 		}
@@ -162,7 +162,7 @@ func (s *Service) loadAvailability(ctx context.Context, eventID string, aq Avail
 			taken = append(taken, bookingdb.ListTakenSeatsRow(r))
 		}
 	default:
-		taken, err = s.q.ListTakenSeats(ctx, bookingdb.ListTakenSeatsParams{EventID: eventID, Now: now})
+		taken, err = s.rq.ListTakenSeats(ctx, bookingdb.ListTakenSeatsParams{EventID: eventID, Now: now})
 		if err != nil {
 			return nil, fmt.Errorf("list taken seats: %w", err)
 		}
@@ -171,7 +171,7 @@ func (s *Service) loadAvailability(ctx context.Context, eventID string, aq Avail
 	if aq.Section != "" {
 		// Открытому сектору — только его счётчик: сводка по всему стадиону
 		// стоит GROUP BY по десяткам тысяч строк на каждый запрос (ADR 026).
-		rows, err := s.q.CountSectionAvailability(ctx, bookingdb.CountSectionAvailabilityParams{EventID: eventID, Section: aq.Section, Now: now})
+		rows, err := s.rq.CountSectionAvailability(ctx, bookingdb.CountSectionAvailabilityParams{EventID: eventID, Section: aq.Section, Now: now})
 		if err != nil {
 			return nil, fmt.Errorf("count section seats: %w", err)
 		}
@@ -179,14 +179,25 @@ func (s *Service) loadAvailability(ctx context.Context, eventID string, aq Avail
 			sections = append(sections, bookingdb.CountSeatAvailabilityRow(r))
 		}
 	} else {
-		sections, err = s.q.CountSeatAvailability(ctx, bookingdb.CountSeatAvailabilityParams{EventID: eventID, Now: now})
+		sections, err = s.rq.CountSeatAvailability(ctx, bookingdb.CountSeatAvailabilityParams{EventID: eventID, Now: now})
 		if err != nil {
 			return nil, fmt.Errorf("count seats: %w", err)
 		}
 	}
-	general, err := s.q.CountGeneralAvailable(ctx, eventID)
-	if err != nil {
-		return nil, fmt.Errorf("count general seats: %w", err)
+	var general []bookingdb.CountGeneralAvailableRow
+	if aq.Section != "" {
+		rows, err := s.rq.CountGeneralAvailableInSection(ctx, bookingdb.CountGeneralAvailableInSectionParams{EventID: eventID, Section: aq.Section})
+		if err != nil {
+			return nil, fmt.Errorf("count general seats in section: %w", err)
+		}
+		for _, r := range rows {
+			general = append(general, bookingdb.CountGeneralAvailableRow(r))
+		}
+	} else {
+		general, err = s.rq.CountGeneralAvailable(ctx, eventID)
+		if err != nil {
+			return nil, fmt.Errorf("count general seats: %w", err)
+		}
 	}
 	a := Availability{Taken: make([]SeatRef, len(taken)), Sections: make([]SectionAvailability, len(sections)),
 		General: make([]GeneralAvailability, len(general)), ServiceFeeBps: s.feeBps}

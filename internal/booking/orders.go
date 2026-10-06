@@ -30,9 +30,12 @@ type Service struct {
 	summaries  summaryCache
 	summaryTTL time.Duration
 	q          *bookingdb.Queries
-	holds      *holdStore // nil — без Redis, только база
-	log        *slog.Logger
-	group      singleflight.Group
+	// rq — чтения, которым не нужна свежесть до миллисекунды: занятость мест,
+	// опрос очереди (ADR 031). По умолчанию — тот же ведущий узел.
+	rq    *bookingdb.Queries
+	holds *holdStore // nil — без Redis, только база
+	log   *slog.Logger
+	group singleflight.Group
 
 	strategy Strategy
 	metrics  *holdMetrics
@@ -46,6 +49,7 @@ type Service struct {
 // держит только база, а корректность от этого не меняется.
 func NewService(pool *pgxpool.Pool, rdb goredis.Scripter, log *slog.Logger, opts ...Option) *Service {
 	s := &Service{pool: pool, q: bookingdb.New(pool), log: log, strategy: StrategyRedis, metrics: defaultMetrics}
+	s.rq = s.q
 	for _, o := range opts {
 		o(s)
 	}

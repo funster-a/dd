@@ -710,3 +710,34 @@ func TestSummaryCache(t *testing.T) {
 		t.Errorf("uncached free = %d, want 3", got)
 	}
 }
+
+// В режиме сектора считается только открытая входная зона (ADR 031): на
+// стадионе подсчёт всех фан-зон шёл на каждое открытие сектора.
+func TestSectionAvailabilityCountsOnlyItsZone(t *testing.T) {
+	e := newEnv(t, false, 1, 3, 20)
+	if _, err := e.svc.CreateOrder(t.Context(), e.buyer(t), e.eventID, generalReq(3), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	load := func(section string) Availability {
+		t.Helper()
+		b, err := e.svc.loadAvailability(t.Context(), e.eventID, AvailabilityQuery{Section: section}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var a Availability
+		if err := json.Unmarshal(b, &a); err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
+	if a := load("Фан-зона"); len(a.General) != 1 || a.General[0].Available != 17 {
+		t.Errorf("zone section: general = %+v, want Фан-зона with 17", a.General)
+	}
+	if a := load("Партер"); len(a.General) != 0 {
+		t.Errorf("seat section: general = %+v, want none", a.General)
+	}
+	// Сводка для плана по-прежнему считает все зоны.
+	if a := e.availability(t); len(a.General) != 1 || a.General[0].Available != 17 {
+		t.Errorf("summary: general = %+v", a.General)
+	}
+}

@@ -158,6 +158,18 @@ FROM event_seats
 WHERE event_id = @event_id AND kind = 'seat' AND section = @section
 GROUP BY section;
 
+-- name: CountGeneralAvailableInSection :many
+-- Свободные места одной входной зоны — для открытого сектора (ADR 031). Счёт
+-- идёт по частичному индексу свободных мест, а не по всем местам всех зон:
+-- на старте продаж на стадионе этот запрос шёл на каждое открытие сектора.
+-- Пусто, если сектор не входная зона.
+SELECT z.section, (
+    SELECT count(*) FROM event_seats a
+    WHERE a.event_id = @event_id AND a.kind = 'general' AND a.section = @section AND a.status = 'available'
+)::int AS available
+FROM (SELECT section FROM event_seats
+      WHERE event_id = @event_id AND kind = 'general' AND section = @section LIMIT 1) z;
+
 -- name: CountGeneralAvailable :many
 SELECT section, count(*) FILTER (WHERE status = 'available')::int AS available
 FROM event_seats

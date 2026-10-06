@@ -135,7 +135,8 @@ for v in $VARIANTS; do
     lb_conf "$edge" >"$OUT/lb-$label.conf"
     start_api 1 "$replica" "$bin"
     start_api 2 "$replica" "$bin"
-    docker run -d --name dd-rp-lb --network host -v "$PWD/$OUT/lb-$label.conf:/etc/nginx/conf.d/default.conf:ro" "$LB_IMAGE" >/dev/null
+    docker run -d --name dd-rp-lb --network host -v "$PWD/deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro" \
+      -v "$PWD/$OUT/lb-$label.conf:/etc/nginx/conf.d/default.conf:ro" "$LB_IMAGE" >/dev/null
     for _ in $(seq 1 50); do curl -fs localhost:8080/readyz >/dev/null && break; sleep 0.2; done
 
     dir="$OUT/rp__${label}__${N}__${rep}"

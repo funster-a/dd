@@ -234,6 +234,8 @@ services:
   api-lb:
     image: nginx:1.29-alpine
     configs:
+      - source: api-lb-main
+        target: /etc/nginx/nginx.conf
       - source: api-lb
         target: /etc/nginx/conf.d/default.conf
     ports:
@@ -295,6 +297,8 @@ configs:
     file: ./deploy/grafana/dashboards.yml
   api-lb:
     file: ./deploy/nginx/api-lb.conf
+  api-lb-main:
+    file: ./deploy/nginx/nginx.conf
   grafana-dashboard-overview:
     file: ./deploy/grafana/dashboards/dd-overview.json
   grafana-datasources:

@@ -50,6 +50,13 @@ jobs:
           COOLDOWN_S: ${{ inputs.cooldown }}
           OUT: loadtest/results/raw/k8s-storm
         run: loadtest/k8s-storm.sh
+      # Результаты и в журнале: их можно прочитать без скачивания артефакта.
+      - name: Show results
+        if: always()
+        run: |
+          for f in loadtest/results/raw/k8s-storm/run-*/{hpa.csv,summary.json,check.json}; do
+            [ -f "$f" ] && { echo "=== $f"; cat "$f"; echo; }
+          done
       - name: Cluster state on failure
         if: failure()
         run: |

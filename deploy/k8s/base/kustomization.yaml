@@ -1,0 +1,25 @@
+# Приложение в Kubernetes (этап 6, ADR 032): api, воркер, край (nginx с
+# кэшем), сайт и миграции. Зависимости — PostgreSQL, Redis, RabbitMQ,
+# S3 — сюда не входят: на продакшене это управляемые сервисы или операторы,
+# для локального кластера они в overlays/local.
+#
+# Адреса зависимостей и секреты задаёт оверлей: ConfigMap app-env и Secret
+# app-secrets.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: dd
+resources:
+  - namespace.yaml
+  - migrate.yaml
+  - api.yaml
+  - worker.yaml
+  - edge.yaml
+  - web.yaml
+configMapGenerator:
+  - name: edge-nginx
+    files:
+      - nginx.conf=edge-nginx.conf
+      - default.conf.template=edge.conf.template
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: dd

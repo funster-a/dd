@@ -1,0 +1,6 @@
+{"identities": [
+  {"name": "dd",
+   "credentials": [{"accessKey": "dd", "secretKey": "dd-secret-key"}],
+   "actions": ["Admin", "Read", "List", "Tagging", "Write"]},
+  {"name": "anonymous", "actions": ["Read:dd-media"]}
+]}

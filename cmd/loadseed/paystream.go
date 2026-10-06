@@ -48,6 +48,7 @@ func payStream(ctx context.Context, pool *pgxpool.Pool, args []string) error {
 	n := fs.Int("n", 6000, "сколько заказов оплатить")
 	rate := fs.Int("rate", 100, "оплат в секунду")
 	out := fs.String("out", "stream.json", "куда записать заказы и время потока")
+	started := fs.String("started", "", "файл, который создаётся в момент начала оплат: по нему серия отсчитывает отказ")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -110,6 +111,11 @@ func payStream(ctx context.Context, pool *pgxpool.Pool, args []string) error {
 	// Оплаты с постоянной скоростью: событие в outbox — как в транзакции
 	// вебхука модуля оплаты.
 	res := streamFile{EventID: ev.EventID, Start: time.Now().UTC()}
+	if *started != "" {
+		if err := os.WriteFile(*started, []byte(res.Start.Format(time.RFC3339Nano)), 0o600); err != nil {
+			return err
+		}
+	}
 	tick := time.NewTicker(time.Second / time.Duration(*rate))
 	defer tick.Stop()
 	for _, o := range orders {

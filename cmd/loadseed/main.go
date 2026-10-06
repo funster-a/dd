@@ -13,6 +13,8 @@
 //	loadseed pgchaos-report -in <dir>         переключение PostgreSQL посреди продажи (ADR 028)
 //	loadseed redischaos-report -in <dir>      отказ Redis посреди продажи (ADR 029)
 //	loadseed holds-check -event <id>          холды мест в Redis против базы (ADR 029)
+//	loadseed paystream -event <file>          поток оплат через outbox и RabbitMQ (ADR 030)
+//	loadseed tickets-check -stream <file>     билеты по оплаченным заказам потока (ADR 030)
 //
 // Покупатели и события создаются кодом модулей — тем же, что в продукте.
 // Инструмент работает рядом с базой и Redis и не публикуется.
@@ -33,7 +35,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: loadseed buyers|event|stadium|check|report|queue-report|scale-report|storm-report|chaos-report|pgchaos-report|redischaos-report|holds-check [flags]")
+		fmt.Fprintln(os.Stderr, "usage: loadseed buyers|event|stadium|check|report|queue-report|scale-report|storm-report|chaos-report|pgchaos-report|redischaos-report|holds-check|paystream|tickets-check [flags]")
 		os.Exit(2)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -81,6 +83,10 @@ func run(ctx context.Context, cmd string, args []string) error {
 		rdb := redis.Open(cfg.RedisAddr, cfg.RedisMaster, cfg.RedisSentinels, log)
 		defer func() { _ = rdb.Close() }()
 		return holdsCheck(ctx, pool, rdb, args)
+	case "paystream":
+		return payStream(ctx, pool, args)
+	case "tickets-check":
+		return ticketsCheck(ctx, pool, args)
 	case "event":
 		return seedEvent(ctx, pool, args)
 	case "stadium":

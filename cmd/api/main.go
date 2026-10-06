@@ -83,7 +83,7 @@ func run() error {
 	// Reader читает с ведущего узла.
 	var replica *pgxpool.Pool
 	if cfg.DatabaseReplicaURL != "" {
-		if replica, err = db.NewPool(ctx, cfg.DatabaseReplicaURL); err != nil {
+		if replica, err = db.NewReplicaPool(ctx, cfg.DatabaseReplicaURL); err != nil {
 			stopHeartbeat()
 			pool.Close()
 			return fmt.Errorf("replica pool: %w", err)

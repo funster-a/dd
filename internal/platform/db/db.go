@@ -65,7 +65,7 @@ func shuffleHosts(c *pgx.ConnConfig) {
 		}
 		groups = append(groups, []*pgconn.FallbackConfig{h})
 	}
-	rand.Shuffle(len(groups), func(i, j int) { groups[i], groups[j] = groups[j], groups[i] })
+	rand.Shuffle(len(groups), func(i, j int) { groups[i], groups[j] = groups[j], groups[i] }) //nolint:gosec // разносит нагрузку, не секрет
 	all = slices.Concat(groups...)
 	c.Host, c.Port, c.TLSConfig = all[0].Host, all[0].Port, all[0].TLSConfig
 	c.Fallbacks = all[1:]

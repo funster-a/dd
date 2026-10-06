@@ -66,3 +66,43 @@ func TestPublishAndDeadLetter(t *testing.T) {
 		t.Errorf("queue depth = %d, want 0", n)
 	}
 }
+
+// Очередь, объявленная прежней версией классической, заменяется кворумной,
+// если пуста (ADR 030); непустая не трогается: её сообщения не должны пропасть.
+func TestDeclareReplacesEmptyClassicQueue(t *testing.T) {
+	c := New(testURL(t))
+	empty, full := "test."+rand.Text(), "test."+rand.Text()
+	deleteQueue(t, c, empty)
+	deleteQueue(t, c, full)
+	conn, err := c.Get(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch, err := conn.Channel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{empty, full} {
+		if _, err := ch.QueueDeclare(q, true, false, false, false, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := ch.PublishWithContext(t.Context(), "", full, false, false, amqp.Publishing{Body: []byte("keep")}); err != nil {
+		t.Fatal(err)
+	}
+	_ = ch.Close()
+
+	if err := DeclareQueue(conn, empty, true); err != nil {
+		t.Fatalf("empty classic queue: %v", err)
+	}
+	// Повторное объявление с теми же аргументами проходит молча.
+	if err := DeclareQueue(conn, empty, true); err != nil {
+		t.Fatalf("redeclare: %v", err)
+	}
+	if err := DeclareQueue(conn, full, false); err == nil {
+		t.Fatal("non-empty classic queue was replaced")
+	}
+	if n := queueDepth(t, c, full); n != 1 {
+		t.Errorf("non-empty classic queue lost messages: depth %d", n)
+	}
+}

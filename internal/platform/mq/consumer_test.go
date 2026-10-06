@@ -30,14 +30,14 @@ func publish(t *testing.T, c *Conn, queue string, bodies ...string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := DeclareQueue(conn, queue, false); err != nil {
+		t.Fatal(err)
+	}
 	ch, err := conn.Channel()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = ch.Close() }()
-	if _, err := ch.QueueDeclare(queue, true, false, false, false, nil); err != nil {
-		t.Fatal(err)
-	}
 	for _, b := range bodies {
 		if err := ch.PublishWithContext(context.Background(), "", queue, false, false, amqp.Publishing{Body: []byte(b)}); err != nil {
 			t.Fatal(err)

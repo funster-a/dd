@@ -63,6 +63,13 @@ func TestLoadRedisSentinels(t *testing.T) {
 	}
 }
 
+func TestLoadRabbitMQCluster(t *testing.T) {
+	t.Setenv("RABBITMQ_URL", "amqp://dd:dd@r1:5672/, amqp://dd:dd@r2:5672/")
+	if _, err := Load(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestLoadInvalid(t *testing.T) {
 	tests := map[string]map[string]string{
 		"bad level":         {"LOG_LEVEL": "loud"},
@@ -72,6 +79,7 @@ func TestLoadInvalid(t *testing.T) {
 		"http addr no port": {"HTTP_ADDR": "8080"},
 		"redis no port":     {"REDIS_ADDR": "redis"},
 		"sentinel no port":  {"REDIS_SENTINELS": "s1:26379,s2"},
+		"one bad amqp node": {"RABBITMQ_URL": "amqp://a:5672/,http://b:5672/"},
 		"rabbitmq bad url":  {"RABBITMQ_URL": "amqp://dd:s3cr%t@rabbitmq:5672/"}, //nolint:gosec // тестовый пароль
 		"rabbitmq scheme":   {"RABBITMQ_URL": "http://rabbitmq:5672/"},
 		"rabbitmq no host":  {"RABBITMQ_URL": "amqp:///vhost"},

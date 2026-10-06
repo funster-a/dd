@@ -26,9 +26,12 @@ type ConsumerConfig struct {
 	DeadLetter bool
 }
 
+// Пауза между попытками переподключения растёт до maxBackoff. Потолок
+// небольшой: попытка дешёвая, а каждая лишняя секунда после возвращения
+// брокера — задержка выпуска билетов (ADR 030).
 const (
 	minBackoff = time.Second
-	maxBackoff = 30 * time.Second
+	maxBackoff = 5 * time.Second
 )
 
 // Consume потребляет очередь до отмены ctx, переподключаясь при обрывах.
@@ -60,15 +63,15 @@ func consumeOnce(ctx context.Context, c *Conn, cfg ConsumerConfig, log *slog.Log
 	if err != nil {
 		return err
 	}
+	if err := DeclareQueue(conn, cfg.Queue, cfg.DeadLetter); err != nil {
+		return err
+	}
 	ch, err := conn.Channel()
 	if err != nil {
 		return fmt.Errorf("open channel: %w", err)
 	}
 	defer func() { _ = ch.Close() }()
 
-	if err := DeclareQueue(ch, cfg.Queue, cfg.DeadLetter); err != nil {
-		return err
-	}
 	if err := ch.Qos(cfg.Prefetch, 0, false); err != nil {
 		return fmt.Errorf("set qos: %w", err)
 	}

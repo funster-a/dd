@@ -79,37 +79,34 @@ func TestReadyz(t *testing.T) {
 	fail := func(context.Context) error { return errors.New("down") }
 
 	tests := []struct {
-		name     string
-		checks   map[string]Check
-		wantCode int
-		wantFail string
+		name               string
+		required, optional map[string]Check
+		wantCode           int
+		wantStatus         string
 	}{
-		{"all ok", map[string]Check{"a": ok, "b": ok}, http.StatusOK, ""},
-		{"one failed", map[string]Check{"a": ok, "b": fail}, http.StatusServiceUnavailable, "b"},
+		{"all ok", map[string]Check{"a": ok}, map[string]Check{"b": ok}, http.StatusOK, "ok"},
+		{"required failed", map[string]Check{"a": fail}, map[string]Check{"b": ok}, http.StatusServiceUnavailable, "unavailable"},
+		// Необязательная зависимость не выводит экземпляр из ротации (ADR 030).
+		{"optional failed", map[string]Check{"a": ok}, map[string]Check{"b": fail}, http.StatusOK, "degraded"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
-			Readyz(tt.checks)(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/readyz", nil))
+			Readyz(tt.required, tt.optional)(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/readyz", nil))
 
 			if rec.Code != tt.wantCode {
 				t.Errorf("code = %d, want %d", rec.Code, tt.wantCode)
 			}
 			var body struct {
+				Status string            `json:"status"`
 				Checks map[string]string `json:"checks"`
 			}
 			raw, _ := io.ReadAll(rec.Body)
 			if err := json.Unmarshal(raw, &body); err != nil {
 				t.Fatalf("decode body %q: %v", raw, err)
 			}
-			for name := range tt.checks {
-				want := "ok"
-				if name == tt.wantFail {
-					want = "fail"
-				}
-				if body.Checks[name] != want {
-					t.Errorf("check %q = %q, want %q", name, body.Checks[name], want)
-				}
+			if body.Status != tt.wantStatus || len(body.Checks) != 2 {
+				t.Errorf("body = %s, want status %q and both checks", raw, tt.wantStatus)
 			}
 		})
 	}

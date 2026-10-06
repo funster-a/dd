@@ -31,7 +31,6 @@ import (
 	"github.com/funster-a/dd/internal/platform/db"
 	"github.com/funster-a/dd/internal/platform/httpx"
 	"github.com/funster-a/dd/internal/platform/idempotency"
-	"github.com/funster-a/dd/internal/platform/mq"
 	"github.com/funster-a/dd/internal/platform/observability"
 	"github.com/funster-a/dd/internal/platform/redis"
 	"github.com/funster-a/dd/internal/platform/storage"
@@ -79,12 +78,10 @@ func run() error {
 		return fmt.Errorf("idempotency heartbeat: %w", err)
 	}
 	rdb := redis.Open(cfg.RedisAddr, cfg.RedisMaster, cfg.RedisSentinels, log)
-	rmq := mq.New(cfg.RabbitMQURL)
 	closeDeps := func() {
 		stopHeartbeat()
 		pool.Close()
 		_ = rdb.Close()
-		_ = rmq.Close()
 	}
 
 	ident := identity.NewService(pool, rdb, identity.LogSender{Log: log}, cfg.AdminEmails, log)
@@ -125,12 +122,15 @@ func run() error {
 	// Метрики Prometheus (ADR 017). Наружу не публикуются: nginx проксирует
 	// только /v1, порт api открыт лишь внутри сети Compose.
 	r.Handle("/metrics", promhttp.Handler())
-	r.Get("/readyz", httpx.Readyz(map[string]httpx.Check{
-		"postgres": pool.Ping,
-		"redis":    func(ctx context.Context) error { return rdb.Ping(ctx).Err() },
-		"rabbitmq": rmq.Ping,
-		"storage":  store.Ping,
-	}))
+	// Без PostgreSQL api не работает. Без Redis и хранилища файлов — работает
+	// хуже (ADR 017, 018): их отказ не выводит экземпляр из ротации (ADR 030).
+	// RabbitMQ api не нужен: события уходят через outbox, публикует воркер.
+	r.Get("/readyz", httpx.Readyz(
+		map[string]httpx.Check{"postgres": pool.Ping},
+		map[string]httpx.Check{
+			"redis":   func(ctx context.Context) error { return rdb.Ping(ctx).Err() },
+			"storage": store.Ping,
+		}))
 	// Страницы для браузера покупателя: возврат после оплаты и билет по ссылке.
 	r.Get("/payment/return", payment.HandleReturn)
 	r.Get("/t/{token}", tickets.HandlePage)

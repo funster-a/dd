@@ -44,7 +44,7 @@ echo 'ADMIN_EMAILS=admin@example.com' >> .env && docker compose up -d api
 
 ```sh
 curl http://localhost:8080/healthz   # {"status":"ok"}
-curl http://localhost:8080/readyz    # {"checks":{"postgres":"ok","rabbitmq":"ok","redis":"ok"},"status":"ok"}
+curl http://localhost:8080/readyz    # {"checks":{"postgres":"ok","redis":"ok","storage":"ok"},"status":"ok"}
 ```
 
 Отправить сообщение в тестовую очередь worker и увидеть его в логе:
@@ -150,7 +150,7 @@ npm run typecheck    # vue-tsc
 | `DATABASE_URL` | `postgres://dd:dd@localhost:5432/dd?sslmode=disable` | PostgreSQL |
 | `REDIS_ADDR` | `localhost:6379` | Redis |
 | `REDIS_SENTINELS`, `REDIS_MASTER` | пусто, `dd` | адреса Sentinel через запятую и имя группы: если заданы, ведущий Redis ищется через Sentinel, `REDIS_ADDR` не используется (ADR 029) |
-| `RABBITMQ_URL` | `amqp://dd:dd@localhost:5672/` | RabbitMQ |
+| `RABBITMQ_URL` | `amqp://dd:dd@localhost:5672/` | RabbitMQ; узлы кластера — несколько адресов через запятую (ADR 030) |
 | `PUBLIC_BASE_URL` | `http://localhost:8080` | адрес сайта для браузера: ссылки на билеты, возврат после оплаты. В Docker — адрес сайта `http://localhost:8000` |
 | `PSP_URL` | `http://localhost:8090` | API платёжного провайдера (мок `fakepsp`) |
 | `PSP_API_KEY`, `PSP_WEBHOOK_SECRET` | `dev-psp-api-key`, `dev-psp-webhook-secret` | ключ API и секрет подписи вебхуков; значения только для мока |
@@ -313,7 +313,7 @@ cmd/loadseed/     подготовка данных эксперимента, п
 ```
 
 - **Логи** пишутся в JSON через `log/slog`. У каждой строки есть поле `service`, у строк запроса — `request_id` (заголовок `X-Request-ID`).
-- **`/healthz`** отвечает 200, пока процесс жив. **`/readyz`** проверяет PostgreSQL, Redis и RabbitMQ и отвечает 200 или 503. Подробности — в ADR 003.
+- **`/healthz`** отвечает 200, пока процесс жив. **`/readyz`** проверяет PostgreSQL, Redis и хранилище файлов. Без PostgreSQL — 503; отказ Redis или хранилища — 200 со статусом `degraded`: api без них работает (ADR 003, ADR 030).
 - **Границы модулей** проверяет линтер: доменные модули не импортируют друг друга, `platform` не зависит от доменных модулей. Подробности — в ADR 004.
 
 ## Наблюдаемость

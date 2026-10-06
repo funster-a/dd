@@ -35,6 +35,8 @@ x-pg: &pg
     REPMGR_RECONNECT_ATTEMPTS: ${RECONNECT_ATTEMPTS:-3}
     REPMGR_RECONNECT_INTERVAL: ${RECONNECT_INTERVAL:-2}
     POSTGRESQL_MAX_CONNECTIONS: "200"
+    # Статистика запросов для эксперимента с читающим контуром (ADR 031).
+    POSTGRESQL_SHARED_PRELOAD_LIBRARIES: repmgr,pg_stat_statements
   # После SIGKILL в /tmp остаётся pid-файл repmgrd, и узел не стартует
   # снова; tmpfs очищается при каждом запуске контейнера.
   tmpfs: [/tmp]

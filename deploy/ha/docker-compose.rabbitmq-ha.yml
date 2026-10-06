@@ -1,0 +1,44 @@
+# Кластер RabbitMQ из трёх узлов (этап 4, ADR 030). Очереди кворумные
+# (internal/platform/mq): у каждой ведущая копия на одном узле и две
+# реплики на других, запись подтверждается, когда её получило большинство.
+# Если узел пропадает, оставшиеся двое выбирают новую ведущую копию, и
+# клиенты переподключаются к живому узлу.
+#
+# Приложение знает все узлы и подключается к первому доступному:
+#   RABBITMQ_URL=amqp://dd:dd@localhost:5673/,amqp://dd:dd@localhost:5674/,amqp://dd:dd@localhost:5675/
+name: dd-rabbitmq-ha
+
+x-rabbit: &rabbit
+  image: rabbitmq:4.3.6-management-alpine
+  environment:
+    # Общий cookie: узлы Erlang доверяют друг другу только с одинаковым.
+    RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: -setcookie dd-ha-cookie
+    RABBITMQ_CTL_ERL_ARGS: -setcookie dd-ha-cookie
+  healthcheck:
+    test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+    interval: 5s
+    timeout: 5s
+    retries: 30
+    start_period: 10s
+
+services:
+  rabbit-0:
+    <<: *rabbit
+    hostname: rabbit-0
+    ports: ["127.0.0.1:5673:5672"]
+    volumes: [rabbit0:/var/lib/rabbitmq, ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro]
+  rabbit-1:
+    <<: *rabbit
+    hostname: rabbit-1
+    ports: ["127.0.0.1:5674:5672"]
+    volumes: [rabbit1:/var/lib/rabbitmq, ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro]
+  rabbit-2:
+    <<: *rabbit
+    hostname: rabbit-2
+    ports: ["127.0.0.1:5675:5672"]
+    volumes: [rabbit2:/var/lib/rabbitmq, ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro]
+
+volumes:
+  rabbit0:
+  rabbit1:
+  rabbit2:

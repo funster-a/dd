@@ -36,6 +36,7 @@ METRICS_SERVER=${METRICS_SERVER:-https://github.com/kubernetes-sigs/metrics-serv
 OUT=${OUT:-loadtest/results/raw/k8s-storm}
 NS=dd
 PG_PORT=${PG_PORT:-15432}
+REDIS_PORT=${REDIS_PORT:-16379}
 DATA=loadtest/.data
 dir="$OUT/run-$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$dir" "$DATA"
@@ -61,20 +62,26 @@ k -n $NS set env deployment/api IP_TICKET_LIMIT=0 QUEUE_ADMIT_PER_SECOND="$RATE"
 if [[ -n $API_CPU ]]; then k -n $NS set resources deployment/api --requests=cpu="$API_CPU"; fi
 for d in api edge worker web; do k -n $NS rollout status deployment/$d --timeout=300s; done
 
-# Покупатели и событие создаются через проброшенный порт PostgreSQL.
+# Покупатели и событие создаются через проброшенные порты PostgreSQL и
+# Redis: сессии покупателей живут в обоих (ADR 018).
 k -n $NS port-forward svc/postgres "$PG_PORT:5432" >/dev/null 2>&1 &
 PF=$!
+k -n $NS port-forward svc/redis "$REDIS_PORT:6379" >/dev/null 2>&1 &
+PF_REDIS=$!
 REC=
 cleanup() {
-  kill "$PF" 2>/dev/null || true
+  kill "$PF" "$PF_REDIS" 2>/dev/null || true
   [[ -n $REC ]] && kill "$REC" 2>/dev/null || true
 }
 trap cleanup EXIT
 export DATABASE_URL="postgres://dd:dd@localhost:$PG_PORT/dd?sslmode=disable"
-for _ in $(seq 1 30); do (exec 3<>/dev/tcp/127.0.0.1/"$PG_PORT") 2>/dev/null && break; sleep 1; done
+export REDIS_ADDR="localhost:$REDIS_PORT"
+for port in "$PG_PORT" "$REDIS_PORT"; do
+  for _ in $(seq 1 30); do (exec 3<>/dev/tcp/127.0.0.1/"$port") 2>/dev/null && break; sleep 1; done
+done
 go build -o "$DATA/loadseed" ./cmd/loadseed
-"$DATA/loadseed" buyers -n "$N" -out "$dir/buyers.json"
-"$DATA/loadseed" stadium -template concert -out "$dir/event.json"
+timeout 600 "$DATA/loadseed" buyers -n "$N" -out "$dir/buyers.json"
+timeout 600 "$DATA/loadseed" stadium -template concert -out "$dir/event.json"
 event=$(python3 -c "import json;print(json.load(open('$dir/event.json'))['event_id'])")
 start_ms=$(( ($(date +%s) + LEAD_S) * 1000 ))
 k -n $NS exec statefulset/postgres -- psql -U dd -d dd -qc \

@@ -2,6 +2,7 @@ package mq
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -9,23 +10,72 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-// DeclareQueue объявляет долговечную очередь. С deadLetter объявляется и
-// очередь <name>.dead, куда RabbitMQ перекладывает отклонённые сообщения.
-// Аргументы очереди должны совпадать при каждом объявлении, поэтому и
-// издатель, и потребитель объявляют её этой функцией.
-func DeclareQueue(ch *amqp.Channel, name string, deadLetter bool) error {
-	var args amqp.Table
+// DeclareQueue объявляет долговечную кворумную очередь (ADR 030): её копии
+// живут на трёх узлах кластера, и она переживает потерю одного. С deadLetter
+// объявляется и очередь <name>.dead, куда RabbitMQ перекладывает отклонённые
+// сообщения. Аргументы очереди должны совпадать при каждом объявлении,
+// поэтому и издатель, и потребитель объявляют её этой функцией.
+//
+// Очередь, объявленная раньше классической, заменяется кворумной, если она
+// пуста; непустая — ошибка: сообщения в ней нужно сначала обработать.
+// Объявление идёт в своём канале: несовпадение аргументов закрывает канал.
+func DeclareQueue(conn *amqp.Connection, name string, deadLetter bool) error {
 	if deadLetter {
 		dead := name + ".dead"
-		if _, err := ch.QueueDeclare(dead, true, false, false, false, nil); err != nil {
-			return fmt.Errorf("declare queue %q: %w", dead, err)
+		if err := declareQuorum(conn, dead, nil); err != nil {
+			return err
 		}
-		args = amqp.Table{"x-dead-letter-exchange": "", "x-dead-letter-routing-key": dead}
+		// at-least-once: сообщение не теряется по пути в очередь .dead, даже
+		// если узел упал посреди перекладывания.
+		return declareQuorum(conn, name, amqp.Table{
+			"x-dead-letter-exchange": "", "x-dead-letter-routing-key": dead,
+			"x-dead-letter-strategy": "at-least-once", "x-overflow": "reject-publish",
+		})
 	}
-	if _, err := ch.QueueDeclare(name, true, false, false, false, args); err != nil {
-		return fmt.Errorf("declare queue %q: %w", name, err)
+	return declareQuorum(conn, name, nil)
+}
+
+func declareQuorum(conn *amqp.Connection, name string, args amqp.Table) error {
+	all := amqp.Table{"x-queue-type": "quorum"}
+	for k, v := range args {
+		all[k] = v
+	}
+	err := withChannel(conn, func(ch *amqp.Channel) error {
+		_, err := ch.QueueDeclare(name, true, false, false, false, all)
+		return err
+	})
+	if !isPreconditionFailed(err) {
+		if err != nil {
+			return fmt.Errorf("declare queue %q: %w", name, err)
+		}
+		return nil
+	}
+	// Очередь уже есть с другими аргументами — классическая из прежних версий.
+	err = withChannel(conn, func(ch *amqp.Channel) error {
+		if _, err := ch.QueueDelete(name, false, true, false); err != nil {
+			return err
+		}
+		_, err := ch.QueueDeclare(name, true, false, false, false, all)
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("replace queue %q with a quorum queue (it must be empty): %w", name, err)
 	}
 	return nil
+}
+
+func withChannel(conn *amqp.Connection, f func(*amqp.Channel) error) error {
+	ch, err := conn.Channel()
+	if err != nil {
+		return fmt.Errorf("open channel: %w", err)
+	}
+	defer func() { _ = ch.Close() }() // канал уже мог закрыться вместе с ошибкой
+	return f(ch)
+}
+
+func isPreconditionFailed(err error) bool {
+	e, ok := errors.AsType[*amqp.Error](err)
+	return ok && e.Code == amqp.PreconditionFailed
 }
 
 // Publisher публикует сообщения с подтверждением брокера: Publish
@@ -58,7 +108,11 @@ func (p *Publisher) Publish(ctx context.Context, queue string, deadLetter bool, 
 		return err
 	}
 	if !p.declared[queue] {
-		if err := DeclareQueue(ch, queue, deadLetter); err != nil {
+		conn, err := p.c.Get(ctx)
+		if err != nil {
+			return err
+		}
+		if err := DeclareQueue(conn, queue, deadLetter); err != nil {
 			p.reset()
 			return err
 		}

@@ -35,7 +35,7 @@ type Config struct {
 	RedisSentinels []string
 	// RedisMaster — имя группы в Sentinel.
 	RedisMaster string
-	// RabbitMQURL — строка подключения к RabbitMQ.
+	// RabbitMQURL — строка подключения к RabbitMQ; узлы кластера — через запятую.
 	RabbitMQURL string
 	// AdminEmails — администраторы платформы (ADR 006), из ADMIN_EMAILS через запятую.
 	AdminEmails []string
@@ -168,8 +168,11 @@ func Load() (Config, error) {
 		}
 		cfg.RedisSentinels = append(cfg.RedisSentinels, v)
 	}
-	if err := validateURL(cfg.RabbitMQURL, "amqp", "amqps"); err != nil {
-		errs = append(errs, fmt.Errorf("RABBITMQ_URL: %w", err))
+	// Несколько узлов кластера — через запятую (ADR 030).
+	for u := range strings.SplitSeq(cfg.RabbitMQURL, ",") {
+		if err := validateURL(strings.TrimSpace(u), "amqp", "amqps"); err != nil {
+			errs = append(errs, fmt.Errorf("RABBITMQ_URL: %w", err))
+		}
 	}
 	if err := validateURL(cfg.S3.Endpoint, "http", "https"); err != nil {
 		errs = append(errs, fmt.Errorf("S3_ENDPOINT: %w", err))

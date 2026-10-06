@@ -60,15 +60,15 @@ func consumeOnce(ctx context.Context, c *Conn, cfg ConsumerConfig, log *slog.Log
 	if err != nil {
 		return err
 	}
+	if err := DeclareQueue(conn, cfg.Queue, cfg.DeadLetter); err != nil {
+		return err
+	}
 	ch, err := conn.Channel()
 	if err != nil {
 		return fmt.Errorf("open channel: %w", err)
 	}
 	defer func() { _ = ch.Close() }()
 
-	if err := DeclareQueue(ch, cfg.Queue, cfg.DeadLetter); err != nil {
-		return err
-	}
 	if err := ch.Qos(cfg.Prefetch, 0, false); err != nil {
 		return fmt.Errorf("set qos: %w", err)
 	}

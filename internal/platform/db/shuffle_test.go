@@ -1,36 +1,33 @@
 package db
 
 import (
-	"slices"
 	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
 )
 
-// Пул реплик перемешивает хосты: экземпляры api расходятся по репликам
-// (ADR 031), но ни один хост не теряется.
-func TestShuffleHostsKeepsAll(t *testing.T) {
-	seenFirst := map[string]bool{}
-	for range 50 {
-		cfg, err := pgx.ParseConfig("postgres://u@h1:1,h2:2,h3:3/db")
-		if err != nil {
-			t.Fatal(err)
-		}
-		shuffleHosts(cfg)
-		// Записи одного хоста (с TLS и без, sslmode=prefer) идут подряд.
-		all := []string{cfg.Host}
-		for _, f := range cfg.Fallbacks {
-			all = append(all, f.Host)
-		}
-		order := slices.Compact(slices.Clone(all))
-		sorted := slices.Sorted(slices.Values(order))
-		if strings.Join(sorted, ",") != "h1,h2,h3" || len(all) != 6 {
-			t.Fatalf("hosts after shuffle = %v", all)
-		}
-		seenFirst[cfg.Host] = true
+// Соединения пула реплик начинают перебор с разных хостов по кругу (ADR 031),
+// записи одного хоста (с TLS и без, sslmode=prefer) не разрываются, ни один
+// хост не теряется.
+func TestRotatedHosts(t *testing.T) {
+	cfg, err := pgx.ParseConfig("postgres://u@h1:1,h2:2,h3:3/db")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(seenFirst) < 2 {
-		t.Errorf("first host never changed: %v", seenFirst)
+	groups := hostGroups(cfg)
+	if len(groups) != 3 {
+		t.Fatalf("groups = %d, want 3", len(groups))
+	}
+	for start, want := range []string{"h1 h1 h2 h2 h3 h3", "h2 h2 h3 h3 h1 h1", "h3 h3 h1 h1 h2 h2"} {
+		c := cfg.Copy()
+		setHosts(c, rotated(groups, start))
+		got := []string{c.Host}
+		for _, f := range c.Fallbacks {
+			got = append(got, f.Host)
+		}
+		if strings.Join(got, " ") != want {
+			t.Errorf("start %d: hosts = %v, want %s", start, got, want)
+		}
 	}
 }

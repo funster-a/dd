@@ -127,6 +127,18 @@ jobs:
       - name: Tests (unit and integration)
         run: make test-integration
 
+  k8s:
+    name: Kubernetes manifests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      # kubectl есть в образе раннера; kubeconform сверяет манифесты со схемами API.
+      - name: Render and validate
+        run: make k8s-validate
+
   web:
     name: Web
     runs-on: ubuntu-latest

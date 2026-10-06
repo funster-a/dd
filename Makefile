@@ -34,7 +34,7 @@ INFRA := postgres redis rabbitmq seaweedfs prometheus grafana postgres-exporter 
 .DEFAULT_GOAL := help
 
 .PHONY: help up down infra-up build run run-worker run-fakepsp test test-integration lint sqlc \
-	migrate-up migrate-down migrate-reset migrate-status migrate-create
+	migrate-up migrate-down migrate-reset migrate-status migrate-create k8s-images k8s-validate
 
 help: ## Показать список команд
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -88,3 +88,15 @@ migrate-status: ## Показать статус миграций
 migrate-create: ## Создать миграцию: make migrate-create name=add_events
 	@test -n "$(name)" || { echo "usage: make migrate-create name=<snake_case_name>"; exit 1; }
 	$(GOOSE_CMD) -dir migrations -s create $(name) sql
+
+KUBECONFORM_VERSION := v0.7.0
+K8S_VERSION := 1.34.0
+K8S_IMAGES := api worker migrate fakepsp
+
+k8s-images: ## Собрать образы с тегом local для deploy/k8s/overlays/local (ADR 032)
+	for t in $(K8S_IMAGES); do docker build --target $$t -t dd-$$t:local . || exit 1; done
+	docker build -t dd-web:local web
+
+k8s-validate: ## Проверить манифесты Kubernetes по схемам API (нужен kubectl)
+	kubectl kustomize deploy/k8s/overlays/local | \
+		go run github.com/yannh/kubeconform/cmd/kubeconform@$(KUBECONFORM_VERSION) -strict -summary -kubernetes-version $(K8S_VERSION) -

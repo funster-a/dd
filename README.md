@@ -148,6 +148,7 @@ npm run typecheck    # vue-tsc
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `SHUTDOWN_TIMEOUT` | `15s` | общий бюджет корректной остановки |
 | `DATABASE_URL` | `postgres://dd:dd@localhost:5432/dd?sslmode=disable` | PostgreSQL |
+| `DATABASE_REPLICA_URL` | пусто | реплики PostgreSQL для занятости мест, опроса очереди и списка событий; при отказе реплик чтения идут с `DATABASE_URL` (ADR 031) |
 | `REDIS_ADDR` | `localhost:6379` | Redis |
 | `REDIS_SENTINELS`, `REDIS_MASTER` | пусто, `dd` | адреса Sentinel через запятую и имя группы: если заданы, ведущий Redis ищется через Sentinel, `REDIS_ADDR` не используется (ADR 029) |
 | `RABBITMQ_URL` | `amqp://dd:dd@localhost:5672/` | RabbitMQ; узлы кластера — несколько адресов через запятую (ADR 030) |

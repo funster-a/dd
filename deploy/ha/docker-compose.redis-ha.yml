@@ -1,0 +1,79 @@
+# Redis с репликами и автоматическим переключением (этап 4, ADR 029).
+# Три узла: redis-0 начинает ведущим, redis-1 и redis-2 — реплики. Три
+# Sentinel следят за ведущим; если он не отвечает SENTINEL_DOWN_MS
+# миллисекунд и это подтверждают двое из трёх, они повышают реплику и
+# переключают на неё остальные узлы. Вернувшийся бывший ведущий становится
+# репликой.
+#
+# Каждый узел пишет журнал (AOF, fsync раз в секунду): перезапуск узла
+# теряет не больше секунды записей, а не всё со времени последнего снимка.
+#
+# Приложение спрашивает адрес ведущего у Sentinel (go-redis FailoverClient):
+#   REDIS_SENTINELS=localhost:26379,localhost:26380,localhost:26381 REDIS_MASTER=dd
+# Sentinel отвечает адресом узла в сети Compose; с хоста Linux он доступен
+# напрямую. Для стенда; продакшен — в ADR 029.
+name: dd-redis-ha
+
+x-redis: &redis
+  image: redis:8.10.2-alpine
+  healthcheck:
+    test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+    interval: 2s
+    timeout: 2s
+    retries: 30
+
+x-sentinel: &sentinel
+  image: redis:8.10.2-alpine
+  depends_on:
+    redis-0: { condition: service_healthy }
+  # Sentinel переписывает свой конфиг, поэтому он создаётся при старте в
+  # каталоге контейнера, а не монтируется только для чтения.
+  entrypoint:
+    - sh
+    - -c
+    - |
+      cat > /tmp/sentinel.conf <<EOF
+      sentinel resolve-hostnames yes
+      sentinel monitor dd redis-0 6379 2
+      sentinel down-after-milliseconds dd ${SENTINEL_DOWN_MS:-2000}
+      sentinel failover-timeout dd 10000
+      sentinel parallel-syncs dd 1
+      EOF
+      exec redis-server /tmp/sentinel.conf --sentinel
+  healthcheck:
+    test: ["CMD-SHELL", "redis-cli -p 26379 ping | grep -q PONG"]
+    interval: 2s
+    timeout: 2s
+    retries: 30
+
+services:
+  redis-0:
+    <<: *redis
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    volumes: [redis0:/data]
+  redis-1:
+    <<: *redis
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--replicaof", "redis-0", "6379"]
+    volumes: [redis1:/data]
+    depends_on:
+      redis-0: { condition: service_healthy }
+  redis-2:
+    <<: *redis
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--replicaof", "redis-0", "6379"]
+    volumes: [redis2:/data]
+    depends_on:
+      redis-0: { condition: service_healthy }
+  sentinel-0:
+    <<: *sentinel
+    ports: ["127.0.0.1:26379:26379"]
+  sentinel-1:
+    <<: *sentinel
+    ports: ["127.0.0.1:26380:26379"]
+  sentinel-2:
+    <<: *sentinel
+    ports: ["127.0.0.1:26381:26379"]
+
+volumes:
+  redis0:
+  redis1:
+  redis2:

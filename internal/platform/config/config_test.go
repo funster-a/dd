@@ -51,6 +51,18 @@ func TestLoadOverrides(t *testing.T) {
 	}
 }
 
+func TestLoadRedisSentinels(t *testing.T) {
+	t.Setenv("REDIS_SENTINELS", " s1:26379, s2:26379 ,")
+	t.Setenv("REDIS_MASTER", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(cfg.RedisSentinels, ",") != "s1:26379,s2:26379" || cfg.RedisMaster != "dd" {
+		t.Errorf("sentinels = %q, master = %q", cfg.RedisSentinels, cfg.RedisMaster)
+	}
+}
+
 func TestLoadInvalid(t *testing.T) {
 	tests := map[string]map[string]string{
 		"bad level":         {"LOG_LEVEL": "loud"},
@@ -59,6 +71,7 @@ func TestLoadInvalid(t *testing.T) {
 		"zero timeout":      {"SHUTDOWN_TIMEOUT": "0s"},
 		"http addr no port": {"HTTP_ADDR": "8080"},
 		"redis no port":     {"REDIS_ADDR": "redis"},
+		"sentinel no port":  {"REDIS_SENTINELS": "s1:26379,s2"},
 		"rabbitmq bad url":  {"RABBITMQ_URL": "amqp://dd:s3cr%t@rabbitmq:5672/"}, //nolint:gosec // тестовый пароль
 		"rabbitmq scheme":   {"RABBITMQ_URL": "http://rabbitmq:5672/"},
 		"rabbitmq no host":  {"RABBITMQ_URL": "amqp:///vhost"},

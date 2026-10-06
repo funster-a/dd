@@ -14,13 +14,18 @@ describe('isTemporary', () => {
 })
 
 describe('retryDelayMs', () => {
+  const mid = () => 0.5 // множитель ровно 1
   it('follows Retry-After, capped', () => {
-    expect(retryDelayMs(0, '2')).toBe(2000)
-    expect(retryDelayMs(3, '60')).toBe(5000)
+    expect(retryDelayMs(0, '2', mid)).toBe(2000)
+    expect(retryDelayMs(3, '60', mid)).toBe(5000)
   })
   it('backs off exponentially without Retry-After', () => {
-    expect(retryDelayMs(0, null)).toBe(250)
-    expect(retryDelayMs(2, null)).toBe(1000)
-    expect(retryDelayMs(10, 'soon')).toBe(4000)
+    expect(retryDelayMs(0, null, mid)).toBe(250)
+    expect(retryDelayMs(2, null, mid)).toBe(1000)
+    expect(retryDelayMs(10, 'soon', mid)).toBe(4000)
+  })
+  it('spreads retries from half to one and a half of the pause', () => {
+    expect(retryDelayMs(0, '2', () => 0)).toBe(1000)
+    expect(retryDelayMs(0, '2', () => 0.999)).toBe(2998)
   })
 })

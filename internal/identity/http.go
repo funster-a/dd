@@ -45,7 +45,9 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 			return
 		}
 		if errors.Is(err, ErrUnavailable) {
-			w.Header().Set("Retry-After", "5")
+			// С репликой и Sentinel Redis недоступен 2–3 секунды (ADR 029):
+			// пауза больше заставила бы покупателя ждать уже работающий Redis.
+			w.Header().Set("Retry-After", "2")
 			httpx.WriteError(w, http.StatusServiceUnavailable, "session_store_unavailable", "sign-in is temporarily unavailable, retry shortly")
 			return
 		}

@@ -149,6 +149,7 @@ npm run typecheck    # vue-tsc
 | `SHUTDOWN_TIMEOUT` | `15s` | общий бюджет корректной остановки |
 | `DATABASE_URL` | `postgres://dd:dd@localhost:5432/dd?sslmode=disable` | PostgreSQL |
 | `REDIS_ADDR` | `localhost:6379` | Redis |
+| `REDIS_SENTINELS`, `REDIS_MASTER` | пусто, `dd` | адреса Sentinel через запятую и имя группы: если заданы, ведущий Redis ищется через Sentinel, `REDIS_ADDR` не используется (ADR 029) |
 | `RABBITMQ_URL` | `amqp://dd:dd@localhost:5672/` | RabbitMQ |
 | `PUBLIC_BASE_URL` | `http://localhost:8080` | адрес сайта для браузера: ссылки на билеты, возврат после оплаты. В Docker — адрес сайта `http://localhost:8000` |
 | `PSP_URL` | `http://localhost:8090` | API платёжного провайдера (мок `fakepsp`) |
@@ -367,6 +368,8 @@ STRATEGIES=redis LEVELS=500 REPEATS=1 ./loadtest/run.sh   # быстрый пр�
 go run ./cmd/loadseed chaos-report -series "после=loadtest/results/raw/chaos" -out docs/experiments/<папка>
 ./loadtest/pgchaos.sh                               # переключение PostgreSQL посреди продажи: кластер repmgr из deploy/ha (ADR 028)
 go run ./cmd/loadseed pgchaos-report -in loadtest/results/raw/pgchaos -out docs/experiments/<папка>
+./loadtest/redischaos.sh                            # отказ Redis посреди продажи: один узел без журнала и с ним, Sentinel (ADR 029)
+go run ./cmd/loadseed redischaos-report -in loadtest/results/raw/redischaos -out docs/experiments/<папка>
 go run ./cmd/loadseed storm-report -dir loadtest/results/raw/storm -out docs/experiments/<папка>
 go run ./cmd/loadseed scale-report -dir loadtest/results/raw/scale -out docs/experiments/<папка>
 go run ./cmd/loadseed queue-report -dir loadtest/results/raw/queue -out docs/experiments/<папка>

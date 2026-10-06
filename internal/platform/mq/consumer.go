@@ -26,9 +26,12 @@ type ConsumerConfig struct {
 	DeadLetter bool
 }
 
+// Пауза между попытками переподключения растёт до maxBackoff. Потолок
+// небольшой: попытка дешёвая, а каждая лишняя секунда после возвращения
+// брокера — задержка выпуска билетов (ADR 030).
 const (
 	minBackoff = time.Second
-	maxBackoff = 30 * time.Second
+	maxBackoff = 5 * time.Second
 )
 
 // Consume потребляет очередь до отмены ctx, переподключаясь при обрывах.

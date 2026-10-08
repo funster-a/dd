@@ -182,10 +182,10 @@ func (spec failoverSpec) tables(runs []chaosRun) string {
 		}
 		swCol := "—"
 		if len(sw) > 0 {
-			swCol = fmt.Sprintf("%s–%s", fmtNum(round1(slices.Min(sw))), fmtNum(round1(slices.Max(sw))))
+			swCol = fmt.Sprintf("%s–%s", fmtNum(slices.Min(sw)), fmtNum(slices.Max(sw)))
 		}
 		fmt.Fprintf(&b, "| %s | %d | %s | %s | %s | %s | %s | %s | %s | %s |", spec.name(v), n, fmtNum(req),
-			fmtNum(first), fmtNum(retry), fmtNum(gave), fmtNum(failed), why, swCol, fmtNum(round1(recMax)))
+			fmtNum(first), fmtNum(retry), fmtNum(gave), fmtNum(failed), why, swCol, fmtNum(recMax))
 		if spec.acked {
 			fmt.Fprintf(&b, " %d из %d |", missing, acked)
 		}

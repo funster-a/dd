@@ -307,7 +307,7 @@ func chaosTables(labels []string, runs []chaosRun) string {
 				why = "—"
 			}
 			fmt.Fprintf(&b, "| %s | %s | %d | %s | %s | %s | %s | %s | %s | %s | %d | %d |\n", label, chaosVariantRu(v), n, fmtNum(req),
-				fmtNum(first), fmtNum(retry), fmtNum(gave), fmtNum(failed), why, fmtNum(round1(recMax)), dups, dbl)
+				fmtNum(first), fmtNum(retry), fmtNum(gave), fmtNum(failed), why, fmtNum(recMax), dups, dbl)
 		}
 	}
 	return b.String()

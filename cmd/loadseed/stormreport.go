@@ -219,9 +219,9 @@ func aggregateStorm(runs []stormRun) []stormGroup {
 
 // sv — среднее по прогонам; разброс, если он заметен.
 func sv(s stat) string {
-	m := fmtNum(round1(s.Mean))
+	m := fmtNum(s.Mean)
 	if s.Max-s.Min > max(0.05*s.Mean, 1) {
-		return fmt.Sprintf("%s (%s–%s)", m, fmtNum(round1(s.Min)), fmtNum(round1(s.Max)))
+		return fmt.Sprintf("%s (%s–%s)", m, fmtNum(s.Min), fmtNum(s.Max))
 	}
 	return m
 }

@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/funster-a/dd/internal/booking"
@@ -27,18 +28,22 @@ import (
 
 // scenario — событие на 3×5 мест после настоящих операций booking на момент now:
 //
-//	A — оплатил места 1-1 и 1-2, билет на 1-2 вернул (частичный возврат);
+//	A — оплатил места 1-1 и 1-2, за билет на 1-2 деньги вернулись, место снова свободно;
 //	B — корзина на 1-3;
 //	C — корзина на 2-1 истекла, воркер её закрыл и освободил место;
 //	D — корзина на 2-2 истекла, воркер до неё ещё не дошёл;
-//	E — после конца срока D забрал место 2-2 в свою корзину.
+//	E — после конца срока D забрал место 2-2 в свою корзину;
+//	G — корзина на 3-5 истекла, воркер до неё не дошёл, место никто не взял.
 //
 // Действующие позиции: 1-1 (A), 1-3 (B), 2-2 (E); занятые места — те же три.
+// В той же базе есть второе событие с оплаченным местом и корзиной: проверка
+// одного события не должна их видеть.
 type scenario struct {
 	pool          *pgxpool.Pool
 	event         string
 	now           time.Time
 	a, b, d, e    string
+	payment       string // успешный платёж A
 	organizer     string
 	buyerForExtra string
 }
@@ -46,9 +51,72 @@ type scenario struct {
 func newScenario(t *testing.T) *scenario {
 	t.Helper()
 	ctx := t.Context()
-	pool := dbtest.New(t).Pool
+	sc := &scenario{pool: dbtest.New(t).Pool, now: time.Now()}
+	sc.event = sc.seed(t)
+	other := sc.seed(t)
+	if err := sc.pool.QueryRow(ctx, `SELECT organizer_id FROM events WHERE id = $1`, sc.event).Scan(&sc.organizer); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := booking.NewService(sc.pool, nil, slog.New(slog.DiscardHandler))
+	order := func(event string, at time.Time, seats ...string) booking.Order {
+		t.Helper()
+		req := booking.OrderRequest{Email: "buyer@example.com"}
+		for _, s := range seats {
+			req.Seats = append(req.Seats, booking.SeatRef{Section: "Партер", Row: s[:1], Seat: s[2:]})
+		}
+		o, err := svc.CreateOrder(ctx, sc.buyer(ctx, t), event, req, at)
+		if err != nil {
+			t.Fatalf("order %v: %v", seats, err)
+		}
+		return o
+	}
+	pay := func(o booking.Order) {
+		t.Helper()
+		if err := svc.ConfirmPayment(ctx, events.PaymentSucceededEvent{
+			PaymentID: uuid.NewString(), OrderID: o.ID, AmountTiyn: o.TotalTiyn, PaidAt: sc.now,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	past := sc.now.Add(-2 * booking.HoldTTL)
+
+	a := order(sc.event, sc.now, "1-1", "1-2")
+	pay(a)
+	sc.a = a.ID
+	sc.b = order(sc.event, sc.now, "1-3").ID
+	order(sc.event, past, "2-1")
+	if _, err := svc.ExpireOrders(ctx, sc.now, 100); err != nil {
+		t.Fatal(err)
+	}
+	sc.d = order(sc.event, past, "2-2").ID
+	sc.e = order(sc.event, sc.now, "2-2").ID
+	order(sc.event, past, "3-5")
+	pay(order(other, sc.now, "1-1"))
+	order(other, sc.now, "1-2")
+
+	// Частичный возврат так, как его оставляют модули payment, ticket и
+	// booking: билеты выпущены, билет на 1-2 аннулирован, возврат за него
+	// прошёл успешно, место снова свободно.
+	if err := sc.pool.QueryRow(ctx, `INSERT INTO payments (organizer_id, order_id, status, amount_tiyn, provider)
+		VALUES ($1, $2, 'succeeded', $3, 'fakepsp') RETURNING id`, sc.organizer, sc.a, a.TotalTiyn).Scan(&sc.payment); err != nil {
+		t.Fatal(err)
+	}
+	sc.exec(t, `INSERT INTO tickets (organizer_id, event_id, order_id, order_item_id, event_seat_id)
+		SELECT organizer_id, event_id, order_id, id, event_seat_id FROM order_items WHERE order_id = $1`, sc.a)
+	sc.exec(t, `UPDATE tickets SET status = 'revoked', revoked_at = $2 WHERE id = $1`, sc.ticket(t, "1-2"), sc.now)
+	sc.refund(t, sc.pool, "1-2", "succeeded")
+	sc.exec(t, `UPDATE event_seats SET status = 'available' WHERE id = $1`, sc.seat(t, "1-2"))
+	sc.exec(t, `UPDATE orders SET status = 'partially_refunded' WHERE id = $1`, sc.a)
+	sc.buyerForExtra = sc.buyer(ctx, t)
+	return sc
+}
+
+// seed — опубликованное событие на 3×5 мест с открытыми продажами.
+func (sc *scenario) seed(t *testing.T) string {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "event.json")
-	if err := seedEvent(ctx, pool, []string{"-rows", "3", "-seats", "5", "-out", path}); err != nil {
+	if err := seedEvent(t.Context(), sc.pool, []string{"-rows", "3", "-seats", "5", "-out", path}); err != nil {
 		t.Fatal(err)
 	}
 	var ev struct {
@@ -57,52 +125,34 @@ func newScenario(t *testing.T) *scenario {
 	if err := readJSON(path, &ev); err != nil {
 		t.Fatal(err)
 	}
-	sc := &scenario{pool: pool, event: ev.EventID, now: time.Now()}
-	sc.exec(t, `UPDATE events SET sales_start_at = $2 WHERE id = $1`, sc.event, sc.now.Add(-24*time.Hour))
-	if err := pool.QueryRow(ctx, `SELECT organizer_id FROM events WHERE id = $1`, sc.event).Scan(&sc.organizer); err != nil {
-		t.Fatal(err)
-	}
+	sc.exec(t, `UPDATE events SET sales_start_at = $2 WHERE id = $1`, ev.EventID, sc.now.Add(-24*time.Hour))
+	return ev.EventID
+}
 
-	svc := booking.NewService(pool, nil, slog.New(slog.DiscardHandler))
-	order := func(at time.Time, seats ...string) booking.Order {
-		t.Helper()
-		req := booking.OrderRequest{Email: "buyer@example.com"}
-		for _, s := range seats {
-			req.Seats = append(req.Seats, booking.SeatRef{Section: "Партер", Row: s[:1], Seat: s[2:]})
-		}
-		o, err := svc.CreateOrder(ctx, sc.buyer(ctx, t), sc.event, req, at)
-		if err != nil {
-			t.Fatalf("order %v: %v", seats, err)
-		}
-		return o
+// ticket — билет A на место label.
+func (sc *scenario) ticket(t *testing.T, label string) string {
+	t.Helper()
+	var id string
+	if err := sc.pool.QueryRow(t.Context(), `SELECT id FROM tickets WHERE order_id = $1 AND event_seat_id = $2`,
+		sc.a, sc.seat(t, label)).Scan(&id); err != nil {
+		t.Fatalf("ticket %s: %v", label, err)
 	}
-	past := sc.now.Add(-2 * booking.HoldTTL)
+	return id
+}
 
-	a := order(sc.now, "1-1", "1-2")
-	if err := svc.ConfirmPayment(ctx, events.PaymentSucceededEvent{
-		PaymentID: uuid.NewString(), OrderID: a.ID, AmountTiyn: a.TotalTiyn, PaidAt: sc.now,
-	}); err != nil {
-		t.Fatal(err)
+// refund — возврат за билет A на место label в статусе status.
+func (sc *scenario) refund(t *testing.T, db interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}, label, status string) {
+	t.Helper()
+	ticket := sc.ticket(t, label)
+	if _, err := db.Exec(t.Context(), `WITH r AS (
+		  INSERT INTO refunds (organizer_id, payment_id, order_id, status, amount_tiyn, reason)
+		  VALUES ($1, $2, $3, $4, 500000, 'buyer_request') RETURNING id)
+		INSERT INTO refund_items (refund_id, ticket_id, organizer_id, order_id)
+		SELECT id, $5, $1, $3 FROM r`, sc.organizer, sc.payment, sc.a, status, ticket); err != nil {
+		t.Fatalf("refund %s: %v", label, err)
 	}
-	sc.a = a.ID
-	sc.b = order(sc.now, "1-3").ID
-	order(past, "2-1")
-	if _, err := svc.ExpireOrders(ctx, sc.now, 100); err != nil {
-		t.Fatal(err)
-	}
-	sc.d = order(past, "2-2").ID
-	sc.e = order(sc.now, "2-2").ID
-
-	// Частичный возврат так, как его оставляют модули ticket и booking:
-	// билеты выпущены, билет на 1-2 аннулирован, место снова свободно.
-	sc.exec(t, `INSERT INTO tickets (organizer_id, event_id, order_id, order_item_id, event_seat_id)
-		SELECT organizer_id, event_id, order_id, id, event_seat_id FROM order_items WHERE order_id = $1`, sc.a)
-	sc.exec(t, `UPDATE tickets SET status = 'revoked', revoked_at = $2 WHERE order_id = $1 AND event_seat_id = $3`,
-		sc.a, sc.now, sc.seat(t, "1-2"))
-	sc.exec(t, `UPDATE event_seats SET status = 'available' WHERE id = $1`, sc.seat(t, "1-2"))
-	sc.exec(t, `UPDATE orders SET status = 'partially_refunded' WHERE id = $1`, sc.a)
-	sc.buyerForExtra = sc.buyer(ctx, t)
-	return sc
 }
 
 func (sc *scenario) exec(t *testing.T, sql string, args ...any) {
@@ -166,8 +216,67 @@ func TestInvariantCleanAfterRealOperations(t *testing.T) {
 	if err := check(t.Context(), sc.pool, []string{"-event", sc.event, "-out", out}); err != nil {
 		t.Fatalf("check on clean data: %v", err)
 	}
-	if _, err := os.Stat(out); err != nil {
+	var got invariant
+	if err := readJSON(out, &got); err != nil {
 		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("check.json: got %+v, want %+v", got, want)
+	}
+
+	if _, err := checkInvariant(t.Context(), sc.pool, uuid.NewString(), sc.now); err == nil {
+		t.Fatal("unknown event must be an error, not an all-zero clean result")
+	}
+}
+
+// Законные состояния, которые система оставляет и после того, как очередь
+// событий разобрана: проверка обязана считать их чистыми.
+func TestInvariantAcceptsLegitimateStates(t *testing.T) {
+	sc := newScenario(t)
+	cases := []struct {
+		name  string
+		setup func(t *testing.T, tx pgx.Tx)
+	}{
+		{
+			name: "refund rejected: revoked ticket keeps its seat",
+			setup: func(t *testing.T, tx pgx.Tx) {
+				mustExec(t, tx, `UPDATE tickets SET status = 'revoked', revoked_at = $2 WHERE id = $1`, sc.ticket(t, "1-1"), sc.now)
+				sc.refund(t, tx, "1-1", "failed")
+			},
+		},
+		{
+			name: "refund in progress: revoked ticket keeps its seat",
+			setup: func(t *testing.T, tx pgx.Tx) {
+				mustExec(t, tx, `UPDATE tickets SET status = 'revoked', revoked_at = $2 WHERE id = $1`, sc.ticket(t, "1-1"), sc.now)
+				sc.refund(t, tx, "1-1", "requested")
+			},
+		},
+		{
+			name: "cancelled event releases the seat of a used ticket",
+			setup: func(t *testing.T, tx pgx.Tx) {
+				mustExec(t, tx, `UPDATE events SET status = 'cancelled', cancelled_at = $2 WHERE id = $1`, sc.event, sc.now)
+				mustExec(t, tx, `UPDATE tickets SET status = 'used', used_at = $2 WHERE id = $1`, sc.ticket(t, "1-1"), sc.now)
+				mustExec(t, tx, `UPDATE event_seats SET status = 'available' WHERE id = $1`, sc.seat(t, "1-1"))
+			},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ctx := t.Context()
+			tx, err := sc.pool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = tx.Rollback(context.Background()) }()
+			c.setup(t, tx)
+			r, err := checkInvariant(ctx, tx, sc.event, sc.now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if r.violated() {
+				t.Fatalf("legitimate state reported as a violation: %+v", r)
+			}
+		})
 	}
 }
 
@@ -233,11 +342,21 @@ func TestInvariantCatchesPlantedViolations(t *testing.T) {
 			balanced: true,
 		},
 		{
-			name: "refunded ticket but seat still sold",
+			name: "money returned but seat still sold",
 			plant: func(t *testing.T, tx pgx.Tx) {
 				mustExec(t, tx, `UPDATE event_seats SET status = 'sold' WHERE id = $1`, sc.seat(t, "1-2"))
 			},
 			field: func(r invariant) int { return r.Orphaned },
+		},
+		{
+			name: "double booking in a cancelled event",
+			plant: func(t *testing.T, tx pgx.Tx) {
+				mustExec(t, tx, `UPDATE events SET status = 'cancelled', cancelled_at = $2 WHERE id = $1`, sc.event, sc.now)
+				f := sc.cart(t, tx)
+				mustExec(t, tx, `INSERT INTO order_items (organizer_id, event_id, order_id, event_seat_id, price_tiyn)
+					VALUES ($1, $2, $3, $4, 0)`, sc.organizer, sc.event, f, sc.seat(t, "1-1"))
+			},
+			field: func(r invariant) int { return r.DoubleBooked },
 		},
 		{
 			name: "expired cart revived without its hold",

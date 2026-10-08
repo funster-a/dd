@@ -162,6 +162,10 @@ soffice --headless --convert-to xlsx --outdir /tmp docs/business/finmodel.xlsx
 
 Менять допущения удобнее прямо в файле, на листе «Допущения». Генератор нужен, чтобы структура модели была в git и проверялась ревью.
 
+## Интервью
+
+Набор для интервью с организаторами — [`interviews/`](interviews/README.md): гайды для МСБ и крупного сегмента, согласие на цитаты, шаблон заметок. Какое допущение проверяет какой вопрос и насколько ответ меняет итог — [`interviews/assumptions.md`](interviews/assumptions.md). Числа для неё печатает `python3 docs/business/sensitivity.py`: он пересчитывает копии модели в LibreOffice, меняя по одному допущению базового сценария.
+
 ## Источники
 
 - [Ticketon: о компании](https://ticketon.kz/cms/about) — масштаб крупнейшего игрока.

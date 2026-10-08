@@ -17,6 +17,7 @@
 //	loadseed tickets-check -stream <file>     билеты по оплаченным заказам потока (ADR 030)
 //	loadseed mqchaos-report -in <dir>         отказ RabbitMQ посреди продажи (ADR 030)
 //	loadseed readpath-report -in <dir>        нагрузка на ведущий узел при старте продаж (ADR 031)
+//	loadseed k8s-report -in <data> -out <dir> графики автомасштабирования при штурме (ADR 032)
 //
 // Покупатели и события создаются кодом модулей — тем же, что в продукте.
 // Инструмент работает рядом с базой и Redis и не публикуется.
@@ -37,7 +38,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: loadseed buyers|event|stadium|check|report|queue-report|scale-report|storm-report|chaos-report|pgchaos-report|redischaos-report|holds-check|paystream|tickets-check|mqchaos-report|readpath-report [flags]")
+		fmt.Fprintln(os.Stderr, "usage: loadseed buyers|event|stadium|check|report|queue-report|scale-report|storm-report|chaos-report|pgchaos-report|redischaos-report|holds-check|paystream|tickets-check|mqchaos-report|readpath-report|k8s-report [flags]")
 		os.Exit(2)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -69,6 +70,8 @@ func run(ctx context.Context, cmd string, args []string) error {
 		return mqChaosReport(args)
 	case "readpath-report":
 		return readPathReport(args)
+	case "k8s-report":
+		return k8sReport(args)
 	}
 	cfg, err := config.Load()
 	if err != nil {

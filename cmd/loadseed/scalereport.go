@@ -237,8 +237,8 @@ func scaleTables(runs []scaleRun, cpus float64) string {
 		if r.withinSLO() {
 			ok = "да"
 		}
-		fmt.Fprintf(&b, "| %d | %d | %s | %s | %s | %s | %s (%.1f%%) | %s | %s | %.0f%% (%.0f%%) | %.0f%% | %.0f%% |\n", r.Instances, r.Rate, fmtNum(round1(r.K6.AchievedRPS)),
-			fmtNum(round1(r.K6.OrderMS["med"])), fmtNum(round1(r.K6.OrderMS["p(95)"])), fmtNum(round1(r.K6.OrderMS["p(99)"])),
+		fmt.Fprintf(&b, "| %d | %d | %s | %s | %s | %s | %s (%.1f%%) | %s | %s | %.0f%% (%.0f%%) | %.0f%% | %.0f%% |\n", r.Instances, r.Rate, fmtNum(r.K6.AchievedRPS),
+			fmtNum(r.K6.OrderMS["med"]), fmtNum(r.K6.OrderMS["p(95)"]), fmtNum(r.K6.OrderMS["p(99)"]),
 			fmtNum(r.K6.Errors), r.errorShare()*100, fmtNum(r.K6.Dropped), ok,
 			r.CPUAPI, r.CPUAPI/cpus, r.CPUPostgres, r.CPUK6)
 	}

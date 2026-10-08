@@ -219,7 +219,7 @@ func queueTables(groups []queueGroup) string {
 	b.WriteString("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
 	for _, g := range groups {
 		fmt.Fprintf(&b, "| %s | %d | %s | %s | %s | %s | %s | %s | %s | %s | %d |\n", variantRu(g.Variant), g.Runs, f0(g.Won), f0(g.Failed), f0(g.Failed503),
-			f0(g.OrderP50), f0(g.OrderP95), f0(g.OrderP99), f0(g.SrvP95), fmtNum(round1(g.SoldOut.Mean)), g.DoubleBooked)
+			f0(g.OrderP50), f0(g.OrderP95), f0(g.OrderP99), f0(g.SrvP95), f0(g.SoldOut), g.DoubleBooked)
 	}
 	b.WriteString("\n| Вариант | Ожидание в очереди p50, с | p95, с | максимум, с | Опросов на покупателя | Опрос p95, мс |\n")
 	b.WriteString("|---|---:|---:|---:|---:|---:|\n")
@@ -227,8 +227,8 @@ func queueTables(groups []queueGroup) string {
 		if !strings.HasPrefix(g.Variant, "q") {
 			continue
 		}
-		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s |\n", variantRu(g.Variant), fmtNum(round1(g.WaitP50.Mean)), fmtNum(round1(g.WaitP95.Mean)),
-			fmtNum(round1(g.WaitMax.Mean)), fmtNum(round1(g.PollsPerBuyer.Mean)), f0(g.PollP95))
+		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s |\n", variantRu(g.Variant), f0(g.WaitP50), f0(g.WaitP95),
+			f0(g.WaitMax), f0(g.PollsPerBuyer), f0(g.PollP95))
 	}
 	fmt.Fprintf(&b, "\nСреднее по прогонам варианта, %d покупателей, зал на 1000 мест.\n", groups[0].VUs)
 	return b.String()
@@ -305,7 +305,7 @@ func barChart(title, subtitle, unit string, bars []bar) string {
 		if br.stat.Max > br.stat.Min {
 			fmt.Fprintf(&b, `<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="1.5"/>`, xAt(br.stat.Min), y+barH/2, xAt(br.stat.Max), y+barH/2, textMain)
 		}
-		fmt.Fprintf(&b, `<text x="%.1f" y="%.1f" font-size="12.5" font-weight="600" fill="%s">%s</text>`, max(xAt(br.stat.Mean), xAt(br.stat.Max))+8, y+barH/2+4.5, textMain, fmtNum(round1(br.stat.Mean)))
+		fmt.Fprintf(&b, `<text x="%.1f" y="%.1f" font-size="12.5" font-weight="600" fill="%s">%s</text>`, max(xAt(br.stat.Mean), xAt(br.stat.Max))+8, y+barH/2+4.5, textMain, fmtNum(br.stat.Mean))
 	}
 	b.WriteString(`</svg>`)
 	return b.String()

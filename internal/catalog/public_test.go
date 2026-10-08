@@ -123,7 +123,7 @@ func TestPublicEvent(t *testing.T) {
 	}
 }
 
-// Холодный кэш и тысяча одновременных открытий страницы (старт продаж):
+// Холодный кэш и 200 одновременных открытий страницы (старт продаж):
 // в базу уходит один запрос.
 func TestPublicEventColdCacheStampede(t *testing.T) {
 	e, _, orgSlug := newPublicEnv(t)

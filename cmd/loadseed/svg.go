@@ -95,6 +95,8 @@ func niceScale(v float64) (yMax, step float64) {
 	return math.Ceil(v/step) * step, step
 }
 
+// fmtNum округляет до целого сама, поэтому получает исходное значение:
+// предварительное round1 даёт двойное округление (48,47 → 48,5 → 49).
 func fmtNum(v float64) string {
 	s := strconv.FormatFloat(math.Round(v), 'f', 0, 64)
 	if len(s) <= 3 {

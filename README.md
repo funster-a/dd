@@ -7,6 +7,7 @@
 - Правила работы и стек — [`CLAUDE.md`](CLAUDE.md)
 - Спецификация — [`docs/spec.md`](docs/spec.md)
 - Архитектурные решения — [`docs/adr/`](docs/adr/)
+- Числа для защиты с источниками — [`docs/defense/evidence.md`](docs/defense/evidence.md)
 
 ## Что нужно установить
 

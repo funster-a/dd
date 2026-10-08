@@ -19,7 +19,7 @@ REPEATS=${REPEATS:-2}
 POOL=${POOL:-32}
 VARIANTS=${VARIANTS:-"nocache:0:0 off:0:1s q150:150:1s q300:300:1s"}
 LEAD_S=${LEAD_S:-120} # от создания события до старта: k6 успевает поднять N VU
-K6_IMAGE=${K6_IMAGE:-grafana/k6:latest}
+K6_IMAGE=${K6_IMAGE:-grafana/k6:2.3.0}
 OUT=${OUT:-loadtest/results/raw/storm}
 DATA=loadtest/.data
 mkdir -p "$OUT" "$DATA"

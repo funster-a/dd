@@ -353,3 +353,199 @@ func TestRefundedSeatIsBookableAgain(t *testing.T) {
 		t.Errorf("refunded seat must be bookable at once: %v", err)
 	}
 }
+
+// refundTicket оставляет билет заказа так, как его оставляют модули ticket и
+// payment перед order.refunded: билет аннулирован, возврат за него прошёл.
+// Возвращает id билета.
+func (e *env) refundTicket(t *testing.T, o Order) string {
+	t.Helper()
+	ctx := t.Context()
+	var ticketID string
+	if err := e.db.Pool.QueryRow(ctx, `
+		INSERT INTO tickets (organizer_id, event_id, order_id, order_item_id, event_seat_id, status, revoked_at)
+		SELECT organizer_id, $1, order_id, id, event_seat_id, 'revoked', now() FROM order_items WHERE order_id = $2
+		RETURNING id`, e.eventID, o.ID).Scan(&ticketID); err != nil {
+		t.Fatal(err)
+	}
+	e.exec(t, `WITH p AS (
+		  INSERT INTO payments (organizer_id, order_id, status, amount_tiyn, provider)
+		  SELECT organizer_id, id, 'succeeded', total_tiyn, 'fakepsp' FROM orders WHERE id = $1 RETURNING id, organizer_id, order_id, amount_tiyn),
+		r AS (
+		  INSERT INTO refunds (organizer_id, payment_id, order_id, status, amount_tiyn, reason)
+		  SELECT organizer_id, id, order_id, 'succeeded', amount_tiyn, 'buyer_request' FROM p RETURNING id, organizer_id, order_id)
+		INSERT INTO refund_items (refund_id, ticket_id, organizer_id, order_id) SELECT id, $2, organizer_id, order_id FROM r`,
+		o.ID, ticketID)
+	return ticketID
+}
+
+// Повторная доставка order.refunded (доставка «хотя бы один раз», ADR 012)
+// не освобождает место, которое после возврата уже купил и оплатил другой
+// покупатель: иначе место ушло бы в продажу третий раз при действующем
+// билете второго (CLAUDE.md, правила 1 и 3).
+func TestRefundRedeliveryKeepsResoldSeat(t *testing.T) {
+	for name, withRedis := range modes() {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t, withRedis, 1, 2, 0)
+			ctx := t.Context()
+			a, err := e.svc.CreateOrder(ctx, e.buyer(t), e.eventID, seatsReq(seat(1, 1)), time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := e.svc.ConfirmPayment(ctx, paid(a, time.Now())); err != nil {
+				t.Fatal(err)
+			}
+			refunded := events.OrderRefundedEvent{OrderID: a.ID, TicketIDs: []string{e.refundTicket(t, a)}}
+			if err := e.svc.ApplyRefund(ctx, refunded); err != nil {
+				t.Fatal(err)
+			}
+
+			g, err := e.svc.CreateOrder(ctx, e.buyer(t), e.eventID, seatsReq(seat(1, 1)), time.Now())
+			if err != nil {
+				t.Fatalf("refunded seat must be bookable: %v", err)
+			}
+			if err := e.svc.ConfirmPayment(ctx, paid(g, time.Now())); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := e.svc.ApplyRefund(ctx, refunded); err != nil {
+				t.Fatal(err)
+			}
+			if s, _ := e.seatStatus(t, seat(1, 1)); s != "sold" {
+				t.Errorf("seat after redelivered refund = %s, want sold to the second buyer", s)
+			}
+			// Второй покупатель вернул билет, но деньги ещё не вернулись: место
+			// по-прежнему за ним (ADR 014), и повтор первого возврата его не трогает.
+			e.exec(t, `INSERT INTO tickets (organizer_id, event_id, order_id, order_item_id, event_seat_id, status, revoked_at)
+				SELECT organizer_id, $1, order_id, id, event_seat_id, 'revoked', now() FROM order_items WHERE order_id = $2`,
+				e.eventID, g.ID)
+			if err := e.svc.ApplyRefund(ctx, refunded); err != nil {
+				t.Fatal(err)
+			}
+			if s, _ := e.seatStatus(t, seat(1, 1)); s != "sold" {
+				t.Errorf("seat while the second refund is in flight = %s, want sold", s)
+			}
+			if _, err := e.svc.CreateOrder(ctx, e.buyer(t), e.eventID, seatsReq(seat(1, 1)), time.Now()); err == nil {
+				t.Error("a third buyer got a seat that is sold to the second one")
+			}
+		})
+	}
+}
+
+// То же под гонкой: повторы order.refunded идут параллельно с покупкой и
+// оплатой места вторым покупателем. Если второй заказ оплачен, место
+// остаётся проданным, сколько бы повторов ни пришло и в каком порядке.
+func TestRefundRedeliveryRacesResale(t *testing.T) {
+	for name, withRedis := range modes() {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t, withRedis, 1, 2, 0)
+			ctx := t.Context()
+			for round := range 5 {
+				a, err := e.svc.CreateOrder(ctx, e.buyer(t), e.eventID, seatsReq(seat(1, 1)), time.Now())
+				if err != nil {
+					t.Fatalf("round %d: %v", round, err)
+				}
+				if err := e.svc.ConfirmPayment(ctx, paid(a, time.Now())); err != nil {
+					t.Fatal(err)
+				}
+				refunded := events.OrderRefundedEvent{OrderID: a.ID, TicketIDs: []string{e.refundTicket(t, a)}}
+				if err := e.svc.ApplyRefund(ctx, refunded); err != nil {
+					t.Fatal(err)
+				}
+
+				var wg sync.WaitGroup
+				for range 8 {
+					wg.Go(func() {
+						if err := e.svc.ApplyRefund(ctx, refunded); err != nil {
+							t.Error(err)
+						}
+					})
+				}
+				var g Order
+				second := e.buyer(t)
+				wg.Go(func() {
+					var err error
+					if g, err = e.svc.CreateOrder(ctx, second, e.eventID, seatsReq(seat(1, 1)), time.Now()); err != nil {
+						t.Error(err)
+						return
+					}
+					if err := e.svc.ConfirmPayment(ctx, paid(g, time.Now())); err != nil {
+						t.Error(err)
+					}
+				})
+				wg.Wait()
+				if t.Failed() {
+					return
+				}
+				if s := e.orderStatus(t, g.ID); s != "paid" {
+					t.Fatalf("round %d: second order = %s, want paid", round, s)
+				}
+				if s, _ := e.seatStatus(t, seat(1, 1)); s != "sold" {
+					t.Fatalf("round %d: seat = %s, want sold to the second buyer", round, s)
+				}
+				// Следующий раунд: второй покупатель тоже возвращает билет, и
+				// место снова свободно, хотя у первого заказа на нём позиция.
+				if err := e.svc.ApplyRefund(ctx, events.OrderRefundedEvent{OrderID: g.ID, TicketIDs: []string{e.refundTicket(t, g)}}); err != nil {
+					t.Fatal(err)
+				}
+				if s, _ := e.seatStatus(t, seat(1, 1)); s != "available" {
+					t.Fatalf("round %d: seat after the second refund = %s, want available", round, s)
+				}
+			}
+		})
+	}
+}
+
+// Прежний владелец вернул только часть заказа: его заказ остаётся
+// partially_refunded с позицией на месте, за которое деньги уже вернулись.
+// Такая позиция места не держит: следующий владелец вернул билет — место
+// снова продаётся.
+func TestRefundAfterPartialRefundOfPreviousOwner(t *testing.T) {
+	e := newEnv(t, false, 1, 3, 0)
+	ctx := t.Context()
+	a, err := e.svc.CreateOrder(ctx, e.buyer(t), e.eventID, seatsReq(seat(1, 1), seat(1, 2)), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.ConfirmPayment(ctx, paid(a, time.Now())); err != nil {
+		t.Fatal(err)
+	}
+	var ticketID string
+	if err := e.db.Pool.QueryRow(ctx, `
+		WITH issued AS (
+		  INSERT INTO tickets (organizer_id, event_id, order_id, order_item_id, event_seat_id)
+		  SELECT i.organizer_id, $1, i.order_id, i.id, i.event_seat_id FROM order_items i WHERE i.order_id = $2
+		  RETURNING id, event_seat_id)
+		SELECT issued.id FROM issued JOIN event_seats s ON s.id = issued.event_seat_id WHERE s.seat_label = '1'`,
+		e.eventID, a.ID).Scan(&ticketID); err != nil {
+		t.Fatal(err)
+	}
+	e.exec(t, `UPDATE tickets SET status = 'revoked', revoked_at = now() WHERE id = $1`, ticketID)
+	e.exec(t, `WITH p AS (
+		  INSERT INTO payments (organizer_id, order_id, status, amount_tiyn, provider)
+		  SELECT organizer_id, id, 'succeeded', total_tiyn, 'fakepsp' FROM orders WHERE id = $1 RETURNING id, organizer_id, order_id),
+		r AS (
+		  INSERT INTO refunds (organizer_id, payment_id, order_id, status, amount_tiyn, reason)
+		  SELECT organizer_id, id, order_id, 'succeeded', 1, 'buyer_request' FROM p RETURNING id, organizer_id, order_id)
+		INSERT INTO refund_items (refund_id, ticket_id, organizer_id, order_id) SELECT id, $2, organizer_id, order_id FROM r`,
+		a.ID, ticketID)
+	if err := e.svc.ApplyRefund(ctx, events.OrderRefundedEvent{OrderID: a.ID, TicketIDs: []string{ticketID}}); err != nil {
+		t.Fatal(err)
+	}
+	if s := e.orderStatus(t, a.ID); s != "partially_refunded" {
+		t.Fatalf("first order = %s, want partially_refunded", s)
+	}
+
+	g, err := e.svc.CreateOrder(ctx, e.buyer(t), e.eventID, seatsReq(seat(1, 1)), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.ConfirmPayment(ctx, paid(g, time.Now())); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.ApplyRefund(ctx, events.OrderRefundedEvent{OrderID: g.ID, TicketIDs: []string{e.refundTicket(t, g)}}); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := e.seatStatus(t, seat(1, 1)); s != "available" {
+		t.Errorf("seat after the second owner's refund = %s, want available", s)
+	}
+}

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
@@ -23,34 +24,50 @@ func holdsCheck(ctx context.Context, pool *pgxpool.Pool, rdb goredis.UniversalCl
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	type seat struct{ status, holder string }
-	seats := map[string]seat{}
-	rows, err := pool.Query(ctx, `SELECT section, coalesce(row_label, ''), seat_label, status, coalesce(hold_order_id::text, '')
-		FROM event_seats WHERE event_id = $1`, *event)
+	r, err := compareHolds(ctx, pool, rdb, *event, time.Now())
 	if err != nil {
 		return err
+	}
+	return writeJSON(*out, r)
+}
+
+// holds — итог сверки холдов одного события.
+type holds struct {
+	RedisHolds int `json:"redis_holds"`
+	DBHeld     int `json:"db_held"`
+	GhostFree  int `json:"ghost_free"`  // в базе место свободно
+	GhostOther int `json:"ghost_other"` // в базе держит другой заказ
+	Missing    int `json:"missing"`     // в базе держится, в Redis ключа нет
+}
+
+// compareHolds сверяет ключи холдов события в Redis с местами в базе на
+// момент at. Холд в базе, чей срок вышел, не считается: его ключ в Redis
+// законно истёк по TTL, а место уже свободно для следующего заказа.
+func compareHolds(ctx context.Context, pool *pgxpool.Pool, rdb goredis.UniversalClient, eventID string, at time.Time) (holds, error) {
+	type seat struct{ status, holder string }
+	seats := map[string]seat{}
+	rows, err := pool.Query(ctx, `SELECT section, coalesce(row_label, ''), seat_label,
+		  CASE WHEN status = 'held' AND hold_expires_at <= $2 THEN 'available' ELSE status END,
+		  coalesce(hold_order_id::text, '')
+		FROM event_seats WHERE event_id = $1`, eventID, at)
+	if err != nil {
+		return holds{}, err
 	}
 	for rows.Next() {
 		var section, row, label string
 		var s seat
 		if err := rows.Scan(&section, &row, &label, &s.status, &s.holder); err != nil {
-			return err
+			return holds{}, err
 		}
-		seats[holdKey(*event, section, row, label)] = s
+		seats[holdKey(eventID, section, row, label)] = s
 	}
 	if err := rows.Err(); err != nil {
-		return err
+		return holds{}, err
 	}
 
-	var r struct {
-		RedisHolds int `json:"redis_holds"`
-		DBHeld     int `json:"db_held"`
-		GhostFree  int `json:"ghost_free"`  // в базе место свободно
-		GhostOther int `json:"ghost_other"` // в базе держит другой заказ
-		Missing    int `json:"missing"`     // в базе держится, в Redis ключа нет
-	}
+	var r holds
 	inRedis := map[string]bool{}
-	iter := rdb.Scan(ctx, 0, "booking:hold:{"+*event+"}:*", 1000).Iterator()
+	iter := rdb.Scan(ctx, 0, "booking:hold:{"+eventID+"}:*", 1000).Iterator()
 	for iter.Next(ctx) {
 		k := iter.Val()
 		v, err := rdb.Get(ctx, k).Result()
@@ -58,7 +75,7 @@ func holdsCheck(ctx context.Context, pool *pgxpool.Pool, rdb goredis.UniversalCl
 			continue // истёк между SCAN и GET
 		}
 		if err != nil {
-			return err
+			return holds{}, err
 		}
 		inRedis[k] = true
 		r.RedisHolds++
@@ -70,7 +87,7 @@ func holdsCheck(ctx context.Context, pool *pgxpool.Pool, rdb goredis.UniversalCl
 		}
 	}
 	if err := iter.Err(); err != nil {
-		return err
+		return holds{}, err
 	}
 	for k, s := range seats {
 		if s.status == "held" {
@@ -80,7 +97,7 @@ func holdsCheck(ctx context.Context, pool *pgxpool.Pool, rdb goredis.UniversalCl
 			}
 		}
 	}
-	return writeJSON(*out, r)
+	return r, nil
 }
 
 // holdKey — тот же ключ, что booking.holdKey.

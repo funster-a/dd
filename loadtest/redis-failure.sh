@@ -12,7 +12,7 @@ POOL=${POOL:-32}
 DOWN_AFTER_MS=${DOWN_AFTER_MS:-300}
 LABEL=${LABEL:-redis-down}
 WARMUP=${WARMUP:-1}
-K6_IMAGE=${K6_IMAGE:-grafana/k6:latest}
+K6_IMAGE=${K6_IMAGE:-grafana/k6:2.3.0}
 OUT=${OUT:-loadtest/results/raw/redis-failure}
 DATA=loadtest/.data
 mkdir -p "$OUT"

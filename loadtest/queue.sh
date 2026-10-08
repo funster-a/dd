@@ -17,7 +17,7 @@ REPEATS=${REPEATS:-3}
 POOL=${POOL:-32}
 VARIANTS=${VARIANTS:-"off:0 q100:100 q200:200"}
 LEAD_S=${LEAD_S:-40} # от создания события до старта продаж: k6 успевает поднять VU
-K6_IMAGE=${K6_IMAGE:-grafana/k6:latest}
+K6_IMAGE=${K6_IMAGE:-grafana/k6:2.3.0}
 OUT=${OUT:-loadtest/results/raw/queue}
 DATA=loadtest/.data
 mkdir -p "$OUT" "$DATA"

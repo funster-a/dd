@@ -224,10 +224,24 @@ WHERE o.event_id = @event_id AND o.client_ip = @client_ip::inet
 
 -- name: ReleaseRefundedSeats :many
 -- Места возвращённых билетов снова продаются. Возвращает места, чтобы
--- снять их ключи холдов в Redis.
+-- снять их ключи холдов в Redis. Место освобождается, только пока оно продано
+-- заказу этого билета: при повторной доставке order.refunded место, которое
+-- уже купил другой покупатель, не трогается. Чужая позиция держит место, пока
+-- деньги за неё не вернулись — то же условие, что в CountUnrefundedTickets.
 UPDATE event_seats s SET status = 'available', hold_order_id = NULL, hold_expires_at = NULL
 FROM tickets t
 WHERE t.id = ANY(@ticket_ids::uuid[]) AND s.id = t.event_seat_id AND s.status = 'sold'
+  AND NOT EXISTS (
+      SELECT 1 FROM order_items i
+      JOIN orders o ON o.id = i.order_id
+      LEFT JOIN tickets other ON other.order_item_id = i.id
+      WHERE i.event_seat_id = s.id AND i.order_id <> t.order_id
+        AND o.status IN ('paid', 'partially_refunded')
+        AND (other.id IS NULL OR NOT (
+            (other.status = 'revoked' AND i.price_tiyn = 0)
+            OR EXISTS (
+                SELECT 1 FROM refund_items ri JOIN refunds r ON r.id = ri.refund_id
+                WHERE ri.ticket_id = other.id AND r.status = 'succeeded'))))
 RETURNING s.id, s.kind, s.section, s.row_label, s.seat_label;
 
 -- name: CountUnrefundedTickets :one

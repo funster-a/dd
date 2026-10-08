@@ -68,6 +68,19 @@ docker compose up -d --scale api=4 --scale worker=3 --no-recreate
 
 То же постоянно — `API_REPLICAS` и `WORKER_REPLICAS` в `.env`. Новые экземпляры балансировщик и Prometheus находят через DNS Docker за 10 секунд.
 
+### Kubernetes
+
+Манифесты — `deploy/k8s` (kustomize, ADR 032): приложение в `base`, локальный стенд с зависимостями в одном экземпляре — `overlays/local`. Число подов api, края и воркера задаёт HPA по загрузке процессора, поэтому нужен metrics-server: `loadtest/k8s-storm.sh` ставит его сам и показывает, как поставить вручную.
+
+```sh
+kind create cluster --name dd
+make k8s-images
+for i in dd-api dd-worker dd-migrate dd-fakepsp dd-web; do kind load docker-image --name dd $i:local; done
+kubectl apply -k deploy/k8s/overlays/local
+kubectl -n dd port-forward svc/web 8000:80
+make k8s-validate   # проверка манифестов по схемам API без кластера (нужен kubectl)
+```
+
 ### Адреса
 
 | Сервис | Адрес | Доступ |
@@ -375,6 +388,7 @@ go run ./cmd/loadseed redischaos-report -in loadtest/results/raw/redischaos -out
 go run ./cmd/loadseed mqchaos-report -in loadtest/results/raw/mqchaos -out docs/experiments/<папка>
 ./loadtest/readpath.sh                              # нагрузка на ведущий узел PostgreSQL при старте продаж: до и после этапа 5 (ADR 031)
 go run ./cmd/loadseed readpath-report -in loadtest/results/raw/readpath -out docs/experiments/<папка>
+./loadtest/k8s-storm.sh                             # автомасштабирование при штурме и обратное сжатие в kind (ADR 032); в облаке — workflow «Kubernetes storm»
 go run ./cmd/loadseed storm-report -dir loadtest/results/raw/storm -out docs/experiments/<папка>
 go run ./cmd/loadseed scale-report -dir loadtest/results/raw/scale -out docs/experiments/<папка>
 go run ./cmd/loadseed queue-report -dir loadtest/results/raw/queue -out docs/experiments/<папка>

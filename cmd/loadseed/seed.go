@@ -34,14 +34,21 @@ func seedBuyers(ctx context.Context, pool *pgxpool.Pool, rdb goredis.Cmdable, ar
 	next := make(chan int)
 	for range 32 {
 		wg.Go(func() {
+			// После ошибки воркер дочитывает канал вхолостую: иначе, когда
+			// ошибутся все, отправка в next заблокируется навсегда.
+			failed := false
 			for i := range next {
+				if failed {
+					continue
+				}
 				t, err := ident.IssueBuyerSession(ctx, fmt.Sprintf("+7799%07d", i))
 				if err != nil {
 					select {
 					case errs <- err:
 					default:
 					}
-					return
+					failed = true
+					continue
 				}
 				tokens[i] = t
 			}

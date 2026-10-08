@@ -1,0 +1,143 @@
+# api (ADR 032). Состояния в процессе нет — экземпляры взаимозаменяемы
+# (ADR 023), их число задаёт HPA по загрузке процессора.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: api
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 25%
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: api
+    spec:
+      # preStop (5 с) + SHUTDOWN_TIMEOUT (15 с) с запасом: Kubernetes не
+      # прервёт корректную остановку (ADR 003).
+      terminationGracePeriodSeconds: 25
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: api
+      containers:
+        - name: api
+          image: dd-api
+          ports:
+            - {name: http, containerPort: 8080}
+          env:
+            - {name: HTTP_ADDR, value: ":8080"}
+          envFrom:
+            - configMapRef: {name: app-env}
+            - secretRef: {name: app-secrets}
+          # Запрос — пол-ядра: на стенде этапа 2 экземпляр держал около 250
+          # заказов в секунду (ADR 023). Лимита процессора нет:
+          # троттлинг на старте продаж хуже, чем сосед по узлу; HPA считает
+          # загрузку от запроса.
+          resources:
+            requests: {cpu: 500m, memory: 128Mi}
+            limits: {memory: 512Mi}
+          startupProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 1
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+            failureThreshold: 3
+          # 503 только без PostgreSQL: отказ Redis, реплик или хранилища
+          # не выводит экземпляры из ротации (ADR 030).
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+          lifecycle:
+            # Пока Kubernetes убирает под из Service и край перестаёт слать
+            # ему запросы, под ещё отвечает; потом корректная остановка.
+            preStop:
+              sleep: {seconds: 5}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+spec:
+  selector:
+    app.kubernetes.io/name: api
+  ports:
+    - {name: http, port: 8080, targetPort: http}
+---
+# Адреса всех подов api для края: nginx перечитывает их каждые 10 секунд и
+# распределяет запросы сам. Через ClusterIP долгие keepalive-соединения
+# остались бы на старых подах, и новые поды HPA не получали бы нагрузки.
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-pods
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: api
+  ports:
+    - {name: http, port: 8080, targetPort: http}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+  behavior:
+    # Старт продаж — минуты, а не часы: вверх сразу и много, вниз — после
+    # пяти минут спокойствия и по одному поду в минуту. Иначе HPA снимал бы
+    # поды между волнами покупателей и тут же поднимал снова.
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      selectPolicy: Max
+      policies:
+        - {type: Percent, value: 100, periodSeconds: 15}
+        - {type: Pods, value: 4, periodSeconds: 15}
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - {type: Pods, value: 1, periodSeconds: 60}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: api
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: api

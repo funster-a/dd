@@ -1,0 +1,204 @@
+# Зависимости для локального кластера, по одному экземпляру. На продакшене —
+# управляемые сервисы или операторы с репликами (ADR 028–030, ADR 032).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: postgres}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: postgres}
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:18.6-alpine
+          env:
+            - {name: POSTGRES_USER, value: dd}
+            - {name: POSTGRES_PASSWORD, value: dd}
+            - {name: POSTGRES_DB, value: dd}
+          ports:
+            - {name: pg, containerPort: 5432}
+          readinessProbe:
+            exec: {command: ["pg_isready", "-U", "dd", "-d", "dd", "-h", "127.0.0.1"]}
+            periodSeconds: 3
+          resources:
+            requests: {cpu: 500m, memory: 256Mi}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources: {requests: {storage: 5Gi}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  selector: {app.kubernetes.io/name: postgres}
+  ports:
+    - {name: pg, port: 5432, targetPort: pg}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+spec:
+  serviceName: redis
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: redis}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: redis}
+    spec:
+      containers:
+        - name: redis
+          image: redis:8.10.2-alpine
+          # Журнал, как в Compose (ADR 029).
+          args: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+          ports:
+            - {name: redis, containerPort: 6379}
+          readinessProbe:
+            exec: {command: ["redis-cli", "ping"]}
+            periodSeconds: 3
+          volumeMounts:
+            - {name: data, mountPath: /data}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources: {requests: {storage: 1Gi}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+spec:
+  selector: {app.kubernetes.io/name: redis}
+  ports:
+    - {name: redis, port: 6379, targetPort: redis}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rabbitmq
+spec:
+  serviceName: rabbitmq
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: rabbitmq}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: rabbitmq}
+    spec:
+      containers:
+        - name: rabbitmq
+          image: rabbitmq:4.3.6-management-alpine
+          env:
+            - {name: RABBITMQ_DEFAULT_USER, value: dd}
+            - {name: RABBITMQ_DEFAULT_PASS, value: dd}
+          ports:
+            - {name: amqp, containerPort: 5672}
+          readinessProbe:
+            exec: {command: ["rabbitmq-diagnostics", "-q", "ping"]}
+            periodSeconds: 10
+            timeoutSeconds: 5
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/rabbitmq}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources: {requests: {storage: 1Gi}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq
+spec:
+  selector: {app.kubernetes.io/name: rabbitmq}
+  ports:
+    - {name: amqp, port: 5672, targetPort: amqp}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: seaweedfs
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: seaweedfs}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: seaweedfs}
+    spec:
+      containers:
+        - name: seaweedfs
+          image: chrislusf/seaweedfs:4.47
+          args: ["mini", "-dir=/data", "-ip.bind=0.0.0.0", "-bucket=dd-media", "-s3.config=/etc/seaweedfs/s3.json"]
+          ports:
+            - {name: s3, containerPort: 8333}
+          readinessProbe:
+            httpGet: {path: /healthz, port: s3}
+            periodSeconds: 5
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: config, mountPath: /etc/seaweedfs}
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: config
+          configMap: {name: seaweedfs-s3}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: seaweedfs
+spec:
+  selector: {app.kubernetes.io/name: seaweedfs}
+  ports:
+    - {name: s3, port: 8333, targetPort: s3}
+---
+# Мок платёжного провайдера (ADR 012): карточных данных не принимает.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fakepsp
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: fakepsp}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: fakepsp}
+    spec:
+      containers:
+        - name: fakepsp
+          image: dd-fakepsp
+          env:
+            - {name: FAKEPSP_PUBLIC_URL, value: "http://localhost:8090"}
+            - {name: FAKEPSP_STATE_FILE, value: /data/fakepsp.json}
+            - {name: PSP_API_KEY, value: dev-psp-api-key}
+            - {name: PSP_WEBHOOK_SECRET, value: dev-psp-webhook-secret}
+          ports:
+            - {name: http, containerPort: 8090}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fakepsp
+spec:
+  selector: {app.kubernetes.io/name: fakepsp}
+  ports:
+    - {name: http, port: 8090, targetPort: http}

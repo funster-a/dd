@@ -1,0 +1,42 @@
+# Локальный кластер (kind, k3s) для экспериментов этапа 6 (ADR 032):
+# приложение из base и зависимости в одном экземпляре — PostgreSQL, Redis,
+# RabbitMQ, SeaweedFS и мок платёжного провайдера. Значения секретов — только
+# для разработки, как в docker-compose.yml.
+#
+#   make k8s-images && kubectl apply -k deploy/k8s/overlays/local
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: dd
+resources:
+  - ../../base
+  - deps.yaml
+configMapGenerator:
+  - name: app-env
+    literals:
+      - LOG_LEVEL=info
+      - SHUTDOWN_TIMEOUT=15s
+      - REDIS_ADDR=redis:6379
+      - PUBLIC_BASE_URL=http://localhost:8000
+      - PSP_URL=http://fakepsp:8090
+      - PAYMENT_CALLBACK_URL=http://edge:8080/v1/payments/webhooks/fakepsp
+      - S3_ENDPOINT=http://seaweedfs:8333
+      - S3_PUBLIC_ENDPOINT=http://localhost:8333
+      - S3_BUCKET=dd-media
+  - name: seaweedfs-s3
+    files:
+      - s3.json
+secretGenerator:
+  - name: app-secrets
+    literals:
+      - DATABASE_URL=postgres://dd:dd@postgres:5432/dd?sslmode=disable
+      - RABBITMQ_URL=amqp://dd:dd@rabbitmq:5672/
+      - PSP_API_KEY=dev-psp-api-key
+      - PSP_WEBHOOK_SECRET=dev-psp-webhook-secret
+      - S3_ACCESS_KEY=dd
+      - S3_SECRET_KEY=dd-secret-key
+images:
+  - {name: dd-api, newTag: local}
+  - {name: dd-worker, newTag: local}
+  - {name: dd-migrate, newTag: local}
+  - {name: dd-web, newTag: local}
+  - {name: dd-fakepsp, newTag: local}

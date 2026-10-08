@@ -16,9 +16,10 @@ server {
         return 200 "ok\n";
     }
 
-    # Docker DNS: имя api переразрешается каждые 10 секунд, запросы идут по
-    # кругу на все реплики api (ADR 023).
-    resolver 127.0.0.11 valid=10s ipv6=off;
+    # DNS контейнера из /etc/resolv.conf (образ nginx подставляет его в
+    # NGINX_LOCAL_RESOLVERS): в Docker это 127.0.0.11, в Kubernetes — DNS
+    # кластера (ADR 032). Имя upstream переразрешается каждые 10 секунд.
+    resolver ${NGINX_LOCAL_RESOLVERS} valid=10s ipv6=off;
 
     location /v1/ {
         set $api ${API_UPSTREAM};

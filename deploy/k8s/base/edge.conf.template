@@ -14,7 +14,8 @@ upstream api {
 
 # Кэшируемые чтения идут к тем же подам через отдельный upstream без
 # max_fails: медленное чтение не выводит под ни из записи, ни из чтений.
-# Недоступный под обходится повтором на другой (proxy_next_upstream ниже).
+# Недоступный под обходится повтором на другой (proxy_next_upstream ниже),
+# если соединение новое; по открытому keepalive — ждём proxy_read_timeout.
 upstream api_reads {
     zone api_reads 64k;
     server api-pods.${POD_NAMESPACE}.svc.cluster.local:8080 resolve max_fails=0;

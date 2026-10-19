@@ -7,6 +7,8 @@ import { dayMonth, money, time, weekday } from '@/lib/format'
 const events = ref<OrgEvent[] | null>(null)
 const venues = ref<OrgVenue[]>([])
 const reports = ref<Record<string, EventReport>>({})
+// Пока отчёты не пришли, итоги — «—», а не нули.
+const reportsLoaded = ref(false)
 const failed = ref(false)
 
 const venueOf = (id: string) => venues.value.find((v) => v.id === id)
@@ -22,6 +24,7 @@ async function load() {
     const live = es.filter((e) => e.status === 'published' && e.admission === 'ticketed').slice(0, 24)
     const got = await Promise.all(live.map((e) => orgApi.report(e.id).catch(() => null)))
     reports.value = Object.fromEntries(got.filter((r): r is EventReport => !!r).map((r) => [r.event.id, r]))
+    reportsLoaded.value = true
   } catch {
     failed.value = true
   }
@@ -110,11 +113,11 @@ const statusLabel = { draft: 'Черновик', published: 'В продаже',
         </div>
         <div>
           <dt class="eyebrow">Продано мест</dt>
-          <dd>{{ totals.sold }}</dd>
+          <dd>{{ reportsLoaded ? totals.sold : '—' }}</dd>
         </div>
         <div>
           <dt class="eyebrow">Выручка после возвратов</dt>
-          <dd class="mono">{{ money(totals.net) }}</dd>
+          <dd class="mono">{{ reportsLoaded ? money(totals.net) : '—' }}</dd>
         </div>
       </dl>
 

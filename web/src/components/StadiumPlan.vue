@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { fillLevel, type PlanSector, type StadiumPlan } from '@/lib/plan'
-import { money, plural } from '@/lib/format'
+import { money, plural, ticketPrice } from '@/lib/format'
 
 // План стадиона (ADR 024): покупатель выбирает сектор, места — на
 // следующем шаге. Сектор — кнопка: Tab, Enter и пробел работают как мышь.
@@ -24,7 +24,7 @@ function seatsLeft(s: PlanSector): string {
 }
 
 // Цена сектора: «от 120 000 ₸», если первые ряды продаются дешевле (ADR 025).
-const price = (s: PlanSector) => (s.priceVaries ? 'от ' : '') + money(s.priceTiyn)
+const price = (s: PlanSector) => (s.priceVaries ? 'от ' + money(s.priceTiyn) : ticketPrice(s.priceTiyn))
 
 function label(s: PlanSector): string {
   return [s.name, s.stand, seatsLeft(s), s.available ? price(s) : ''].filter(Boolean).join(', ')

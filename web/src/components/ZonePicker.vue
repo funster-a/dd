@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { GeneralZone } from '@/lib/seatmap'
-import { money, plural } from '@/lib/format'
+import { plural, ticketPrice } from '@/lib/format'
 
 defineProps<{ zones: GeneralZone[]; available: Record<string, number>; quantities: Record<string, number>; disabled?: boolean }>()
 const emit = defineEmits<{ change: [zone: string, quantity: number] }>()
@@ -13,7 +13,7 @@ const emit = defineEmits<{ change: [zone: string, quantity: number] }>()
       <div class="zone__info">
         <span class="zone__name">{{ z.name }}</span>
         <span class="zone__meta mono">
-          {{ money(z.priceTiyn) }} ·
+          {{ ticketPrice(z.priceTiyn) }} ·
           <template v-if="(available[z.name] ?? 0) > 0">
             осталось {{ available[z.name] }} {{ plural(available[z.name] ?? 0, 'место', 'места', 'мест') }}
           </template>

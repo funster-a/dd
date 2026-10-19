@@ -6,7 +6,7 @@ import { ApiError, api, newKey } from '@/api/client'
 import type { Order, OrderSummary, Ticket } from '@/api/types'
 import { useAuth } from '@/composables/auth'
 import { useToast } from '@/composables/toast'
-import { dayMonth, money, orderStatusLabel, tickets as ticketsWord, time } from '@/lib/format'
+import { dayMonth, money, orderStatusText, tickets as ticketsWord, time } from '@/lib/format'
 
 const props = defineProps<{ id: string }>()
 const route = useRoute()
@@ -33,6 +33,10 @@ const hasTickets = computed(() => ['paid', 'partially_refunded', 'refunded'].inc
 // Билеты выпускает воркер после оплаты: пока их меньше, чем позиций, ждём.
 const issuing = computed(() => order.value?.status === 'paid' && tickets.value.length < order.value.items.length)
 const waitingPayment = computed(() => fromPayment && order.value?.status === 'pending' && left.value > 0)
+// Статус заказа после возврата меняет воркер (order.refunded): до 20 секунд
+// опрашиваем заказ, пока статус не сменится.
+const refundFrom = ref<{ status: string; until: number } | null>(null)
+const refundPending = computed(() => !!refundFrom.value && order.value?.status === refundFrom.value.status && now.value < refundFrom.value.until)
 
 async function load() {
   try {
@@ -56,8 +60,8 @@ onMounted(async () => {
   await load()
   timer = setInterval(() => {
     now.value = Date.now()
-    // Опрос раз в 2 секунды, пока ждём вебхук или выпуск билетов.
-    if ((waitingPayment.value || issuing.value) && ++polls % 2 === 0 && polls < 120) load()
+    // Опрос раз в 2 секунды, пока ждём вебхук, выпуск билетов или возврат.
+    if ((waitingPayment.value || issuing.value || refundPending.value) && ++polls % 2 === 0 && polls < 120) load()
   }, 1000)
 })
 onBeforeUnmount(() => clearInterval(timer))
@@ -107,7 +111,10 @@ async function refund(t: Ticket) {
   if (!order.value || !confirm(refundQuestion.value)) return
   busy.value = true
   try {
+    const before = order.value.status
     const r = await api.refund(order.value.id, [t.id], newKey())
+    refundFrom.value = { status: before, until: Date.now() + 20000 }
+    polls = 0
     toast.show(r.amount_tiyn > 0 ? `Возврат ${money(r.amount_tiyn)} оформлен` : 'Билет возвращён', 'ok')
     await load()
   } catch (e) {
@@ -142,7 +149,7 @@ function itemText(i: { kind: string; section: string; row: string | null; seat: 
       <header class="head">
         <p class="eyebrow">
           Заказ <span class="mono">№{{ order.id.slice(-8).toUpperCase() }}</span> ·
-          <span class="status" :class="`status--${order.status}`">{{ orderStatusLabel[order.status] }}</span>
+          <span class="status" :class="`status--${order.status}`">{{ orderStatusText(order.status, order.total_tiyn) }}</span>
         </p>
         <h1 class="head__title">
           <RouterLink v-if="summary" :to="`/e/${summary.organizer_slug}/${summary.event_slug}`">{{ summary.event_title }}</RouterLink>

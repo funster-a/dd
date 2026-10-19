@@ -9,7 +9,7 @@ import { ApiError, api, newKey } from '@/api/client'
 import type { Availability, PublicEvent, QueueStatus } from '@/api/types'
 import { useAuth } from '@/composables/auth'
 import { useToast } from '@/composables/toast'
-import { dayMonth, fullDate, money, tickets, time, weekday } from '@/lib/format'
+import { dayMonth, fullDate, money, ticketPrice, tickets, time, weekday } from '@/lib/format'
 import { queueView } from '@/lib/queue'
 import { buildPlan } from '@/lib/plan'
 import { buildSeatMap, cartCount, cartFee, cartTotal, emptyCart, setZoneQuantity, takenSet, toggleSeat, type MapSeat } from '@/lib/seatmap'
@@ -22,6 +22,9 @@ const toast = useToast()
 const event = ref<PublicEvent | null>(null)
 const notFound = ref(false)
 const availability = ref<Availability | null>(null)
+// Схема рисуется раньше, чем приходит занятость: до ответа проданные места
+// выглядят свободными, поэтому выбирать их пока нельзя.
+const availReady = ref(false)
 const cart = reactive(emptyCart())
 const checkoutOpen = ref(false)
 const email = ref(readEmail())
@@ -71,6 +74,7 @@ const feePercent = computed(() => {
   return bps > 0 ? `${(bps / 100).toLocaleString('ru-RU')} %` : ''
 })
 const tz = computed(() => event.value?.venue.timezone ?? 'UTC')
+const generalOnly = computed(() => !!event.value?.layout?.sections.every((s) => s.kind === 'general'))
 
 // Можно ли сейчас покупать: событие активно, продажи идут.
 const saleState = computed<'open' | 'cancelled' | 'free_entry' | 'not_started' | 'closed'>(() => {
@@ -146,6 +150,7 @@ const mapLink = computed(() => {
 })
 
 async function load() {
+  availReady.value = false
   try {
     event.value = await api.event(props.org, props.slug)
     document.title = `${event.value.title} — Партер`
@@ -158,10 +163,12 @@ async function load() {
 
 async function refresh() {
   if (!event.value) return
+  const forSector = sector.value
   try {
     const q = event.value.layout?.plan ? (sector.value ? { section: sector.value } : { summary: true }) : {}
     const a = await api.availability(event.value.id, q)
     availability.value = a
+    if (sector.value === forSector) availReady.value = true
     if (!('section' in q)) {
       planCounts.value = a.sections
       planGeneral.value = a.general
@@ -169,7 +176,9 @@ async function refresh() {
     // Место, которое заняли, пока покупатель выбирал, уходит из корзины.
     for (const [key] of cart.seats) if (taken.value.has(key)) cart.seats.delete(key)
   } catch {
-    // занятость подтянется при следующем опросе
+    // занятость подтянется при следующем опросе; выбор не блокируем —
+    // занятое место всё равно отклонит сервер (seat_taken)
+    if (sector.value === forSector) availReady.value = true
   }
 }
 
@@ -189,7 +198,10 @@ watch(() => [props.org, props.slug], () => {
   sector.value = null
   load()
 })
-watch(sector, () => refresh())
+watch(sector, () => {
+  availReady.value = false
+  refresh()
+})
 
 function onToggle(s: MapSeat) {
   if (!event.value) return
@@ -339,9 +351,9 @@ const cartLines = computed(() => [
           <h2 class="queue__title">{{ qv.title }}</h2>
           <p class="queue__text">{{ qv.text }}</p>
           <button v-if="!queue" class="btn btn--accent" type="button" @click="joinQueue">Встать в очередь</button>
-          <a v-else-if="qv.canBuy && saleState === 'open'" href="#seats" class="btn btn--accent">Выбрать места</a>
+          <a v-else-if="qv.canBuy && saleState === 'open'" href="#seats" class="btn btn--accent">{{ generalOnly ? 'Выбрать билеты' : 'Выбрать места' }}</a>
         </div>
-        <a v-else-if="saleState === 'open'" href="#seats" class="btn btn--accent hero__cta">Выбрать места</a>
+        <a v-else-if="saleState === 'open'" href="#seats" class="btn btn--accent hero__cta">{{ generalOnly ? 'Выбрать билеты' : 'Выбрать места' }}</a>
         <p v-else-if="saleState === 'free_entry'" class="note note--ok">Вход свободный — билеты не нужны. Просто приходите.</p>
         <p v-else-if="saleState === 'not_started'" class="note">
           Продажи откроются {{ fullDate(event.sales_start_at!, tz) }}<template v-if="availability?.queue && !queueOn"
@@ -372,12 +384,12 @@ const cartLines = computed(() => [
       </div>
     </section>
 
-    <section v-if="map && saleState === 'open'" id="seats" class="page seats">
+    <section v-if="map && saleState === 'open'" id="seats" class="page seats" :class="{ 'seats--loading': !availReady }" :aria-busy="!availReady">
       <div class="seats__head">
         <h2 class="seats__title">Выберите места</h2>
         <ul class="legend">
           <li v-for="c in map.categories" :key="c.name" :class="`cat-${c.color}`">
-            <span class="legend__dot"></span>{{ c.name }} <span class="mono">{{ money(c.priceTiyn) }}</span>
+            <span class="legend__dot"></span>{{ c.name }} <span v-if="ticketPrice(c.priceTiyn) !== c.name" class="mono">{{ ticketPrice(c.priceTiyn) }}</span>
           </li>
           <li class="legend--taken"><span class="legend__dot"></span>Занято</li>
         </ul>
@@ -392,15 +404,16 @@ const cartLines = computed(() => [
           </p>
         </div>
       </template>
-      <SeatMapView v-if="map.sections.length" :key="sector ?? ''" :map="map" :taken="taken" :cart="cart" @toggle="onToggle" />
+      <SeatMapView v-if="map.sections.length" :key="sector ?? ''" :map="map" :taken="taken" :cart="cart" :disabled="!availReady" @toggle="onToggle" />
       <div v-if="shownZones.length" class="seats__zones">
         <h3 v-if="!plan" class="seats__subtitle">Входные зоны</h3>
-        <ZonePicker :zones="shownZones" :available="zoneAvailable" :quantities="zoneQuantities" @change="onZone" />
+        <ZonePicker :zones="shownZones" :available="zoneAvailable" :quantities="zoneQuantities" :disabled="!availReady" @change="onZone" />
       </div>
       <p class="seats__note">
         Не больше {{ tickets(event.max_tickets_per_buyer) }} на покупателя. Места держатся за вами 10 минут, пока вы платите.
-        Вернуть билет можно не позже чем за {{ event.refund_deadline_hours }} ч до начала<template v-if="feePercent">
-          ; сервисный сбор {{ feePercent }} при возврате не возвращается, при отмене события — возвращается</template>.
+        Вернуть билет можно не позже чем за {{ event.refund_deadline_hours }} ч до начала<template v-if="feePercent"
+          >; сервисный сбор {{ feePercent }} при возврате не возвращается, при отмене события — возвращается</template
+        >.
       </p>
     </section>
 
@@ -445,7 +458,7 @@ const cartLines = computed(() => [
         <button class="btn btn--accent checkout__submit" :disabled="busy || !emailValid">
           {{ total === 0 ? 'Получить билеты' : `Перейти к оплате · ${money(total)}` }}
         </button>
-        <p class="checkout__note">Оплата на защищённой странице платёжного провайдера. Данные карты не проходят через Партер.</p>
+        <p v-if="total > 0" class="checkout__note">Оплата на защищённой странице платёжного провайдера. Данные карты не проходят через Партер.</p>
       </form>
     </BottomSheet>
   </article>
@@ -509,13 +522,15 @@ const cartLines = computed(() => [
   }
 }
 .hero__text {
+  min-width: 0;
   display: grid;
   gap: var(--space-5);
   align-content: end;
 }
 .hero__title {
   font-size: var(--text-4xl);
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  min-width: 0; /* иначе длинное слово распирает колонку, а не переносится */
 }
 .hero__poster {
   margin: 0;
@@ -603,6 +618,11 @@ const cartLines = computed(() => [
 }
 .seats__title {
   font-size: var(--text-3xl);
+}
+.seats--loading .seatmap,
+.seats--loading .zones {
+  opacity: 0.55;
+  cursor: progress;
 }
 .seats__subtitle {
   font-size: var(--text-xl);

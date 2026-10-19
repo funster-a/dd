@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ApiError, orgApi } from '@/api/client'
 import { useOrgAuth } from '@/composables/orgAuth'
@@ -14,6 +14,7 @@ const code = ref('')
 const error = ref('')
 const busy = ref(false)
 const resendIn = ref(0)
+const codeInput = ref<HTMLInputElement | null>(null)
 let timer: ReturnType<typeof setInterval> | undefined
 
 const emailOk = computed(() => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.value.trim()))
@@ -39,6 +40,9 @@ async function sendCode() {
     const res = await orgApi.requestCode(email.value.trim().toLowerCase())
     step.value = 'code'
     countdown(res.resend_after_seconds ?? 60)
+    // autofocus срабатывает только при загрузке страницы, а поле появляется позже.
+    await nextTick()
+    codeInput.value?.focus()
   } catch (e) {
     error.value = e instanceof ApiError && e.status === 429 ? 'Код уже отправлен, подождите минуту' : 'Не удалось отправить код, попробуйте ещё раз'
   } finally {
@@ -111,7 +115,7 @@ watch(code, (v) => {
           </p>
           <label class="field">
             <span class="field__label">Код из письма</span>
-            <input v-model="code" class="input input--code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="••••••" autofocus />
+            <input ref="codeInput" v-model="code" class="input input--code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="••••••" />
           </label>
           <p v-if="error" class="error-text" role="alert">{{ error }}</p>
           <button class="btn btn--accent" :disabled="busy || code.length !== 6">Войти</button>

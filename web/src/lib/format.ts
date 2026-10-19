@@ -44,6 +44,9 @@ export function plural(n: number, one: string, few: string, many: string): strin
 
 export const tickets = (n: number) => `${n}${nbsp}${plural(n, 'билет', 'билета', 'билетов')}`
 
+// Лимит на покупателя: после «не больше» — родительный падеж, «2 билетов».
+export const atMostTickets = (n: number) => `Не больше${nbsp}${n}${nbsp}${plural(n, 'билета', 'билетов', 'билетов')}`
+
 // Телефон в E.164 из того, что ввёл человек: 8 707 … → +7707…
 export function normalizePhone(input: string): string | null {
   const digits = input.replace(/\D/g, '')

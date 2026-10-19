@@ -9,7 +9,7 @@ import { ApiError, api, newKey } from '@/api/client'
 import type { Availability, PublicEvent, QueueStatus } from '@/api/types'
 import { useAuth } from '@/composables/auth'
 import { useToast } from '@/composables/toast'
-import { dayMonth, fullDate, money, ticketPrice, tickets, time, weekday } from '@/lib/format'
+import { atMostTickets, dayMonth, fullDate, money, ticketPrice, tickets, time, weekday } from '@/lib/format'
 import { queueView } from '@/lib/queue'
 import { buildPlan } from '@/lib/plan'
 import { buildSeatMap, cartCount, cartFee, cartTotal, emptyCart, setZoneQuantity, takenSet, toggleSeat, type MapSeat } from '@/lib/seatmap'
@@ -75,6 +75,8 @@ const feePercent = computed(() => {
 })
 const tz = computed(() => event.value?.venue.timezone ?? 'UTC')
 const generalOnly = computed(() => !!event.value?.layout?.sections.every((s) => s.kind === 'general'))
+// Все билеты бесплатные: ни оплаты, ни сбора, держать места не за что.
+const allFree = computed(() => !!event.value?.prices.length && event.value.prices.every((p) => p.price_tiyn === 0))
 
 // Можно ли сейчас покупать: событие активно, продажи идут.
 const saleState = computed<'open' | 'cancelled' | 'free_entry' | 'not_started' | 'closed'>(() => {
@@ -206,14 +208,14 @@ watch(sector, () => {
 function onToggle(s: MapSeat) {
   if (!event.value) return
   if (!toggleSeat(cart, s, taken.value, event.value.max_tickets_per_buyer)) {
-    toast.show(`Не больше ${tickets(event.value.max_tickets_per_buyer)} на покупателя`)
+    toast.show(`${atMostTickets(event.value.max_tickets_per_buyer)} на покупателя`)
   }
 }
 
 function onZone(zone: string, q: number) {
   if (!event.value) return
   const got = setZoneQuantity(cart, zone, q, zoneAvailable.value[zone] ?? 0, event.value.max_tickets_per_buyer)
-  if (got < q && q <= (zoneAvailable.value[zone] ?? 0)) toast.show(`Не больше ${tickets(event.value.max_tickets_per_buyer)} на покупателя`)
+  if (got < q && q <= (zoneAvailable.value[zone] ?? 0)) toast.show(`${atMostTickets(event.value.max_tickets_per_buyer)} на покупателя`)
 }
 
 async function startCheckout() {
@@ -245,6 +247,7 @@ const errorText: Record<string, string> = {
   sales_not_started: 'Продажи ещё не открылись.',
   event_cancelled: 'Событие отменено.',
   order_in_progress: 'Заказ уже оформляется в другой вкладке.',
+  invalid_session: 'Сессия истекла. Войдите снова — выбранные места сохранены.',
   session_store_unavailable: 'Вход временно недоступен. Попробуйте через несколько секунд — места пока не заняты.',
   queue_required: 'Сначала дождитесь своей очереди.',
   ip_ticket_limit_exceeded: 'С этой сети уже взято много билетов на событие. Если это ошибка, попробуйте с мобильного интернета.',
@@ -253,6 +256,7 @@ const errorText: Record<string, string> = {
 async function submit() {
   if (!event.value || !emailValid.value) return
   busy.value = true
+  let relogin = false
   try {
     localStorage.setItem('dd.email', email.value.trim())
   } catch {
@@ -286,9 +290,21 @@ async function submit() {
       checkoutOpen.value = false
       await refresh()
     }
+    relogin = code === 'invalid_session'
     checkoutKey = newKey()
   } finally {
     busy.value = false
+  }
+  // Заказ не создан: после входа оформляем его снова с той же корзиной.
+  if (relogin) {
+    checkoutOpen.value = false
+    try {
+      await requireLogin()
+    } catch {
+      return
+    }
+    checkoutOpen.value = true
+    await submit()
   }
 }
 
@@ -386,7 +402,7 @@ const cartLines = computed(() => [
 
     <section v-if="map && saleState === 'open'" id="seats" class="page seats" :class="{ 'seats--loading': !availReady }" :aria-busy="!availReady">
       <div class="seats__head">
-        <h2 class="seats__title">Выберите места</h2>
+        <h2 class="seats__title">{{ generalOnly ? 'Выберите билеты' : 'Выберите места' }}</h2>
         <ul class="legend">
           <li v-for="c in map.categories" :key="c.name" :class="`cat-${c.color}`">
             <span class="legend__dot"></span>{{ c.name }} <span v-if="ticketPrice(c.priceTiyn) !== c.name" class="mono">{{ ticketPrice(c.priceTiyn) }}</span>
@@ -410,8 +426,8 @@ const cartLines = computed(() => [
         <ZonePicker :zones="shownZones" :available="zoneAvailable" :quantities="zoneQuantities" :disabled="!availReady" @change="onZone" />
       </div>
       <p class="seats__note">
-        Не больше {{ tickets(event.max_tickets_per_buyer) }} на покупателя. Места держатся за вами 10 минут, пока вы платите.
-        Вернуть билет можно не позже чем за {{ event.refund_deadline_hours }} ч до начала<template v-if="feePercent"
+        {{ atMostTickets(event.max_tickets_per_buyer) }} на покупателя.<template v-if="!allFree"> Места держатся за вами 10 минут, пока вы платите.</template>
+        Вернуть билет можно не позже чем за {{ event.refund_deadline_hours }} ч до начала<template v-if="feePercent && !allFree"
           >; сервисный сбор {{ feePercent }} при возврате не возвращается, при отмене события — возвращается</template
         >.
       </p>
@@ -422,7 +438,7 @@ const cartLines = computed(() => [
         <div class="page cart__inner">
           <div class="cart__summary">
             <span class="cart__count">{{ tickets(count) }}</span>
-            <span class="cart__total mono">{{ money(total) }}</span>
+            <span class="cart__total mono">{{ ticketPrice(total) }}</span>
           </div>
           <button class="btn btn--accent" type="button" :disabled="!canBuy" @click="startCheckout">
             {{ canBuy ? 'Оформить' : 'Ждём очередь' }}
@@ -439,7 +455,7 @@ const cartLines = computed(() => [
           <ul class="stub__lines">
             <li v-for="l in cartLines" :key="l.key">
               <span>{{ l.text }}</span>
-              <span class="mono">{{ money(l.price) }}</span>
+              <span class="mono">{{ ticketPrice(l.price) }}</span>
             </li>
           </ul>
           <div v-if="fee > 0" class="stub__fee">
@@ -448,7 +464,7 @@ const cartLines = computed(() => [
           </div>
           <div class="stub__total">
             <span>Итого</span>
-            <span class="mono">{{ money(total) }}</span>
+            <span class="mono">{{ ticketPrice(total) }}</span>
           </div>
         </div>
         <label class="field">

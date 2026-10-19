@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { money, normalizePhone, orderStatusText, plural, priceFrom, ticketPrice, time } from './format'
+import { atMostTickets, money, normalizePhone, orderStatusText, plural, priceFrom, ticketPrice, time } from './format'
 
 describe('format', () => {
   it('formats tiyn as tenge without floats', () => {
@@ -44,6 +44,16 @@ describe('format', () => {
       'билетов',
       'билет',
       'билета',
+    ])
+  })
+
+  it('states the ticket limit in the genitive', () => {
+    expect([1, 2, 6, 11, 21].map((n) => atMostTickets(n).replace(/\u00a0/g, ' '))).toEqual([
+      'Не больше 1 билета',
+      'Не больше 2 билетов',
+      'Не больше 6 билетов',
+      'Не больше 11 билетов',
+      'Не больше 21 билета',
     ])
   })
 })

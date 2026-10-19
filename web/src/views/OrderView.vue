@@ -6,7 +6,7 @@ import { ApiError, api, newKey } from '@/api/client'
 import type { Order, OrderSummary, Ticket } from '@/api/types'
 import { useAuth } from '@/composables/auth'
 import { useToast } from '@/composables/toast'
-import { dayMonth, money, orderStatusText, tickets as ticketsWord, time } from '@/lib/format'
+import { dayMonth, money, orderStatusText, ticketPrice, tickets as ticketsWord, time } from '@/lib/format'
 
 const props = defineProps<{ id: string }>()
 const route = useRoute()
@@ -208,7 +208,7 @@ function itemText(i: { kind: string; section: string; row: string | null; seat: 
         <ul>
           <li v-for="(i, n) in order.items" :key="n">
             <span>{{ itemText(i) }}</span>
-            <span class="mono">{{ money(i.price_tiyn) }}</span>
+            <span class="mono">{{ ticketPrice(i.price_tiyn) }}</span>
           </li>
         </ul>
         <div v-if="order.fee_tiyn > 0" class="receipt__fee">
@@ -217,7 +217,7 @@ function itemText(i: { kind: string; section: string; row: string | null; seat: 
         </div>
         <div class="receipt__total">
           <span>Итого</span>
-          <span class="mono">{{ money(order.total_tiyn) }}</span>
+          <span class="mono">{{ ticketPrice(order.total_tiyn) }}</span>
         </div>
         <p class="hint">Билеты и чек придут на {{ order.email }}</p>
       </section>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import BottomSheet from './BottomSheet.vue'
 import { ApiError, api } from '@/api/client'
 import { useAuth } from '@/composables/auth'
@@ -12,6 +12,7 @@ const code = ref('')
 const error = ref('')
 const busy = ref(false)
 const resendIn = ref(0)
+const codeInput = ref<HTMLInputElement | null>(null)
 let timer: ReturnType<typeof setInterval> | undefined
 
 const phone = computed(() => normalizePhone(phoneInput.value))
@@ -48,6 +49,8 @@ async function sendCode() {
     const res = await api.requestCode(phone.value)
     step.value = 'code'
     countdown(res.resend_after_seconds ?? 60)
+    await nextTick()
+    codeInput.value?.focus()
   } catch (e) {
     error.value = e instanceof ApiError && e.status === 429 ? 'Код уже отправлен, подождите минуту' : 'Не удалось отправить код, попробуйте ещё раз'
   } finally {
@@ -94,7 +97,7 @@ watch(code, (v) => {
       </p>
       <label class="field">
         <span class="field__label">Код из SMS</span>
-        <input v-model="code" class="input input--code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="••••••" />
+        <input ref="codeInput" v-model="code" class="input input--code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="••••••" />
       </label>
       <p v-if="error" class="error-text" role="alert">{{ error }}</p>
       <button class="btn btn--accent login__submit" :disabled="busy || code.length !== 6">Войти</button>

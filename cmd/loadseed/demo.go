@@ -338,10 +338,25 @@ func demo(ctx context.Context, pool *pgxpool.Pool, cfg config.Config) error {
 		return err
 	}
 	if stale := demoStale(events, now); len(stale) > 0 {
+		fmt.Println("Демо-данные устарели:")
 		for _, e := range stale {
-			fmt.Printf("  %s: %s, начало %s\n", e.Title, e.Status, e.StartsAt.In(almaty).Format("02.01.2006 15:04"))
+			reason := "начинается меньше чем через сутки"
+			switch {
+			case e.Status == "cancelled":
+				reason = "отменено"
+			case e.Status != "published":
+				reason = "не опубликовано"
+			case !e.StartsAt.After(now):
+				reason = "уже прошло"
+			}
+			fmt.Printf("  %s, %s — %s\n", e.Title, e.StartsAt.In(almaty).Format("02.01.2006 15:04"), reason)
 		}
-		return errors.New("demo events are cancelled, over or start within a day; reset: docker compose down -v && docker compose up -d --wait && docker compose run --rm demo")
+		// Каждая команда на своей строке: && не работает в старом PowerShell.
+		fmt.Println("\nЗаведите их заново, по одной команде:")
+		fmt.Println("  docker compose down -v")
+		fmt.Println("  docker compose up -d --wait")
+		fmt.Println("  docker compose run --rm demo")
+		return errors.New("demo data is stale")
 	}
 	fmt.Printf("Демо-данные готовы. Сайт: %s\n\n", cfg.PublicBaseURL)
 	for _, e := range events {

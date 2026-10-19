@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import SeatMapView from '@/components/SeatMap.vue'
 import StadiumPlanView from '@/components/StadiumPlan.vue'
@@ -163,14 +163,19 @@ async function load() {
   }
 }
 
+// Номер последнего запроса занятости: ответ на более ранний (другой сектор,
+// план, прошлый опрос) пришёл позже и не должен затирать свежий.
+let refreshSeq = 0
+
 async function refresh() {
   if (!event.value) return
-  const forSector = sector.value
+  const seq = ++refreshSeq
   try {
     const q = event.value.layout?.plan ? (sector.value ? { section: sector.value } : { summary: true }) : {}
     const a = await api.availability(event.value.id, q)
+    if (seq !== refreshSeq) return
     availability.value = a
-    if (sector.value === forSector) availReady.value = true
+    availReady.value = true
     if (!('section' in q)) {
       planCounts.value = a.sections
       planGeneral.value = a.general
@@ -180,7 +185,7 @@ async function refresh() {
   } catch {
     // занятость подтянется при следующем опросе; выбор не блокируем —
     // занятое место всё равно отклонит сервер (seat_taken)
-    if (sector.value === forSector) availReady.value = true
+    if (seq === refreshSeq) availReady.value = true
   }
 }
 
@@ -295,16 +300,19 @@ async function submit() {
   } finally {
     busy.value = false
   }
-  // Заказ не создан: после входа оформляем его снова с той же корзиной.
+  // Заказ не создан. После входа окно оформления открывается снова с той же
+  // корзиной, и покупатель подтверждает заказ сам: сам по себе заказ не уходит,
+  // даже если покупатель за это время ушёл со страницы. Вход открывается после
+  // того, как окно оформления закрылось и вернуло прокрутку страницы.
   if (relogin) {
     checkoutOpen.value = false
+    await nextTick()
     try {
       await requireLogin()
     } catch {
       return
     }
     checkoutOpen.value = true
-    await submit()
   }
 }
 

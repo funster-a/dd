@@ -10,7 +10,7 @@ import { dayMonth, money, orderStatusText, ticketPrice, tickets as ticketsWord, 
 
 const props = defineProps<{ id: string }>()
 const route = useRoute()
-const { requireLogin } = useAuth()
+const { requireLogin, authed } = useAuth()
 const toast = useToast()
 
 const order = ref<Order | null>(null)
@@ -59,7 +59,8 @@ async function load() {
     if (fromPayment && o.status === 'pending') payFailed.value = (await api.latestPayment(o.id).catch(() => null))?.status === 'failed'
     failed.value = ''
   } catch (e) {
-    failed.value = e instanceof ApiError && (e.status === 404 || e.status === 403) ? 'not_found' : 'error'
+    if (e instanceof ApiError && e.status === 401) failed.value = 'login'
+    else failed.value = e instanceof ApiError && (e.status === 404 || e.status === 403) ? 'not_found' : 'error'
   }
 }
 
@@ -68,7 +69,8 @@ onMounted(async () => {
   timer = setInterval(() => {
     now.value = Date.now()
     // Опрос раз в 2 секунды, пока ждём вебхук, выпуск билетов или возврат.
-    if ((waitingPayment.value || issuing.value || refundPending.value) && ++polls % 2 === 0 && polls < 120) load()
+    // Без входа не опрашиваем: каждый опрос снова открывал бы окно входа.
+    if (authed.value && (waitingPayment.value || issuing.value || refundPending.value) && ++polls % 2 === 0 && polls < 120) load()
   }, 1000)
 })
 onBeforeUnmount(() => clearInterval(timer))
@@ -101,11 +103,12 @@ async function cancel() {
 
 // При возврате по желанию покупателя сервисный сбор не возвращается
 // (ADR 019) — говорим об этом до подтверждения, а не после.
-const refundQuestion = computed(() =>
-  order.value && order.value.fee_tiyn > 0
+const refundQuestion = computed(() => {
+  if (!order.value || order.value.total_tiyn === 0) return 'Вернуть билет? Он сразу перестанет действовать, а место освободится.'
+  return order.value.fee_tiyn > 0
     ? 'Вернуть билет? Он сразу перестанет действовать, цена билета вернётся на карту. Сервисный сбор не возвращается.'
-    : 'Вернуть билет? Он сразу перестанет действовать, деньги вернутся на карту.',
-)
+    : 'Вернуть билет? Он сразу перестанет действовать, деньги вернутся на карту.'
+})
 
 const refundErrors: Record<string, string> = {
   refund_deadline_passed: 'Срок возврата уже прошёл',

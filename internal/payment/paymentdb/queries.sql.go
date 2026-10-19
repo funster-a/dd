@@ -33,6 +33,39 @@ func (q *Queries) GetActivePayment(ctx context.Context, orderID string) (Payment
 	return i, err
 }
 
+const getLatestPayment = `-- name: GetLatestPayment :one
+SELECT p.id, p.organizer_id, p.order_id, p.status, p.amount_tiyn, p.currency, p.provider, p.provider_payment_id, p.created_at, p.updated_at, p.payment_url FROM payments p JOIN orders o ON o.id = p.order_id
+WHERE p.order_id = $1 AND o.buyer_id = $2
+ORDER BY p.created_at DESC, p.id DESC
+LIMIT 1
+`
+
+type GetLatestPaymentParams struct {
+	OrderID string
+	BuyerID string
+}
+
+// Последняя попытка оплаты заказа покупателя: страница заказа узнаёт об
+// отказе провайдера сразу, а не когда истечёт холд.
+func (q *Queries) GetLatestPayment(ctx context.Context, arg GetLatestPaymentParams) (Payment, error) {
+	row := q.db.QueryRow(ctx, getLatestPayment, arg.OrderID, arg.BuyerID)
+	var i Payment
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizerID,
+		&i.OrderID,
+		&i.Status,
+		&i.AmountTiyn,
+		&i.Currency,
+		&i.Provider,
+		&i.ProviderPaymentID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.PaymentUrl,
+	)
+	return i, err
+}
+
 const getPayableOrder = `-- name: GetPayableOrder :one
 
 SELECT o.id, o.organizer_id, o.status, o.total_tiyn, o.currency, o.expires_at, e.title AS event_title,

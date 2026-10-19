@@ -404,3 +404,42 @@ func TestRefundTickets(t *testing.T) {
 		t.Errorf("refunded after an excessive request = %d", got)
 	}
 }
+
+// Страница заказа узнаёт об отказе провайдера по последней попытке.
+func TestLatestPayment(t *testing.T) {
+	e := newEnv(t)
+	ctx := t.Context()
+	order, buyer := e.order(t, "pending", 10*time.Minute)
+	_, stranger := e.order(t, "pending", 10*time.Minute)
+
+	if _, err := e.svc.LatestPayment(ctx, buyer, order); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("before any attempt = %v, want ErrNotFound", err)
+	}
+	first, err := e.svc.StartPayment(ctx, buyer, order, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := e.svc.LatestPayment(ctx, buyer, order); err != nil || got.ID != first.ID || got.Status != "pending" {
+		t.Fatalf("after start = %+v, %v", got, err)
+	}
+	if _, _, err := e.psp.Decide(ctx, providerID(first), fakepsp.ActionFail); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := e.svc.LatestPayment(ctx, buyer, order); err != nil || got.ID != first.ID || got.Status != "failed" {
+		t.Fatalf("after refusal = %+v, %v", got, err)
+	}
+	second, err := e.svc.StartPayment(ctx, buyer, order, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := e.svc.LatestPayment(ctx, buyer, order); err != nil || got.ID != second.ID || got.Status != "pending" {
+		t.Fatalf("after retry = %+v, %v; want the new attempt", got, err)
+	}
+	// Чужой заказ не отличить от несуществующего.
+	if _, err := e.svc.LatestPayment(ctx, stranger, order); !errors.Is(err, ErrNotFound) {
+		t.Errorf("stranger = %v, want ErrNotFound", err)
+	}
+	if _, err := e.svc.LatestPayment(ctx, buyer, "not-a-uuid"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("bad id = %v, want ErrNotFound", err)
+	}
+}

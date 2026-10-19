@@ -19,11 +19,13 @@ import (
 // Register добавляет маршруты оплаты в роутер /v1:
 //
 //	POST /orders/{orderID}/payments        — страница оплаты заказа покупателя
+//	GET  /orders/{orderID}/payments/latest — последняя попытка: сайт видит отказ провайдера
 //	POST /payments/webhooks/{provider}     — уведомления провайдера (подпись вместо входа)
 func (s *Service) Register(r chi.Router) {
 	r.Post("/payments/webhooks/{provider}", s.handleWebhook)
 	r.With(auth.Require(auth.KindBuyer), idempotency.Middleware(s.pool)).
 		Post("/orders/{orderID}/payments", s.handleStartPayment)
+	r.With(auth.Require(auth.KindBuyer)).Get("/orders/{orderID}/payments/latest", s.handleLatestPayment)
 }
 
 func (s *Service) handleStartPayment(w http.ResponseWriter, r *http.Request) {
@@ -50,6 +52,22 @@ func (s *Service) handleStartPayment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, pay)
+}
+
+func (s *Service) handleLatestPayment(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	pay, err := s.LatestPayment(r.Context(), p.SubjectID, chi.URLParam(r, "orderID"))
+	switch {
+	case err == nil:
+		httpx.WriteJSON(w, http.StatusOK, pay)
+	case errors.Is(err, ErrNotFound):
+		httpx.WriteError(w, http.StatusNotFound, "not_found", "not found")
+	case pgdb.Unavailable(err):
+		httpx.WriteUnavailable(w, r, err)
+	default:
+		httpx.Logger(r.Context()).Error("latest payment failed", slog.Any("error", err))
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
+	}
 }
 
 // Тело уведомления больше этого не бывает.

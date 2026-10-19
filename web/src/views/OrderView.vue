@@ -20,6 +20,10 @@ const failed = ref<'' | 'not_found' | 'login' | 'error'>('')
 const busy = ref(false)
 const now = ref(Date.now())
 const fromPayment = route.query.paid === '1'
+// Провайдер вернул покупателя на сайт, но отказал в оплате: ждать нечего.
+const payFailed = ref(false)
+// Подтверждение ждём не дольше двух минут, дальше — снова кнопка оплаты.
+const waitUntil = Date.now() + 120_000
 let timer: ReturnType<typeof setInterval> | undefined
 let polls = 0
 
@@ -32,7 +36,9 @@ const countdown = computed(() => {
 const hasTickets = computed(() => ['paid', 'partially_refunded', 'refunded'].includes(order.value?.status ?? ''))
 // Билеты выпускает воркер после оплаты: пока их меньше, чем позиций, ждём.
 const issuing = computed(() => order.value?.status === 'paid' && tickets.value.length < order.value.items.length)
-const waitingPayment = computed(() => fromPayment && order.value?.status === 'pending' && left.value > 0)
+const waitingPayment = computed(
+  () => fromPayment && order.value?.status === 'pending' && left.value > 0 && !payFailed.value && now.value < waitUntil,
+)
 // Статус заказа после возврата меняет воркер (order.refunded): до 20 секунд
 // опрашиваем заказ, пока статус не сменится.
 const refundFrom = ref<{ status: string; until: number } | null>(null)
@@ -50,6 +56,7 @@ async function load() {
     order.value = o
     summary.value = list.find((x) => x.id === o.id) ?? summary.value
     if (hasTickets.value) tickets.value = await api.orderTickets(o.id)
+    if (fromPayment && o.status === 'pending') payFailed.value = (await api.latestPayment(o.id).catch(() => null))?.status === 'failed'
     failed.value = ''
   } catch (e) {
     failed.value = e instanceof ApiError && (e.status === 404 || e.status === 403) ? 'not_found' : 'error'
@@ -171,7 +178,8 @@ function itemText(i: { kind: string; section: string; row: string | null; seat: 
       <section v-else-if="order.status === 'pending'" class="panel panel--pay">
         <div>
           <p class="panel__title">Места держатся за вами ещё <span class="mono">{{ countdown }}</span></p>
-          <p>Оплатите заказ, пока время не вышло, иначе места вернутся в продажу.</p>
+          <p v-if="payFailed">Оплата не прошла, деньги не списаны. Попробуйте ещё раз, пока время не вышло.</p>
+          <p v-else>Оплатите заказ, пока время не вышло, иначе места вернутся в продажу.</p>
         </div>
         <div class="panel__actions">
           <button class="btn btn--accent" type="button" :disabled="busy || left === 0" @click="pay">Оплатить {{ money(order.total_tiyn) }}</button>

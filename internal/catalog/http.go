@@ -37,7 +37,7 @@ func (s *Service) handleUpcoming(w http.ResponseWriter, r *http.Request) {
 	if writeError(w, r, err) {
 		return
 	}
-	w.Header().Set("Cache-Control", "public, max-age=30, stale-while-revalidate=30")
+	w.Header().Set("Cache-Control", "public, max-age=30")
 	httpx.WriteJSON(w, http.StatusOK, list)
 }
 
@@ -48,7 +48,7 @@ func (s *Service) handlePublicEvent(w http.ResponseWriter, r *http.Request) {
 	}
 	// Страница одинакова для всех — её можно держать в CDN и браузере.
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "public, max-age=60, stale-while-revalidate=60")
+	w.Header().Set("Cache-Control", "public, max-age=60")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(b) //nolint:gosec // G705: тело — JSON из json.Marshal с типом application/json, не HTML

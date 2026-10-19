@@ -182,7 +182,7 @@ func TestPublicEventHTTP(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
 	}
-	if rec.Header().Get("Cache-Control") != "public, max-age=60, stale-while-revalidate=60" || rec.Header().Get("Content-Type") != "application/json" {
+	if rec.Header().Get("Cache-Control") != "public, max-age=60" || rec.Header().Get("Content-Type") != "application/json" {
 		t.Errorf("headers = %v", rec.Header())
 	}
 }

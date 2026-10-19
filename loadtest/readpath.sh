@@ -90,7 +90,7 @@ NGINX
     proxy_cache_lock on;
     proxy_cache_lock_timeout 5s;
     proxy_cache_use_stale updating error timeout;
-    proxy_cache_background_update on;
+    proxy_cache_background_update off;
     add_header X-Cache $upstream_cache_status always;
   }
 NGINX

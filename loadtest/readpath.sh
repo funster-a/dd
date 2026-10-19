@@ -85,11 +85,12 @@ NGINX
     proxy_pass http://api;
     proxy_http_version 1.1;
     proxy_set_header Connection "";
+    proxy_read_timeout 10s;
     proxy_cache edge;
     proxy_cache_key $request_method$request_uri;
     proxy_cache_lock on;
     proxy_cache_lock_timeout 5s;
-    proxy_cache_use_stale updating error timeout;
+    proxy_cache_use_stale updating error timeout http_500 http_502 http_503 http_504;
     proxy_cache_background_update off;
     add_header X-Cache $upstream_cache_status always;
   }

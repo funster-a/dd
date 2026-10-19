@@ -88,7 +88,7 @@ func TestBookingHTTP(t *testing.T) {
 	}
 
 	code, hdr, data := do(http.MethodGet, "/events/"+e.eventID+"/availability", "", "", nil)
-	if code != http.StatusOK || hdr.Get("Cache-Control") != "public, max-age=2" {
+	if code != http.StatusOK || hdr.Get("Cache-Control") != "public, max-age=2, stale-while-revalidate=3" {
 		t.Fatalf("availability = %d %v", code, hdr)
 	}
 	var a Availability

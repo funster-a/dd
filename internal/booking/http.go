@@ -48,9 +48,9 @@ func (s *Service) handleAvailability(w http.ResponseWriter, r *http.Request) {
 	if writeError(w, r, err) {
 		return
 	}
-	// Занятость меняется постоянно; короткий кэш CDN снимает пик старта продаж.
+	// Короткий кэш CDN снимает пик старта продаж; устаревшая занятость — не старше 5 с.
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "public, max-age=2")
+	w.Header().Set("Cache-Control", "public, max-age=2, stale-while-revalidate=3")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(b) //nolint:gosec // G705: тело — JSON из json.Marshal с типом application/json, не HTML

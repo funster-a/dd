@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # Один Dockerfile на все образы: api, worker, fakepsp (мок платёжного
-# провайдера, ADR 012) и migrate (goose + миграции).
+# провайдера, ADR 012), migrate (goose + миграции) и demo (демо-данные).
 # Версия Go должна совпадать с go.mod; GOTOOLCHAIN=local не даст
 # тихо скачать другую, а сломает сборку.
 ARG GO_VERSION=1.27.1
@@ -20,7 +20,7 @@ COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     mkdir -p /out/data && \
-    go build -trimpath -ldflags="-s -w" -o /out/ ./cmd/api ./cmd/worker ./cmd/fakepsp && \
+    go build -trimpath -ldflags="-s -w" -o /out/ ./cmd/api ./cmd/worker ./cmd/fakepsp ./cmd/loadseed && \
     go build -modfile=tools.mod -trimpath -ldflags="-s -w" \
       -tags "no_clickhouse no_libsql no_mssql no_mysql no_sqlite3 no_vertica no_ydb" \
       -o /out/goose github.com/pressly/goose/v3/cmd/goose
@@ -47,3 +47,9 @@ COPY migrations /migrations
 ENV GOOSE_DRIVER=postgres GOOSE_MIGRATION_DIR=/migrations
 ENTRYPOINT ["/goose"]
 CMD ["up"]
+
+# Демо-данные для показа: организатор и три опубликованных события
+# (docker compose run --rm demo, README «Показ проекта»).
+FROM gcr.io/distroless/static-debian13:nonroot AS demo
+COPY --from=build /out/loadseed /loadseed
+ENTRYPOINT ["/loadseed", "demo"]

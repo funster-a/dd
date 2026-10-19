@@ -182,6 +182,16 @@ jobs:
           curl -fsS http://127.0.0.1:8000/scanner.webmanifest | grep -q '"start_url": "/scan"'
           curl -fsS http://127.0.0.1:8000/v1/public/events
           curl -fsSI http://127.0.0.1:8000/ | grep -qi 'content-security-policy'
+      - name: demo data for the presentation
+        run: |
+          docker compose run --rm demo
+          for slug in standup stadium-concert open-lecture; do
+            cover=$(curl -fsS "http://127.0.0.1:8080/v1/public/events/demo/$slug" | python3 -c 'import json,sys; print(json.load(sys.stdin)["cover_image_url"])')
+            curl -fsS -o /dev/null -w "$slug cover %{http_code} %{content_type}\n" "$cover"
+          done
+          # Повторный запуск ничего не дублирует.
+          docker compose run --rm demo
+          test "$(docker compose exec -T postgres psql -U dd -d dd -tAc "SELECT count(*) FROM events e JOIN organizers o ON o.id = e.organizer_id WHERE o.slug = 'demo'")" = 3
       - name: worker consumes the test queue
         run: |
           # Очередь объявляет worker; до этого публикация в неё не маршрутизируется.

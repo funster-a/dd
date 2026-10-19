@@ -206,6 +206,30 @@ services:
     # Больше SHUTDOWN_TIMEOUT, чтобы Docker не прервал graceful shutdown.
     stop_grace_period: 20s
 
+  # Демо-данные для показа: docker compose run --rm demo. Обычный up его не
+  # запускает (профиль demo). Повторный запуск ничего не дублирует.
+  demo:
+    build:
+      context: .
+      target: demo
+    profiles: [demo]
+    environment:
+      <<: *app-env
+      # Обложки загружаются изнутри сети: подписанная ссылка — на seaweedfs.
+      S3_ENDPOINT: http://seaweedfs:8333
+      S3_PUBLIC_ENDPOINT: http://seaweedfs:8333
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-dd}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-dd-secret-key}
+      S3_BUCKET: ${S3_BUCKET:-dd-media}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+    restart: "no"
+
   # Мок внешнего платёжного провайдера: своя страница оплаты и вебхуки.
   # Карточных данных не принимает (CLAUDE.md, правило 7).
   fakepsp:

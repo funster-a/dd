@@ -62,6 +62,38 @@ func countDemo(t *testing.T, pool *pgxpool.Pool) demoCounts {
 	return c
 }
 
+// demoMedia — ключи обложек и цены демо-событий одной строкой для сравнения.
+func demoMedia(t *testing.T, pool *pgxpool.Pool) string {
+	t.Helper()
+	var out string
+	err := pool.QueryRow(t.Context(), `
+		SELECT coalesce(string_agg(e.slug || '=' || coalesce(e.cover_image_key, '') || ':' ||
+		       (SELECT coalesce(string_agg(p.name || p.price_tiyn, ',' ORDER BY p.name), '') FROM price_categories p WHERE p.event_id = e.id),
+		       ';' ORDER BY e.slug), '')
+		FROM events e JOIN organizers o ON o.id = e.organizer_id WHERE o.slug = $1`, demoSlug).Scan(&out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func TestDemoStale(t *testing.T) {
+	now := time.Now()
+	events := []demoEvent{
+		{Path: "ok", Status: "published", StartsAt: now.Add(3 * 24 * time.Hour)},
+		{Path: "soon", Status: "published", StartsAt: now.Add(12 * time.Hour)},
+		{Path: "over", Status: "published", StartsAt: now.Add(-time.Hour)},
+		{Path: "cancelled", Status: "cancelled", StartsAt: now.Add(10 * 24 * time.Hour)},
+	}
+	var got []string
+	for _, e := range demoStale(events, now) {
+		got = append(got, e.Path)
+	}
+	if len(got) != 3 || got[0] != "soon" || got[1] != "over" || got[2] != "cancelled" {
+		t.Fatalf("stale = %v", got)
+	}
+}
+
 func TestSeedDemo(t *testing.T) {
 	pool := dbtest.New(t).Pool
 	store := &memStore{}
@@ -117,13 +149,24 @@ func TestSeedDemo(t *testing.T) {
 		t.Errorf("upcoming = %d events, want 3", len(upcoming))
 	}
 
-	// Повторный запуск ничего не создаёт.
-	before := countDemo(t, pool)
-	if _, again, err := seedDemo(t.Context(), cat, store.upload, now.Add(time.Minute)); err != nil || len(again) != 3 {
+	// Повторный запуск ничего не создаёт и не трогает обложки и цены.
+	before, media := countDemo(t, pool), demoMedia(t, pool)
+	uploads := 0
+	counting := func(ctx context.Context, tg catalog.UploadTarget, ct string, body []byte) error {
+		uploads++
+		return store.upload(ctx, tg, ct, body)
+	}
+	if _, again, err := seedDemo(t.Context(), cat, counting, now.Add(time.Minute)); err != nil || len(again) != 3 {
 		t.Fatalf("second run: %v, %+v", err, again)
 	}
 	if after := countDemo(t, pool); after != before {
 		t.Fatalf("second run changed data: %+v → %+v", before, after)
+	}
+	if uploads != 0 || demoMedia(t, pool) != media {
+		t.Fatalf("second run: %d uploads, covers and prices %q → %q", uploads, media, demoMedia(t, pool))
+	}
+	if stale := demoStale(events, now); len(stale) != 0 {
+		t.Fatalf("fresh demo reported stale: %+v", stale)
 	}
 	if before != (demoCounts{organizers: 1, venues: 2, seatMaps: 3, events: 3}) {
 		t.Fatalf("counts = %+v", before)
@@ -149,16 +192,37 @@ func TestSeedDemoFinishesInterruptedRun(t *testing.T) {
 	if _, _, err := seedDemo(t.Context(), cat, flaky, now); err == nil {
 		t.Fatal("interrupted run succeeded")
 	}
-	if c := countDemo(t, pool); c.events != 2 {
+	if c := countDemo(t, pool); c.events != 3 {
 		t.Fatalf("after interrupted run: %+v", c)
 	}
-	_, events, err := seedDemo(t.Context(), cat, store.upload, now)
+	// Стадион остался черновиком без обложки, остальные опубликованы.
+	var status string
+	var cover *string
+	if err := pool.QueryRow(t.Context(), `SELECT status, cover_image_key FROM events WHERE slug = 'stadium-concert'`).Scan(&status, &cover); err != nil {
+		t.Fatal(err)
+	}
+	if status != "draft" || cover != nil {
+		t.Fatalf("stadium after interrupted run: %s, cover %v", status, cover)
+	}
+	// Следующий запуск — через 40 дней: дата черновика уже прошла, он получает
+	// свежую и публикуется; события прежнего запуска к этому времени прошли.
+	later := now.Add(40 * 24 * time.Hour)
+	_, events, err := seedDemo(t.Context(), cat, store.upload, later)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, e := range events {
 		if e.Status != "published" {
 			t.Errorf("%s: status %s", e.Path, e.Status)
+		}
+	}
+	stale := demoStale(events, later)
+	if len(stale) != 2 {
+		t.Fatalf("stale = %+v, want standup and open-lecture", stale)
+	}
+	for _, e := range stale {
+		if e.Path == "/e/demo/stadium-concert" {
+			t.Fatalf("refreshed stadium reported stale: %+v", e)
 		}
 	}
 	if c := countDemo(t, pool); c != (demoCounts{organizers: 1, venues: 2, seatMaps: 3, events: 3}) {

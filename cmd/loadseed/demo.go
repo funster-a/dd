@@ -32,9 +32,9 @@ const (
 	demoEmail = "demo@example.com"
 )
 
-// almaty — время показа событий. В Казахстане с 2024 года один пояс UTC+5;
-// фиксированный сдвиг не требует базы часовых поясов в образе.
-var almaty = time.FixedZone("Asia/Almaty", 5*60*60)
+// demoFresh — сколько до начала должно оставаться у события, чтобы его можно
+// было показать целиком: возврат закрывается за 24 часа до начала.
+const demoFresh = 24 * time.Hour
 
 // demoUpload загружает файл по ссылке из CreateUpload — так же, как браузер
 // организатора.
@@ -52,10 +52,24 @@ type demoSpec struct {
 
 // demoEvent — итог по событию для подсказки после запуска.
 type demoEvent struct {
-	Title  string
-	Path   string
-	Status string
-	Free   bool
+	Title    string
+	Path     string
+	Status   string
+	Free     bool
+	StartsAt time.Time
+}
+
+// demoStale — события, которые показать уже нельзя: отменены, прошли или
+// начнутся меньше чем через сутки. Опубликованное событие не переносится,
+// поэтому лечится только пересозданием данных.
+func demoStale(events []demoEvent, now time.Time) []demoEvent {
+	var out []demoEvent
+	for _, e := range events {
+		if e.Status != "published" || e.StartsAt.Sub(now) < demoFresh {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 func demoSpecs() ([]demoSpec, error) {
@@ -112,9 +126,15 @@ func demoRows(rows, perRow int) []catalog.Row {
 	return out
 }
 
-// seedDemo создаёт или достраивает демо-данные на момент now.
+// seedDemo создаёт или достраивает демо-данные на момент now. Ошибка одного
+// события не мешает остальным: они возвращаются вместе с общей ошибкой.
 func seedDemo(ctx context.Context, cat *catalog.Service, upload demoUpload, now time.Time) (catalog.Organizer, []demoEvent, error) {
 	specs, err := demoSpecs()
+	if err != nil {
+		return catalog.Organizer{}, nil, err
+	}
+	// База часовых поясов уже в бинаре: её подключает каталог (time/tzdata).
+	almaty, err := time.LoadLocation("Asia/Almaty")
 	if err != nil {
 		return catalog.Organizer{}, nil, err
 	}
@@ -130,18 +150,23 @@ func seedDemo(ctx context.Context, cat *catalog.Service, upload demoUpload, now 
 	for _, e := range existing {
 		bySlug[e.Slug] = e
 	}
-	midnight := time.Date(now.In(almaty).Year(), now.In(almaty).Month(), now.In(almaty).Day(), 0, 0, 0, 0, almaty)
+	local := now.In(almaty)
+	midnight := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, almaty)
 	var out []demoEvent
+	var errs []error
 	for _, sp := range specs {
 		ev, ok := bySlug[sp.slug]
 		if !ok || ev.Status == "draft" {
-			if ev, err = demoPublish(ctx, cat, upload, org.ID, sp, ev, ok, midnight.Add(sp.startsIn), now); err != nil {
-				return org, out, fmt.Errorf("%s: %w", sp.slug, err)
+			published, err := demoPublish(ctx, cat, upload, org.ID, sp, ev, ok, midnight.Add(sp.startsIn), now)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("%s: %w", sp.slug, err))
+				continue
 			}
+			ev = published
 		}
-		out = append(out, demoEvent{Title: sp.title, Path: "/e/" + org.Slug + "/" + sp.slug, Status: ev.Status, Free: sp.prices[0].PriceTiyn == 0})
+		out = append(out, demoEvent{Title: sp.title, Path: "/e/" + org.Slug + "/" + sp.slug, Status: ev.Status, Free: sp.prices[0].PriceTiyn == 0, StartsAt: ev.StartsAt})
 	}
-	return org, out, nil
+	return org, out, errors.Join(errs...)
 }
 
 func demoOrganizer(ctx context.Context, cat *catalog.Service) (catalog.Organizer, error) {
@@ -159,8 +184,27 @@ func demoOrganizer(ctx context.Context, cat *catalog.Service) (catalog.Organizer
 
 // demoPublish доводит событие до публикации: площадка, схема, черновик, цены,
 // обложка. Площадка и схема ищутся по названию, чтобы повтор их не дублировал.
+// Черновик прерванного запуска получает свежие даты: прежние могли пройти.
+// Если обложка загрузилась, а прикрепить её не вышло, файл остаётся в
+// хранилище без ссылки: для демо-данных это безвредно.
 func demoPublish(ctx context.Context, cat *catalog.Service, upload demoUpload, orgID string, sp demoSpec, ev catalog.Event, exists bool, starts, now time.Time) (catalog.Event, error) {
-	if !exists {
+	refund := int32(24)
+	in := catalog.EventInput{
+		Admission: "ticketed", Slug: sp.slug, Title: sp.title,
+		Description: sp.description, AgeRating: sp.age, StartsAt: starts.UTC(), EndsAt: starts.Add(2 * time.Hour).UTC(),
+		MaxTicketsPerBuyer: sp.maxTickets, RefundDeadlineHours: &refund,
+	}
+	if exists {
+		if ev.SeatMapID == nil {
+			return ev, fmt.Errorf("draft %s has no seat map; reset the demo data: docker compose down -v", sp.slug)
+		}
+		in.VenueID, in.SeatMapID = ev.VenueID, *ev.SeatMapID
+		updated, err := cat.UpdateEvent(ctx, orgID, ev.ID, in)
+		if err != nil {
+			return ev, err
+		}
+		ev = updated
+	} else {
 		venue, err := demoVenue(ctx, cat, orgID, sp)
 		if err != nil {
 			return ev, err
@@ -169,13 +213,8 @@ func demoPublish(ctx context.Context, cat *catalog.Service, upload demoUpload, o
 		if err != nil {
 			return ev, err
 		}
-		refund := int32(24)
-		ev, err = cat.CreateEvent(ctx, orgID, catalog.EventInput{
-			VenueID: venue.ID, Admission: "ticketed", SeatMapID: sm.ID, Slug: sp.slug, Title: sp.title,
-			Description: sp.description, AgeRating: sp.age, StartsAt: starts.UTC(), EndsAt: starts.Add(2 * time.Hour).UTC(),
-			MaxTicketsPerBuyer: sp.maxTickets, RefundDeadlineHours: &refund,
-		})
-		if err != nil {
+		in.VenueID, in.SeatMapID = venue.ID, sm.ID
+		if ev, err = cat.CreateEvent(ctx, orgID, in); err != nil {
 			return ev, err
 		}
 	}
@@ -289,9 +328,20 @@ func demo(ctx context.Context, pool *pgxpool.Pool, cfg config.Config) error {
 		return err
 	}
 	cat := catalog.NewService(pool, catalog.WithObjectStore(demoStore{c: store}))
-	org, events, err := seedDemo(ctx, cat, httpUpload, time.Now())
+	almaty, err := time.LoadLocation("Asia/Almaty")
 	if err != nil {
 		return err
+	}
+	now := time.Now()
+	org, events, err := seedDemo(ctx, cat, httpUpload, now)
+	if err != nil {
+		return err
+	}
+	if stale := demoStale(events, now); len(stale) > 0 {
+		for _, e := range stale {
+			fmt.Printf("  %s: %s, начало %s\n", e.Title, e.Status, e.StartsAt.In(almaty).Format("02.01.2006 15:04"))
+		}
+		return errors.New("demo events are cancelled, over or start within a day; reset: docker compose down -v && docker compose up -d --wait && docker compose run --rm demo")
 	}
 	fmt.Printf("Демо-данные готовы. Сайт: %s\n\n", cfg.PublicBaseURL)
 	for _, e := range events {
@@ -299,16 +349,17 @@ func demo(ctx context.Context, pool *pgxpool.Pool, cfg config.Config) error {
 		if e.Free {
 			note = " (бесплатно, без оплаты)"
 		}
-		if e.Status != "published" {
-			note += " — статус " + e.Status + ", заново: docker compose down -v"
-		}
-		fmt.Printf("  %s%s\n    %s%s\n", e.Title, note, cfg.PublicBaseURL, e.Path)
+		fmt.Printf("  %s%s, %s\n    %s%s\n", e.Title, note, e.StartsAt.In(almaty).Format("02.01.2006"), cfg.PublicBaseURL, e.Path)
 	}
 	fmt.Printf("\nКабинет организатора: %s/org, вход по %s\n", cfg.PublicBaseURL, org.OwnerEmail)
 	fmt.Println("Покупатель входит по любому номеру телефона.")
 	fmt.Println("Коды входа не отправляются, а пишутся в лог api: docker compose logs api | grep one-time")
 	return nil
 }
+
+// uploadClient — с таймаутом: зависшее хранилище не должно держать команду
+// до общего дедлайна в десять минут.
+var uploadClient = &http.Client{Timeout: 30 * time.Second}
 
 func httpUpload(ctx context.Context, t catalog.UploadTarget, contentType string, body []byte) error {
 	method := t.Method
@@ -323,7 +374,7 @@ func httpUpload(ctx context.Context, t catalog.UploadTarget, contentType string,
 		req.Header.Set(k, v)
 	}
 	req.Header.Set("Content-Type", contentType)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := uploadClient.Do(req)
 	if err != nil {
 		return err
 	}

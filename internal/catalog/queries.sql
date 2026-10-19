@@ -162,3 +162,9 @@ JOIN venues v ON v.id = e.venue_id
 WHERE e.status = 'published' AND e.ends_at > @now::timestamptz
 ORDER BY e.starts_at, e.id
 LIMIT @max_rows;
+
+-- name: GetOrganizerBySlug :one
+SELECT o.id, o.name, o.slug, o.created_at, m.email AS owner_email
+FROM organizers o
+JOIN organizer_members m ON m.organizer_id = o.id AND m.role = 'owner'
+WHERE o.slug = @slug;

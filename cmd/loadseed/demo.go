@@ -170,14 +170,9 @@ func seedDemo(ctx context.Context, cat *catalog.Service, upload demoUpload, now 
 }
 
 func demoOrganizer(ctx context.Context, cat *catalog.Service) (catalog.Organizer, error) {
-	orgs, err := cat.ListOrganizers(ctx)
-	if err != nil {
-		return catalog.Organizer{}, err
-	}
-	for _, o := range orgs {
-		if o.Slug == demoSlug {
-			return o, nil
-		}
+	o, err := cat.OrganizerBySlug(ctx, demoSlug)
+	if !errors.Is(err, catalog.ErrNotFound) {
+		return o, err
 	}
 	return cat.CreateOrganizer(ctx, catalog.NewOrganizer{Name: "Демо-организатор", Slug: demoSlug, OwnerEmail: demoEmail})
 }

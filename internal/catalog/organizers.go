@@ -154,3 +154,12 @@ func (in NewOrganizer) normalize() (NewOrganizer, error) {
 	in.OwnerEmail = strings.ToLower(email)
 	return in, nil
 }
+
+// OrganizerBySlug находит организатора по адресу его страниц.
+func (s *Service) OrganizerBySlug(ctx context.Context, slug string) (Organizer, error) {
+	r, err := s.q.GetOrganizerBySlug(ctx, slug)
+	if err != nil {
+		return Organizer{}, notFound(err, "get organizer by slug")
+	}
+	return Organizer{ID: r.ID, Name: r.Name, Slug: r.Slug, OwnerEmail: r.OwnerEmail, CreatedAt: r.CreatedAt}, nil
+}

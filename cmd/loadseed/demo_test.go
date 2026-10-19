@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -224,6 +225,31 @@ func TestSeedDemoFinishesInterruptedRun(t *testing.T) {
 		if e.Path == "/e/demo/stadium-concert" {
 			t.Fatalf("refreshed stadium reported stale: %+v", e)
 		}
+	}
+	if c := countDemo(t, pool); c != (demoCounts{organizers: 1, venues: 2, seatMaps: 3, events: 3}) {
+		t.Fatalf("counts = %+v", c)
+	}
+}
+
+// Админский список организаторов — одна страница из 100 новых. Повторный
+// запуск находит демо-организатора по адресу, сколько бы ни завели после него
+// (нагрузочные серии заводят по организатору на прогон).
+func TestSeedDemoFindsOrganizerAmongMany(t *testing.T) {
+	pool := dbtest.New(t).Pool
+	store := &memStore{}
+	cat := catalog.NewService(pool, catalog.WithObjectStore(store))
+	now := time.Now()
+	if _, _, err := seedDemo(t.Context(), cat, store.upload, now); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 101 {
+		n := strconv.Itoa(i)
+		if _, err := cat.CreateOrganizer(t.Context(), catalog.NewOrganizer{Name: "Load " + n, Slug: "load-" + n, OwnerEmail: "load-" + n + "@example.com"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, events, err := seedDemo(t.Context(), cat, store.upload, now.Add(time.Minute)); err != nil || len(events) != 3 {
+		t.Fatalf("second run: %v, %+v", err, events)
 	}
 	if c := countDemo(t, pool); c != (demoCounts{organizers: 1, venues: 2, seatMaps: 3, events: 3}) {
 		t.Fatalf("counts = %+v", c)

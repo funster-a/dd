@@ -433,6 +433,34 @@ func (q *Queries) GetEventForUpdate(ctx context.Context, arg GetEventForUpdatePa
 	return i, err
 }
 
+const getOrganizerBySlug = `-- name: GetOrganizerBySlug :one
+SELECT o.id, o.name, o.slug, o.created_at, m.email AS owner_email
+FROM organizers o
+JOIN organizer_members m ON m.organizer_id = o.id AND m.role = 'owner'
+WHERE o.slug = $1
+`
+
+type GetOrganizerBySlugRow struct {
+	ID         string
+	Name       string
+	Slug       string
+	CreatedAt  time.Time
+	OwnerEmail string
+}
+
+func (q *Queries) GetOrganizerBySlug(ctx context.Context, slug string) (GetOrganizerBySlugRow, error) {
+	row := q.db.QueryRow(ctx, getOrganizerBySlug, slug)
+	var i GetOrganizerBySlugRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Slug,
+		&i.CreatedAt,
+		&i.OwnerEmail,
+	)
+	return i, err
+}
+
 const getOrganizerProfile = `-- name: GetOrganizerProfile :one
 SELECT id, name, slug FROM organizers WHERE id = $1
 `

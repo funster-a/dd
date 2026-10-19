@@ -7,11 +7,10 @@
 #
 # Скрипт поднимает два поддельных экземпляра api (127.0.0.1:18099 и :18098) и
 # nginx из того же образа, что в Compose, с переданным конфигом края. Адрес api
-# подменяется на группу из двух поддельных экземпляров без max_fails: как в
-# Compose, где имя api каждый раз разрешается заново и сбои не запоминаются.
-# Нужен Docker с сетью host, то есть Linux. Подходят конфиги в духе Compose:
-# адрес api в `set $api`, /lb-healthz отвечает "ok". Шаблон Kubernetes с
-# блоком upstream скрипт не запускает.
+# подменяется на эти два экземпляра без max_fails: и в `set $api`, и в строке
+# `server ... resolve` блока upstream. Разрешение имени через DNS стенд не
+# проверяет. Нужен Docker с сетью host, то есть Linux. Подходят конфиги в духе
+# Compose (deploy/nginx/api-lb.conf); шаблон Kubernetes скрипт не запускает.
 import http.client
 import http.server
 import os
@@ -70,6 +69,7 @@ def edge_config(path, run):
     conf = conf.replace('return 200 "ok\\n";', f'return 200 "{run}\\n";')
     conf = re.sub(r'\n\s*resolver [^\n]*', '', conf)
     servers = ' '.join(f'server 127.0.0.1:{p} max_fails=0;' for p in PODS)
+    conf = re.sub(r'server [^;\s]+ resolve[^;]*;', servers, conf)
     return f'upstream edgefail_api {{ {servers} }}\n' + conf
 
 
@@ -118,6 +118,10 @@ def stale_scenario(mode, n):
     time.sleep(3)  # запись устарела: max-age=2
     state['mode'], before = mode, state['hits']
     res = wave(path, n, 1.0)
+    if mode == 'close':
+        # Обновление в фоне и повтор на втором экземпляре идут уже после
+        # ответа покупателям: ждём их, чтобы сосчитать.
+        time.sleep(2 * CLOSE_AFTER + 1)
     state['mode'] = 'ok'
     return res, state['hits'] - before
 
@@ -187,6 +191,13 @@ def main():
         time.sleep(4)
         status, cache, _ = get(path)
         print(f'{"первый запрос после паузы 4 с":<34} {status} {cache}')
+
+        # Не принимает ни один экземпляр: запись устарела, нового ответа взять негде.
+        time.sleep(3)
+        servers[0].shutdown()
+        servers[0].server_close()
+        res = [get(path) for _ in range(5)]
+        report('не принимает ни один экземпляр', res, 0)
     finally:
         subprocess.run(['docker', 'rm', '-f', name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for s in servers:

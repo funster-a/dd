@@ -6,7 +6,9 @@
 #
 # Скрипт поднимает поддельный api на 127.0.0.1:18099 и nginx из того же образа,
 # что в Compose, с переданным конфигом края (адрес api подменяется на
-# поддельный). Нужен Docker с сетью host, то есть Linux.
+# поддельный). Нужен Docker с сетью host, то есть Linux. Подходят конфиги в
+# духе Compose: адрес api в `set $api`, /lb-healthz отвечает "ok". Шаблон
+# Kubernetes с блоком upstream скрипт не запускает.
 import http.client
 import http.server
 import os
@@ -96,16 +98,20 @@ def wave(path, n, seconds):
 
 def main():
     conf_path = sys.argv[1] if len(sys.argv) > 1 else 'deploy/nginx/api-lb.conf'
-    # Контейнеры прерванных прогонов держат порт края: убираем их заранее.
+    # Порт поддельного api держит только живой прогон: его не трогаем.
+    if port_busy(UPSTREAM):
+        sys.exit(f'порт {UPSTREAM} занят: идёт другой прогон или другая программа')
+    # Без живого прогона контейнеры edgefail-* — остатки прерванных, они держат порт края.
     stale = subprocess.run(['docker', 'ps', '-aq', '--filter', 'name=^edgefail-'], capture_output=True, text=True, check=True).stdout.split()
     if stale:
         subprocess.run(['docker', 'rm', '-f', *stale], stdout=subprocess.DEVNULL, check=True)
-    for port in (EDGE, UPSTREAM):
-        if port_busy(port):
-            sys.exit(f'порт {port} занят другой программой')
+    if port_busy(EDGE):
+        sys.exit(f'порт {EDGE} занят другой программой')
     # SIGTERM и SIGHUP тоже проходят через finally: контейнер не остаётся.
-    for sig in (signal.SIGTERM, signal.SIGHUP):
-        signal.signal(sig, lambda *_: sys.exit(1))
+    # Под nohup SIGHUP игнорируется, и так и остаётся.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(1))
+    if signal.getsignal(signal.SIGHUP) is not signal.SIG_IGN:
+        signal.signal(signal.SIGHUP, lambda *_: sys.exit(1))
     server = http.server.ThreadingHTTPServer(('127.0.0.1', UPSTREAM), FakeAPI)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     name = f'edgefail-{int(time.time())}'
@@ -115,17 +121,22 @@ def main():
             conf_file = f.name
             f.write(edge_config(conf_path, name))
         os.chmod(conf_file, 0o644)
-        subprocess.run(['docker', 'run', '-d', '--rm', '--name', name, '--network', 'host',
+        # Без --rm: если nginx не поднимется, его лог ещё можно прочитать.
+        subprocess.run(['docker', 'run', '-d', '--name', name, '--network', 'host',
                         '-v', f'{conf_file}:/etc/nginx/conf.d/default.conf:ro', IMAGE], check=True, stdout=subprocess.DEVNULL)
+        seen_body = None
         for _ in range(50):
             try:
-                if urllib.request.urlopen(f'http://127.0.0.1:{EDGE}/lb-healthz', timeout=1).read().decode().strip() == name:
+                seen_body = urllib.request.urlopen(f'http://127.0.0.1:{EDGE}/lb-healthz', timeout=1).read().decode().strip()
+                if seen_body == name:
                     break
             except OSError:
                 pass
             time.sleep(0.2)
         else:
-            sys.exit(f'nginx с конфигом {conf_path} не поднялся: docker logs {name}')
+            logs = subprocess.run(['docker', 'logs', '--tail', '20', name], capture_output=True, text=True).stderr.strip()
+            why = f'/lb-healthz ответил {seen_body!r}, а не {name!r}' if seen_body is not None else 'край не ответил'
+            sys.exit(f'nginx с конфигом {conf_path} не поднялся: {why}\n{logs}')
         print(f'конфиг края: {conf_path}')
         for mode, n in (('503', 50), ('hang', 30)):
             path = f'/v1/events/edgefail-{mode}-{time.time_ns()}/availability'

@@ -49,7 +49,7 @@ ENTRYPOINT ["/goose"]
 CMD ["up"]
 
 # Демо-данные для показа: организатор и три опубликованных события
-# (docker compose run --rm demo, README «Показ проекта»).
+# (docker compose run --rm demo, сценарий показа — docs/demo.md).
 FROM gcr.io/distroless/static-debian13:nonroot AS demo
 COPY --from=build /out/loadseed /loadseed
 ENTRYPOINT ["/loadseed", "demo"]

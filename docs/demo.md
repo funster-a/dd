@@ -8,7 +8,7 @@
 |---|---|
 | Ноутбук | 8 ГБ памяти или больше, 10 ГБ свободного места. Intel, AMD и Apple Silicon — все образы есть под обе архитектуры |
 | Docker | macOS и Windows — [Docker Desktop](https://www.docker.com/products/docker-desktop/), Linux — Docker Engine с плагином compose. Docker 24+, Compose 2.24+ |
-| Память для Docker | в Docker Desktop: Settings → Resources → Memory не меньше 4 ГБ, лучше 6 |
+| Память для Docker | не меньше 4 ГБ, лучше 6. macOS: Docker Desktop → Settings → Resources → Memory. Windows с WSL 2: такой настройки в Docker Desktop нет, по умолчанию WSL берёт половину памяти ноутбука; больше — строкой `memory=6GB` в разделе `[wsl2]` файла `%UserProfile%\.wslconfig`, затем `wsl --shutdown` и перезапуск Docker Desktop |
 | Git | чтобы скачать репозиторий; можно и без него — кнопка «Code → Download ZIP» на GitHub |
 | Интернет | только на первый запуск: скачиваются образы, около 2 ГБ. Дальше всё работает без сети |
 
@@ -188,10 +188,10 @@ docker kill (docker compose ps -q api | Select-Object -First 1)
 |---|---|
 | `429 Too Many Requests` при первой сборке | лимит анонимных скачиваний Docker Hub: `docker login` или подождать |
 | `port is already allocated` | порт занят другой программой (часто 5432 — свой PostgreSQL, 3000 — dev-сервер). `cp .env.example .env` и поменять нужный `*_PORT` |
-| Сервис не становится здоровым | `docker compose ps` покажет какой, `docker compose logs <сервис>` — почему. Часто не хватает памяти Docker Desktop |
+| Сервис не становится здоровым | `docker compose ps` покажет какой, `docker compose logs <сервис>` — почему. Часто не хватает памяти Docker: строка «Память для Docker» в начале |
 | Нет кода входа | второй терминал запущен из папки проекта? `docker compose logs api \| grep one-time` покажет все выданные коды |
 | После оплаты нет билетов | билеты выпускает воркер: `docker compose ps worker`, `docker compose logs worker` |
-| На сайте нет событий | демо-данные не заведены: `docker compose run --rm demo`. Афиша может обновиться через несколько секунд — у неё кэш на краю |
+| На сайте нет событий | демо-данные не заведены: `docker compose run --rm demo`. Если сайт открывали до этого, афиша обновится не сразу, до минуты: её держат кэш на краю и кэш браузера. Подождите минуту и обновите страницу |
 | В Prometheus цели `api-local` и `worker-local` в состоянии DOWN | так и должно быть: это api и воркер, запущенные без Docker (`make run`), в этом режиме их нет |
 | Всё сломалось | `docker compose down -v`, затем три команды из раздела выше |
 

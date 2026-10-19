@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-# Кэш на краю при отказе api (ADR 031, исправление 19.10.2026): что получают
-# покупатели, когда запись устарела, а api отвечает 503 или завис.
+# Кэш на краю при сбоях api (ADR 031, исправление 19.10.2026): что получают
+# покупатели, когда запись устарела, а api отвечает 503, завис, обрывает
+# соединение без ответа или один экземпляр не принимает соединения.
 #
 #   python3 loadtest/edgefail.py [конфиг края]    # по умолчанию deploy/nginx/api-lb.conf
 #
-# Скрипт поднимает поддельный api на 127.0.0.1:18099 и nginx из того же образа,
-# что в Compose, с переданным конфигом края (адрес api подменяется на
-# поддельный). Нужен Docker с сетью host, то есть Linux. Подходят конфиги в
-# духе Compose: адрес api в `set $api`, /lb-healthz отвечает "ok". Шаблон
-# Kubernetes с блоком upstream скрипт не запускает.
+# Скрипт поднимает два поддельных экземпляра api (127.0.0.1:18099 и :18098) и
+# nginx из того же образа, что в Compose, с переданным конфигом края. Адрес api
+# подменяется на группу из двух поддельных экземпляров без max_fails: как в
+# Compose, где имя api каждый раз разрешается заново и сбои не запоминаются.
+# Нужен Docker с сетью host, то есть Linux. Подходят конфиги в духе Compose:
+# адрес api в `set $api`, /lb-healthz отвечает "ok". Шаблон Kubernetes с
+# блоком upstream скрипт не запускает.
 import http.client
 import http.server
 import os
@@ -23,8 +26,9 @@ import time
 import urllib.request
 from collections import Counter
 
-UPSTREAM, EDGE = 18099, 18092
+PODS, EDGE = (18099, 18098), 18092
 IMAGE = 'nginx:1.29-alpine'
+CLOSE_AFTER = 4  # обрыв без ответа: так api закрывает соединение, когда обработчик дольше WriteTimeout
 state = {'mode': 'ok', 'hits': 0, 'version': 0}
 
 
@@ -36,6 +40,10 @@ class FakeAPI(http.server.BaseHTTPRequestHandler):
         state['hits'] += 1
         if state['mode'] == 'hang':
             time.sleep(80)  # дольше proxy_read_timeout любого варианта
+            return
+        if state['mode'] == 'close':
+            time.sleep(CLOSE_AFTER)
+            self.close_connection = True
             return
         if state['mode'] == '503':
             # как httpx.WriteUnavailable: 503 без Cache-Control
@@ -56,11 +64,13 @@ class FakeAPI(http.server.BaseHTTPRequestHandler):
 def edge_config(path, run):
     conf = open(path, encoding='utf-8').read()
     conf = conf.replace('listen 8080;', f'listen {EDGE};')
-    conf = re.sub(r'set \$api http://[^;]+;', f'set $api http://127.0.0.1:{UPSTREAM};', conf)
+    conf = re.sub(r'set \$api http://[^;]+;', 'set $api http://edgefail_api;', conf)
     # /lb-healthz отвечает именем прогона: так видно, что отвечает наш nginx,
     # а не оставшийся от прерванного прогона.
     conf = conf.replace('return 200 "ok\\n";', f'return 200 "{run}\\n";')
-    return re.sub(r'\n\s*resolver [^\n]*', '', conf)
+    conf = re.sub(r'\n\s*resolver [^\n]*', '', conf)
+    servers = ' '.join(f'server 127.0.0.1:{p} max_fails=0;' for p in PODS)
+    return f'upstream edgefail_api {{ {servers} }}\n' + conf
 
 
 def port_busy(port):
@@ -70,7 +80,7 @@ def port_busy(port):
 
 def get(path):
     start = time.time()
-    c = http.client.HTTPConnection('127.0.0.1', EDGE, timeout=120)
+    c = http.client.HTTPConnection('127.0.0.1', EDGE, timeout=200)
     c.request('GET', path)
     r = c.getresponse()
     r.read()
@@ -96,13 +106,34 @@ def wave(path, n, seconds):
     return out
 
 
+def report(label, res, hits):
+    seen = dict(Counter((status, cache) for status, cache, _ in res))
+    print(f'{label:<34} {len(res)} запросов: {seen}, дольше всех ждал {max(w for _, _, w in res):.1f} с, запросов в api {hits}')
+
+
+def stale_scenario(mode, n):
+    path = f'/v1/events/edgefail-{mode}-{time.time_ns()}/availability'
+    state['mode'] = 'ok'
+    get(path)
+    time.sleep(3)  # запись устарела: max-age=2
+    state['mode'], before = mode, state['hits']
+    res = wave(path, n, 1.0)
+    state['mode'] = 'ok'
+    return res, state['hits'] - before
+
+
 def main():
     conf_path = sys.argv[1] if len(sys.argv) > 1 else 'deploy/nginx/api-lb.conf'
-    # Порт поддельного api держит только живой прогон: его не трогаем.
-    if port_busy(UPSTREAM):
-        sys.exit(f'порт {UPSTREAM} занят: идёт другой прогон или другая программа')
+    # Порты поддельного api держит только живой прогон: его не трогаем.
+    for port in PODS:
+        if port_busy(port):
+            sys.exit(f'порт {port} занят: идёт другой прогон или другая программа')
     # Без живого прогона контейнеры edgefail-* — остатки прерванных, они держат порт края.
-    stale = subprocess.run(['docker', 'ps', '-aq', '--filter', 'name=^edgefail-'], capture_output=True, text=True, check=True).stdout.split()
+    try:
+        stale = subprocess.run(['docker', 'ps', '-aq', '--filter', 'name=^edgefail-'],
+                               capture_output=True, text=True, check=True).stdout.split()
+    except subprocess.CalledProcessError as e:
+        sys.exit(f'docker недоступен: {e.stderr.strip()}')
     if stale:
         subprocess.run(['docker', 'rm', '-f', *stale], stdout=subprocess.DEVNULL, check=True)
     if port_busy(EDGE):
@@ -112,8 +143,9 @@ def main():
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(1))
     if signal.getsignal(signal.SIGHUP) is not signal.SIG_IGN:
         signal.signal(signal.SIGHUP, lambda *_: sys.exit(1))
-    server = http.server.ThreadingHTTPServer(('127.0.0.1', UPSTREAM), FakeAPI)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    servers = [http.server.ThreadingHTTPServer(('127.0.0.1', p), FakeAPI) for p in PODS]
+    for s in servers:
+        threading.Thread(target=s.serve_forever, daemon=True).start()
     name = f'edgefail-{int(time.time())}'
     conf_file = None
     try:
@@ -138,24 +170,28 @@ def main():
             why = f'/lb-healthz ответил {seen_body!r}, а не {name!r}' if seen_body is not None else 'край не ответил'
             sys.exit(f'nginx с конфигом {conf_path} не поднялся: {why}\n{logs}')
         print(f'конфиг края: {conf_path}')
-        for mode, n in (('503', 50), ('hang', 30)):
-            path = f'/v1/events/edgefail-{mode}-{time.time_ns()}/availability'
-            state['mode'] = 'ok'
-            get(path)
-            time.sleep(3)  # запись устарела: max-age=2
-            state['mode'], before = mode, state['hits']
-            res = wave(path, n, 1.0)
-            state['mode'] = 'ok'
-            seen = dict(Counter((status, cache) for status, cache, _ in res))
-            print(f'api {mode:<4}: {n} запросов за 1 с: {seen}, дольше всех ждал {max(w for _, _, w in res):.1f} с, запросов в api {state["hits"] - before}')
+
+        report('api отвечает 503', *stale_scenario('503', 50))
+        report('api завис', *stale_scenario('hang', 30))
+        report(f'api обрывает соединение через {CLOSE_AFTER} с', *stale_scenario('close', 10))
+
+        # Один экземпляр не принимает соединения: запросы на новые адреса.
+        servers[1].shutdown()
+        servers[1].server_close()
+        before = state['hits']
+        res = [get(f'/v1/events/edgefail-refused-{time.time_ns()}/availability') for _ in range(10)]
+        report('один экземпляр не принимает', res, state['hits'] - before)
+
         path = f'/v1/events/edgefail-ok-{time.time_ns()}/availability'
         get(path)
         time.sleep(4)
         status, cache, _ = get(path)
-        print(f'api ok  : первый запрос после паузы 4 с: {status} {cache}')
+        print(f'{"первый запрос после паузы 4 с":<34} {status} {cache}')
     finally:
         subprocess.run(['docker', 'rm', '-f', name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        server.shutdown()
+        for s in servers:
+            s.shutdown()
+            s.server_close()
         if conf_file:
             os.unlink(conf_file)
 

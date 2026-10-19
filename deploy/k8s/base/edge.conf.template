@@ -13,7 +13,8 @@ upstream api {
 }
 
 # Кэшируемые чтения идут к тем же подам через отдельный upstream без
-# max_fails: таймаут медленного чтения не выводит под из записи.
+# max_fails: медленное чтение не выводит под ни из записи, ни из чтений.
+# Недоступный под обходится повтором на другой (proxy_next_upstream ниже).
 upstream api_reads {
     zone api_reads 64k;
     server api-pods.${POD_NAMESPACE}.svc.cluster.local:8080 resolve max_fails=0;
@@ -38,7 +39,8 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Request-ID $request_id;
-        proxy_next_upstream error;
+        proxy_next_upstream error timeout;
+        proxy_next_upstream_timeout 3s;
         proxy_connect_timeout 2s;
         proxy_read_timeout 30s;
 

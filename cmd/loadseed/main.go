@@ -8,6 +8,7 @@
 //	loadseed queue-report -dir <results>       то же для серии с очередью (ADR 020)
 //	loadseed scale-report -dir <results>       ёмкость при 1, 2, 4 экземплярах api (ADR 023)
 //	loadseed stadium -out stadium.json         событие на Центральном стадионе Алматы (ADR 024)
+//	loadseed demo                              демо-данные для показа: организатор и три события
 //	loadseed storm-report -dir <results>       отчёт по штурму стадиона (ADR 026)
 //	loadseed chaos-report -series до=<dir>,…  отказ экземпляра api посреди продажи (ADR 027)
 //	loadseed pgchaos-report -in <dir>         переключение PostgreSQL посреди продажи (ADR 028)
@@ -38,7 +39,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: loadseed buyers|event|stadium|check|report|queue-report|scale-report|storm-report|chaos-report|pgchaos-report|redischaos-report|holds-check|paystream|tickets-check|mqchaos-report|readpath-report|k8s-report [flags]")
+		fmt.Fprintln(os.Stderr, "usage: loadseed buyers|event|stadium|demo|check|report|queue-report|scale-report|storm-report|chaos-report|pgchaos-report|redischaos-report|holds-check|paystream|tickets-check|mqchaos-report|readpath-report|k8s-report [flags]")
 		os.Exit(2)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -100,6 +101,8 @@ func run(ctx context.Context, cmd string, args []string) error {
 		return seedEvent(ctx, pool, args)
 	case "stadium":
 		return seedStadium(ctx, pool, args)
+	case "demo":
+		return demo(ctx, pool, cfg)
 	case "check":
 		return check(ctx, pool, args)
 	default:

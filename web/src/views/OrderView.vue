@@ -103,12 +103,17 @@ async function cancel() {
 
 // При возврате по желанию покупателя сервисный сбор не возвращается
 // (ADR 019) — говорим об этом до подтверждения, а не после.
-const refundQuestion = computed(() => {
-  if (!order.value || order.value.total_tiyn === 0) return 'Вернуть билет? Он сразу перестанет действовать, а место освободится.'
-  return order.value.fee_tiyn > 0
+// Бесплатный билет возвращается без денег, даже если в том же заказе есть
+// платные: вопрос строится по цене этого билета из состава заказа.
+function refundQuestion(t: Ticket): string {
+  const o = order.value
+  if (!o) return ''
+  const item = o.items.find((i) => i.kind === t.kind && i.section === t.section && (t.kind === 'general' || (i.row === t.row && i.seat === t.seat)))
+  if ((item ? item.price_tiyn : o.total_tiyn) === 0) return 'Вернуть билет? Он сразу перестанет действовать, а место освободится.'
+  return o.fee_tiyn > 0
     ? 'Вернуть билет? Он сразу перестанет действовать, цена билета вернётся на карту. Сервисный сбор не возвращается.'
     : 'Вернуть билет? Он сразу перестанет действовать, деньги вернутся на карту.'
-})
+}
 
 const refundErrors: Record<string, string> = {
   refund_deadline_passed: 'Срок возврата уже прошёл',
@@ -118,7 +123,7 @@ const refundErrors: Record<string, string> = {
 }
 
 async function refund(t: Ticket) {
-  if (!order.value || !confirm(refundQuestion.value)) return
+  if (!order.value || !confirm(refundQuestion(t))) return
   busy.value = true
   try {
     const before = order.value.status

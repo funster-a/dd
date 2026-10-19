@@ -9,7 +9,10 @@
 # поддельный). Нужен Docker с сетью host, то есть Linux.
 import http.client
 import http.server
+import os
 import re
+import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -48,11 +51,19 @@ class FakeAPI(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def edge_config(path):
+def edge_config(path, run):
     conf = open(path, encoding='utf-8').read()
     conf = conf.replace('listen 8080;', f'listen {EDGE};')
     conf = re.sub(r'set \$api http://[^;]+;', f'set $api http://127.0.0.1:{UPSTREAM};', conf)
+    # /lb-healthz отвечает именем прогона: так видно, что отвечает наш nginx,
+    # а не оставшийся от прерванного прогона.
+    conf = conf.replace('return 200 "ok\\n";', f'return 200 "{run}\\n";')
     return re.sub(r'\n\s*resolver [^\n]*', '', conf)
+
+
+def port_busy(port):
+    with socket.socket() as s:
+        return s.connect_ex(('127.0.0.1', port)) == 0
 
 
 def get(path):
@@ -85,20 +96,36 @@ def wave(path, n, seconds):
 
 def main():
     conf_path = sys.argv[1] if len(sys.argv) > 1 else 'deploy/nginx/api-lb.conf'
+    # Контейнеры прерванных прогонов держат порт края: убираем их заранее.
+    stale = subprocess.run(['docker', 'ps', '-aq', '--filter', 'name=^edgefail-'], capture_output=True, text=True, check=True).stdout.split()
+    if stale:
+        subprocess.run(['docker', 'rm', '-f', *stale], stdout=subprocess.DEVNULL, check=True)
+    for port in (EDGE, UPSTREAM):
+        if port_busy(port):
+            sys.exit(f'порт {port} занят другой программой')
+    # SIGTERM и SIGHUP тоже проходят через finally: контейнер не остаётся.
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, lambda *_: sys.exit(1))
     server = http.server.ThreadingHTTPServer(('127.0.0.1', UPSTREAM), FakeAPI)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    with tempfile.NamedTemporaryFile('w', suffix='.conf', delete=False) as f:
-        f.write(edge_config(conf_path))
     name = f'edgefail-{int(time.time())}'
-    subprocess.run(['docker', 'run', '-d', '--rm', '--name', name, '--network', 'host',
-                    '-v', f'{f.name}:/etc/nginx/conf.d/default.conf:ro', IMAGE], check=True, stdout=subprocess.DEVNULL)
+    conf_file = None
     try:
+        with tempfile.NamedTemporaryFile('w', suffix='.conf', delete=False) as f:
+            conf_file = f.name
+            f.write(edge_config(conf_path, name))
+        os.chmod(conf_file, 0o644)
+        subprocess.run(['docker', 'run', '-d', '--rm', '--name', name, '--network', 'host',
+                        '-v', f'{conf_file}:/etc/nginx/conf.d/default.conf:ro', IMAGE], check=True, stdout=subprocess.DEVNULL)
         for _ in range(50):
             try:
-                urllib.request.urlopen(f'http://127.0.0.1:{EDGE}/lb-healthz', timeout=1)
-                break
+                if urllib.request.urlopen(f'http://127.0.0.1:{EDGE}/lb-healthz', timeout=1).read().decode().strip() == name:
+                    break
             except OSError:
-                time.sleep(0.2)
+                pass
+            time.sleep(0.2)
+        else:
+            sys.exit(f'nginx с конфигом {conf_path} не поднялся: docker logs {name}')
         print(f'конфиг края: {conf_path}')
         for mode, n in (('503', 50), ('hang', 30)):
             path = f'/v1/events/edgefail-{mode}-{time.time_ns()}/availability'
@@ -118,6 +145,8 @@ def main():
     finally:
         subprocess.run(['docker', 'rm', '-f', name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         server.shutdown()
+        if conf_file:
+            os.unlink(conf_file)
 
 
 if __name__ == '__main__':

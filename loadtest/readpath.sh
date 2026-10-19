@@ -85,7 +85,8 @@ NGINX
     proxy_pass http://api;
     proxy_http_version 1.1;
     proxy_set_header Connection "";
-    proxy_read_timeout 10s;
+    proxy_next_upstream error;
+    proxy_read_timeout 15s;
     proxy_cache edge;
     proxy_cache_key $request_method$request_uri;
     proxy_cache_lock on;

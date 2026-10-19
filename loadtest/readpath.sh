@@ -98,6 +98,7 @@ NGINX
     proxy_cache_lock_timeout 5s;
     proxy_cache_use_stale updating error timeout http_500 http_502 http_503 http_504;
     proxy_cache_background_update off;
+    proxy_ignore_client_abort on;
     add_header X-Cache $upstream_cache_status always;
   }
 NGINX

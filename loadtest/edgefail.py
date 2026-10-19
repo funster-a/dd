@@ -8,9 +8,9 @@
 # Скрипт поднимает два поддельных экземпляра api (127.0.0.1:18099 и :18098) и
 # nginx из того же образа, что в Compose, с переданным конфигом края. Адрес api
 # подменяется на эти два экземпляра без max_fails: и в `set $api`, и в строке
-# `server ... resolve` блока upstream. Разрешение имени через DNS стенд не
-# проверяет. Нужен Docker с сетью host, то есть Linux. Подходят конфиги в духе
-# Compose (deploy/nginx/api-lb.conf); шаблон Kubernetes скрипт не запускает.
+# `server ... resolve` блоков upstream. Разрешение имени через DNS стенд не
+# проверяет. Нужен Docker с сетью host, то есть Linux. Подходят
+# deploy/nginx/api-lb.conf и шаблон deploy/k8s/base/edge.conf.template.
 import http.client
 import http.server
 import os
@@ -44,6 +44,8 @@ class FakeAPI(http.server.BaseHTTPRequestHandler):
             time.sleep(CLOSE_AFTER)
             self.close_connection = True
             return
+        if state['mode'] == 'slow':
+            time.sleep(CLOSE_AFTER)
         if state['mode'] == '503':
             # как httpx.WriteUnavailable: 503 без Cache-Control
             body = b'{"error":{"code":"unavailable"}}'
@@ -178,6 +180,21 @@ def main():
         report('api отвечает 503', *stale_scenario('503', 50))
         report('api завис', *stale_scenario('hang', 30))
         report(f'api обрывает соединение через {CLOSE_AFTER} с', *stale_scenario('close', 10))
+
+        # Покупатель, который обновляет запись, уходит через секунду, а api
+        # отвечает за CLOSE_AFTER: попадёт ли ответ в кэш для следующего.
+        path = f'/v1/events/edgefail-abort-{time.time_ns()}/availability'
+        get(path)
+        time.sleep(3)
+        state['mode'], before = 'slow', state['hits']
+        c = socket.create_connection(('127.0.0.1', EDGE))
+        c.sendall(f'GET {path} HTTP/1.1\r\nHost: edge\r\n\r\n'.encode())
+        time.sleep(1)
+        c.close()
+        time.sleep(CLOSE_AFTER + 0.5)
+        state['mode'] = 'ok'
+        status, cache, wait = get(path)
+        print(f'{"обновлявший ушёл через 1 с":<34} следующий: {status} {cache}, ждал {wait:.1f} с, запросов в api {state["hits"] - before}')
 
         # Один экземпляр не принимает соединения: запросы на новые адреса.
         servers[1].shutdown()

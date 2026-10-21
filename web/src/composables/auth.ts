@@ -1,5 +1,5 @@
 import { computed, reactive } from 'vue'
-import { api, getToken, setToken } from '@/api/client'
+import { api, getToken, onSessionExpired, setToken } from '@/api/client'
 
 // Вход покупателя по телефону и SMS-коду (ADR 006). Экраны, которым нужен
 // вход, вызывают requireLogin(): открывается окно входа, промис
@@ -10,6 +10,12 @@ const state = reactive({
 })
 
 let waiting: { resolve: () => void; reject: (e: Error) => void } | null = null
+
+// Сервер не узнал сессию — например, после сброса данных: шапка снова
+// предлагает войти, а requireLogin() открывает окно входа.
+onSessionExpired((realm) => {
+  if (realm === 'buyer') state.token = null
+})
 
 export function useAuth() {
   const authed = computed(() => !!state.token)

@@ -6,11 +6,11 @@ import { ApiError, api, newKey } from '@/api/client'
 import type { Order, OrderSummary, Ticket } from '@/api/types'
 import { useAuth } from '@/composables/auth'
 import { useToast } from '@/composables/toast'
-import { dayMonth, money, orderStatusLabel, tickets as ticketsWord, time } from '@/lib/format'
+import { dayMonth, money, orderStatusText, ticketPrice, tickets as ticketsWord, time } from '@/lib/format'
 
 const props = defineProps<{ id: string }>()
 const route = useRoute()
-const { requireLogin } = useAuth()
+const { requireLogin, authed } = useAuth()
 const toast = useToast()
 
 const order = ref<Order | null>(null)
@@ -20,6 +20,10 @@ const failed = ref<'' | 'not_found' | 'login' | 'error'>('')
 const busy = ref(false)
 const now = ref(Date.now())
 const fromPayment = route.query.paid === '1'
+// Провайдер вернул покупателя на сайт, но отказал в оплате: ждать нечего.
+const payFailed = ref(false)
+// Подтверждение ждём не дольше двух минут, дальше — снова кнопка оплаты.
+const waitUntil = Date.now() + 120_000
 let timer: ReturnType<typeof setInterval> | undefined
 let polls = 0
 
@@ -32,7 +36,13 @@ const countdown = computed(() => {
 const hasTickets = computed(() => ['paid', 'partially_refunded', 'refunded'].includes(order.value?.status ?? ''))
 // Билеты выпускает воркер после оплаты: пока их меньше, чем позиций, ждём.
 const issuing = computed(() => order.value?.status === 'paid' && tickets.value.length < order.value.items.length)
-const waitingPayment = computed(() => fromPayment && order.value?.status === 'pending' && left.value > 0)
+const waitingPayment = computed(
+  () => fromPayment && order.value?.status === 'pending' && left.value > 0 && !payFailed.value && now.value < waitUntil,
+)
+// Статус заказа после возврата меняет воркер (order.refunded): до 20 секунд
+// опрашиваем заказ, пока статус не сменится.
+const refundFrom = ref<{ status: string; until: number } | null>(null)
+const refundPending = computed(() => !!refundFrom.value && order.value?.status === refundFrom.value.status && now.value < refundFrom.value.until)
 
 async function load() {
   try {
@@ -46,9 +56,11 @@ async function load() {
     order.value = o
     summary.value = list.find((x) => x.id === o.id) ?? summary.value
     if (hasTickets.value) tickets.value = await api.orderTickets(o.id)
+    if (fromPayment && o.status === 'pending') payFailed.value = (await api.latestPayment(o.id).catch(() => null))?.status === 'failed'
     failed.value = ''
   } catch (e) {
-    failed.value = e instanceof ApiError && (e.status === 404 || e.status === 403) ? 'not_found' : 'error'
+    if (e instanceof ApiError && e.status === 401) failed.value = 'login'
+    else failed.value = e instanceof ApiError && (e.status === 404 || e.status === 403) ? 'not_found' : 'error'
   }
 }
 
@@ -56,8 +68,9 @@ onMounted(async () => {
   await load()
   timer = setInterval(() => {
     now.value = Date.now()
-    // Опрос раз в 2 секунды, пока ждём вебхук или выпуск билетов.
-    if ((waitingPayment.value || issuing.value) && ++polls % 2 === 0 && polls < 120) load()
+    // Опрос раз в 2 секунды, пока ждём вебхук, выпуск билетов или возврат.
+    // Без входа не опрашиваем: каждый опрос снова открывал бы окно входа.
+    if (authed.value && (waitingPayment.value || issuing.value || refundPending.value) && ++polls % 2 === 0 && polls < 120) load()
   }, 1000)
 })
 onBeforeUnmount(() => clearInterval(timer))
@@ -90,11 +103,17 @@ async function cancel() {
 
 // При возврате по желанию покупателя сервисный сбор не возвращается
 // (ADR 019) — говорим об этом до подтверждения, а не после.
-const refundQuestion = computed(() =>
-  order.value && order.value.fee_tiyn > 0
+// Бесплатный билет возвращается без денег, даже если в том же заказе есть
+// платные: вопрос строится по цене этого билета из состава заказа.
+function refundQuestion(t: Ticket): string {
+  const o = order.value
+  if (!o) return ''
+  const item = o.items.find((i) => i.kind === t.kind && i.section === t.section && (t.kind === 'general' || (i.row === t.row && i.seat === t.seat)))
+  if ((item ? item.price_tiyn : o.total_tiyn) === 0) return 'Вернуть билет? Он сразу перестанет действовать, а место освободится.'
+  return o.fee_tiyn > 0
     ? 'Вернуть билет? Он сразу перестанет действовать, цена билета вернётся на карту. Сервисный сбор не возвращается.'
-    : 'Вернуть билет? Он сразу перестанет действовать, деньги вернутся на карту.',
-)
+    : 'Вернуть билет? Он сразу перестанет действовать, деньги вернутся на карту.'
+}
 
 const refundErrors: Record<string, string> = {
   refund_deadline_passed: 'Срок возврата уже прошёл',
@@ -104,10 +123,13 @@ const refundErrors: Record<string, string> = {
 }
 
 async function refund(t: Ticket) {
-  if (!order.value || !confirm(refundQuestion.value)) return
+  if (!order.value || !confirm(refundQuestion(t))) return
   busy.value = true
   try {
+    const before = order.value.status
     const r = await api.refund(order.value.id, [t.id], newKey())
+    refundFrom.value = { status: before, until: Date.now() + 20000 }
+    polls = 0
     toast.show(r.amount_tiyn > 0 ? `Возврат ${money(r.amount_tiyn)} оформлен` : 'Билет возвращён', 'ok')
     await load()
   } catch (e) {
@@ -142,7 +164,7 @@ function itemText(i: { kind: string; section: string; row: string | null; seat: 
       <header class="head">
         <p class="eyebrow">
           Заказ <span class="mono">№{{ order.id.slice(-8).toUpperCase() }}</span> ·
-          <span class="status" :class="`status--${order.status}`">{{ orderStatusLabel[order.status] }}</span>
+          <span class="status" :class="`status--${order.status}`">{{ orderStatusText(order.status, order.total_tiyn) }}</span>
         </p>
         <h1 class="head__title">
           <RouterLink v-if="summary" :to="`/e/${summary.organizer_slug}/${summary.event_slug}`">{{ summary.event_title }}</RouterLink>
@@ -164,7 +186,8 @@ function itemText(i: { kind: string; section: string; row: string | null; seat: 
       <section v-else-if="order.status === 'pending'" class="panel panel--pay">
         <div>
           <p class="panel__title">Места держатся за вами ещё <span class="mono">{{ countdown }}</span></p>
-          <p>Оплатите заказ, пока время не вышло, иначе места вернутся в продажу.</p>
+          <p v-if="payFailed">Оплата не прошла, деньги не списаны. Попробуйте ещё раз, пока время не вышло.</p>
+          <p v-else>Оплатите заказ, пока время не вышло, иначе места вернутся в продажу.</p>
         </div>
         <div class="panel__actions">
           <button class="btn btn--accent" type="button" :disabled="busy || left === 0" @click="pay">Оплатить {{ money(order.total_tiyn) }}</button>
@@ -201,7 +224,7 @@ function itemText(i: { kind: string; section: string; row: string | null; seat: 
         <ul>
           <li v-for="(i, n) in order.items" :key="n">
             <span>{{ itemText(i) }}</span>
-            <span class="mono">{{ money(i.price_tiyn) }}</span>
+            <span class="mono">{{ ticketPrice(i.price_tiyn) }}</span>
           </li>
         </ul>
         <div v-if="order.fee_tiyn > 0" class="receipt__fee">
@@ -210,7 +233,7 @@ function itemText(i: { kind: string; section: string; row: string | null; seat: 
         </div>
         <div class="receipt__total">
           <span>Итого</span>
-          <span class="mono">{{ money(order.total_tiyn) }}</span>
+          <span class="mono">{{ ticketPrice(order.total_tiyn) }}</span>
         </div>
         <p class="hint">Билеты и чек придут на {{ order.email }}</p>
       </section>

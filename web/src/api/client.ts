@@ -175,6 +175,7 @@ export const api = {
   myOrders: () => request<OrderSummary[]>('/v1/me/orders'),
   startPayment: (orderId: string, key: string) =>
     request<Payment>(`/v1/orders/${orderId}/payments`, { method: 'POST', idempotencyKey: key }),
+  latestPayment: (orderId: string) => request<Payment>(`/v1/orders/${orderId}/payments/latest`),
 
   orderTickets: (orderId: string) => request<Ticket[]>(`/v1/orders/${orderId}/tickets`),
   ticket: (token: string) => request<TicketView>(`/v1/tickets/${encodeURIComponent(token)}`, { auth: false }),

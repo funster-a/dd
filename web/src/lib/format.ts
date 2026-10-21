@@ -10,6 +10,9 @@ export function money(tiyn: number): string {
   return (rest ? `${whole},${String(rest).padStart(2, '0')}` : whole) + nbsp + '₸'
 }
 
+// Цена билета: «Бесплатно» вместо «0 ₸».
+export const ticketPrice = (tiyn: number) => (tiyn === 0 ? 'Бесплатно' : money(tiyn))
+
 export function priceFrom(tiyn: number | null): string {
   if (tiyn === null) return 'Вход свободный'
   if (tiyn === 0) return 'Бесплатно'
@@ -41,6 +44,9 @@ export function plural(n: number, one: string, few: string, many: string): strin
 
 export const tickets = (n: number) => `${n}${nbsp}${plural(n, 'билет', 'билета', 'билетов')}`
 
+// Лимит на покупателя: после «не больше» — родительный падеж, «2 билетов».
+export const atMostTickets = (n: number) => `Не больше${nbsp}${n}${nbsp}${plural(n, 'билета', 'билетов', 'билетов')}`
+
 // Телефон в E.164 из того, что ввёл человек: 8 707 … → +7707…
 export function normalizePhone(input: string): string | null {
   const digits = input.replace(/\D/g, '')
@@ -57,4 +63,11 @@ export const orderStatusLabel: Record<string, string> = {
   cancelled: 'Отменён',
   partially_refunded: 'Частичный возврат',
   refunded: 'Возвращён',
+}
+
+// Бесплатный заказ сразу оплачен по статусу, но «Оплачен» о нём — неправда:
+// показываем «Оформлен».
+export function orderStatusText(status: string, totalTiyn: number): string {
+  if (status === 'paid' && totalTiyn === 0) return 'Оформлен'
+  return orderStatusLabel[status] ?? status
 }

@@ -12,6 +12,16 @@ upstream api {
     keepalive 64;
 }
 
+# Кэшируемые чтения идут к тем же подам через отдельный upstream без
+# max_fails: медленное чтение не выводит под ни из записи, ни из чтений.
+# Недоступный под обходится повтором на другой (proxy_next_upstream ниже),
+# если соединение новое; по открытому keepalive — ждём proxy_read_timeout.
+upstream api_reads {
+    zone api_reads 64k;
+    server api-pods.${POD_NAMESPACE}.svc.cluster.local:8080 resolve max_fails=0;
+    keepalive 32;
+}
+
 server {
     listen 8080;
     server_tokens off;
@@ -23,23 +33,25 @@ server {
     }
 
     location ~ ^/v1/(public/|events/[^/]+/availability$) {
-        proxy_pass http://api;
+        proxy_pass http://api_reads;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Request-ID $request_id;
-        proxy_next_upstream error;
+        proxy_next_upstream error timeout;
+        proxy_next_upstream_timeout 3s;
         proxy_connect_timeout 2s;
-        proxy_read_timeout 70s;
+        proxy_read_timeout 30s;
 
         proxy_cache edge;
         proxy_cache_key $request_method$request_uri;
         proxy_cache_lock on;
         proxy_cache_lock_timeout 5s;
-        proxy_cache_use_stale updating error timeout;
-        proxy_cache_background_update on;
+        proxy_cache_use_stale updating error timeout http_500 http_502 http_503 http_504;
+        proxy_cache_background_update off;
+        proxy_ignore_client_abort on;
         add_header X-Cache $upstream_cache_status always;
     }
 

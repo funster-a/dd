@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { RADIUS, type Cart, type MapSeat, type SeatMap } from '@/lib/seatmap'
-import { money } from '@/lib/format'
+import { ticketPrice } from '@/lib/format'
 
 const props = defineProps<{ map: SeatMap; taken: Set<string>; cart: Cart; disabled?: boolean }>()
 const emit = defineEmits<{ toggle: [seat: MapSeat] }>()
@@ -37,7 +37,7 @@ function state(s: MapSeat): 'selected' | 'taken' | 'free' {
 
 function label(s: MapSeat): string {
   const st = state(s)
-  const tail = st === 'taken' ? 'занято' : money(s.priceTiyn) + (st === 'selected' ? ', выбрано' : '')
+  const tail = st === 'taken' ? 'занято' : ticketPrice(s.priceTiyn) + (st === 'selected' ? ', выбрано' : '')
   return `${s.ref.section}, ряд ${s.ref.row}, место ${s.ref.seat}, ${tail}`
 }
 
@@ -52,7 +52,7 @@ function activate(s: MapSeat) {
       <p class="seatmap__hint mono" aria-live="polite">
         <template v-if="hovered">
           {{ hovered.ref.section }} · ряд {{ hovered.ref.row }} · место {{ hovered.ref.seat }}
-          <b>{{ state(hovered) === 'taken' ? 'занято' : money(hovered.priceTiyn) }}</b>
+          <b>{{ state(hovered) === 'taken' ? 'занято' : ticketPrice(hovered.priceTiyn) }}</b>
         </template>
         <template v-else>Нажмите на место, чтобы выбрать</template>
       </p>

@@ -66,6 +66,9 @@ lb_conf() { # $1 — кэш на краю
 # Кэш на краю, как CDN: публичные GET по заголовкам Cache-Control ответа api.
 # Одновременные промахи по одному ключу идут в api одним запросом.
 proxy_cache_path /var/cache/nginx/edge levels=1:2 keys_zone=edge:20m max_size=200m inactive=10m;
+# Чтения — отдельный upstream без max_fails, как в Kubernetes: таймаут чтения
+# не выводит экземпляр из записи.
+upstream api_reads { server 127.0.0.1:8081 max_fails=0; server 127.0.0.1:8082 max_fails=0; keepalive 32; }
 NGINX
     fi
     cat <<'NGINX'
@@ -82,15 +85,20 @@ NGINX
     if [[ $1 == 1 ]]; then
       cat <<'NGINX'
   location ~ ^/v1/(public/|events/[^/]+/availability$) {
-    proxy_pass http://api;
+    proxy_pass http://api_reads;
     proxy_http_version 1.1;
     proxy_set_header Connection "";
+    proxy_next_upstream error timeout;
+    proxy_next_upstream_timeout 3s;
+    proxy_connect_timeout 2s;
+    proxy_read_timeout 30s;
     proxy_cache edge;
     proxy_cache_key $request_method$request_uri;
     proxy_cache_lock on;
     proxy_cache_lock_timeout 5s;
-    proxy_cache_use_stale updating error timeout;
-    proxy_cache_background_update on;
+    proxy_cache_use_stale updating error timeout http_500 http_502 http_503 http_504;
+    proxy_cache_background_update off;
+    proxy_ignore_client_abort on;
     add_header X-Cache $upstream_cache_status always;
   }
 NGINX

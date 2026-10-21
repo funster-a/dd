@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import SeatMapView from '@/components/SeatMap.vue'
 import StadiumPlanView from '@/components/StadiumPlan.vue'
@@ -9,7 +9,7 @@ import { ApiError, api, newKey } from '@/api/client'
 import type { Availability, PublicEvent, QueueStatus } from '@/api/types'
 import { useAuth } from '@/composables/auth'
 import { useToast } from '@/composables/toast'
-import { dayMonth, fullDate, money, tickets, time, weekday } from '@/lib/format'
+import { atMostTickets, dayMonth, fullDate, money, ticketPrice, tickets, time, weekday } from '@/lib/format'
 import { queueView } from '@/lib/queue'
 import { buildPlan } from '@/lib/plan'
 import { buildSeatMap, cartCount, cartFee, cartTotal, emptyCart, setZoneQuantity, takenSet, toggleSeat, type MapSeat } from '@/lib/seatmap'
@@ -22,6 +22,9 @@ const toast = useToast()
 const event = ref<PublicEvent | null>(null)
 const notFound = ref(false)
 const availability = ref<Availability | null>(null)
+// Схема рисуется раньше, чем приходит занятость: до ответа проданные места
+// выглядят свободными, поэтому выбирать их пока нельзя.
+const availReady = ref(false)
 const cart = reactive(emptyCart())
 const checkoutOpen = ref(false)
 const email = ref(readEmail())
@@ -71,6 +74,9 @@ const feePercent = computed(() => {
   return bps > 0 ? `${(bps / 100).toLocaleString('ru-RU')} %` : ''
 })
 const tz = computed(() => event.value?.venue.timezone ?? 'UTC')
+const generalOnly = computed(() => !!event.value?.layout?.sections.every((s) => s.kind === 'general'))
+// Все билеты бесплатные: ни оплаты, ни сбора, держать места не за что.
+const allFree = computed(() => !!event.value?.prices.length && event.value.prices.every((p) => p.price_tiyn === 0))
 
 // Можно ли сейчас покупать: событие активно, продажи идут.
 const saleState = computed<'open' | 'cancelled' | 'free_entry' | 'not_started' | 'closed'>(() => {
@@ -146,6 +152,7 @@ const mapLink = computed(() => {
 })
 
 async function load() {
+  availReady.value = false
   try {
     event.value = await api.event(props.org, props.slug)
     document.title = `${event.value.title} — Партер`
@@ -156,12 +163,19 @@ async function load() {
   }
 }
 
+// Номер последнего запроса занятости: ответ на более ранний (другой сектор,
+// план, прошлый опрос) пришёл позже и не должен затирать свежий.
+let refreshSeq = 0
+
 async function refresh() {
   if (!event.value) return
+  const seq = ++refreshSeq
   try {
     const q = event.value.layout?.plan ? (sector.value ? { section: sector.value } : { summary: true }) : {}
     const a = await api.availability(event.value.id, q)
+    if (seq !== refreshSeq) return
     availability.value = a
+    availReady.value = true
     if (!('section' in q)) {
       planCounts.value = a.sections
       planGeneral.value = a.general
@@ -169,7 +183,9 @@ async function refresh() {
     // Место, которое заняли, пока покупатель выбирал, уходит из корзины.
     for (const [key] of cart.seats) if (taken.value.has(key)) cart.seats.delete(key)
   } catch {
-    // занятость подтянется при следующем опросе
+    // занятость подтянется при следующем опросе; выбор не блокируем —
+    // занятое место всё равно отклонит сервер (seat_taken)
+    if (seq === refreshSeq) availReady.value = true
   }
 }
 
@@ -189,19 +205,22 @@ watch(() => [props.org, props.slug], () => {
   sector.value = null
   load()
 })
-watch(sector, () => refresh())
+watch(sector, () => {
+  availReady.value = false
+  refresh()
+})
 
 function onToggle(s: MapSeat) {
   if (!event.value) return
   if (!toggleSeat(cart, s, taken.value, event.value.max_tickets_per_buyer)) {
-    toast.show(`Не больше ${tickets(event.value.max_tickets_per_buyer)} на покупателя`)
+    toast.show(`${atMostTickets(event.value.max_tickets_per_buyer)} на покупателя`)
   }
 }
 
 function onZone(zone: string, q: number) {
   if (!event.value) return
   const got = setZoneQuantity(cart, zone, q, zoneAvailable.value[zone] ?? 0, event.value.max_tickets_per_buyer)
-  if (got < q && q <= (zoneAvailable.value[zone] ?? 0)) toast.show(`Не больше ${tickets(event.value.max_tickets_per_buyer)} на покупателя`)
+  if (got < q && q <= (zoneAvailable.value[zone] ?? 0)) toast.show(`${atMostTickets(event.value.max_tickets_per_buyer)} на покупателя`)
 }
 
 async function startCheckout() {
@@ -233,6 +252,7 @@ const errorText: Record<string, string> = {
   sales_not_started: 'Продажи ещё не открылись.',
   event_cancelled: 'Событие отменено.',
   order_in_progress: 'Заказ уже оформляется в другой вкладке.',
+  invalid_session: 'Сессия истекла. Войдите снова — выбранные места сохранены.',
   session_store_unavailable: 'Вход временно недоступен. Попробуйте через несколько секунд — места пока не заняты.',
   queue_required: 'Сначала дождитесь своей очереди.',
   ip_ticket_limit_exceeded: 'С этой сети уже взято много билетов на событие. Если это ошибка, попробуйте с мобильного интернета.',
@@ -241,6 +261,7 @@ const errorText: Record<string, string> = {
 async function submit() {
   if (!event.value || !emailValid.value) return
   busy.value = true
+  let relogin = false
   try {
     localStorage.setItem('dd.email', email.value.trim())
   } catch {
@@ -274,9 +295,24 @@ async function submit() {
       checkoutOpen.value = false
       await refresh()
     }
+    relogin = code === 'invalid_session'
     checkoutKey = newKey()
   } finally {
     busy.value = false
+  }
+  // Заказ не создан. После входа окно оформления открывается снова с той же
+  // корзиной, и покупатель подтверждает заказ сам: сам по себе заказ не уходит,
+  // даже если покупатель за это время ушёл со страницы. Вход открывается после
+  // того, как окно оформления закрылось и вернуло прокрутку страницы.
+  if (relogin) {
+    checkoutOpen.value = false
+    await nextTick()
+    try {
+      await requireLogin()
+    } catch {
+      return
+    }
+    checkoutOpen.value = true
   }
 }
 
@@ -339,9 +375,9 @@ const cartLines = computed(() => [
           <h2 class="queue__title">{{ qv.title }}</h2>
           <p class="queue__text">{{ qv.text }}</p>
           <button v-if="!queue" class="btn btn--accent" type="button" @click="joinQueue">Встать в очередь</button>
-          <a v-else-if="qv.canBuy && saleState === 'open'" href="#seats" class="btn btn--accent">Выбрать места</a>
+          <a v-else-if="qv.canBuy && saleState === 'open'" href="#seats" class="btn btn--accent">{{ generalOnly ? 'Выбрать билеты' : 'Выбрать места' }}</a>
         </div>
-        <a v-else-if="saleState === 'open'" href="#seats" class="btn btn--accent hero__cta">Выбрать места</a>
+        <a v-else-if="saleState === 'open'" href="#seats" class="btn btn--accent hero__cta">{{ generalOnly ? 'Выбрать билеты' : 'Выбрать места' }}</a>
         <p v-else-if="saleState === 'free_entry'" class="note note--ok">Вход свободный — билеты не нужны. Просто приходите.</p>
         <p v-else-if="saleState === 'not_started'" class="note">
           Продажи откроются {{ fullDate(event.sales_start_at!, tz) }}<template v-if="availability?.queue && !queueOn"
@@ -372,12 +408,12 @@ const cartLines = computed(() => [
       </div>
     </section>
 
-    <section v-if="map && saleState === 'open'" id="seats" class="page seats">
+    <section v-if="map && saleState === 'open'" id="seats" class="page seats" :class="{ 'seats--loading': !availReady }" :aria-busy="!availReady">
       <div class="seats__head">
-        <h2 class="seats__title">Выберите места</h2>
+        <h2 class="seats__title">{{ generalOnly ? 'Выберите билеты' : 'Выберите места' }}</h2>
         <ul class="legend">
           <li v-for="c in map.categories" :key="c.name" :class="`cat-${c.color}`">
-            <span class="legend__dot"></span>{{ c.name }} <span class="mono">{{ money(c.priceTiyn) }}</span>
+            <span class="legend__dot"></span>{{ c.name }} <span v-if="ticketPrice(c.priceTiyn) !== c.name" class="mono">{{ ticketPrice(c.priceTiyn) }}</span>
           </li>
           <li class="legend--taken"><span class="legend__dot"></span>Занято</li>
         </ul>
@@ -392,15 +428,16 @@ const cartLines = computed(() => [
           </p>
         </div>
       </template>
-      <SeatMapView v-if="map.sections.length" :key="sector ?? ''" :map="map" :taken="taken" :cart="cart" @toggle="onToggle" />
+      <SeatMapView v-if="map.sections.length" :key="sector ?? ''" :map="map" :taken="taken" :cart="cart" :disabled="!availReady" @toggle="onToggle" />
       <div v-if="shownZones.length" class="seats__zones">
         <h3 v-if="!plan" class="seats__subtitle">Входные зоны</h3>
-        <ZonePicker :zones="shownZones" :available="zoneAvailable" :quantities="zoneQuantities" @change="onZone" />
+        <ZonePicker :zones="shownZones" :available="zoneAvailable" :quantities="zoneQuantities" :disabled="!availReady" @change="onZone" />
       </div>
       <p class="seats__note">
-        Не больше {{ tickets(event.max_tickets_per_buyer) }} на покупателя. Места держатся за вами 10 минут, пока вы платите.
-        Вернуть билет можно не позже чем за {{ event.refund_deadline_hours }} ч до начала<template v-if="feePercent">
-          ; сервисный сбор {{ feePercent }} при возврате не возвращается, при отмене события — возвращается</template>.
+        {{ atMostTickets(event.max_tickets_per_buyer) }} на покупателя.<template v-if="!allFree"> Места держатся за вами 10 минут, пока вы платите.</template>
+        Вернуть билет можно не позже чем за {{ event.refund_deadline_hours }} ч до начала<template v-if="feePercent && !allFree"
+          >; сервисный сбор {{ feePercent }} при возврате не возвращается, при отмене события — возвращается</template
+        >.
       </p>
     </section>
 
@@ -409,7 +446,7 @@ const cartLines = computed(() => [
         <div class="page cart__inner">
           <div class="cart__summary">
             <span class="cart__count">{{ tickets(count) }}</span>
-            <span class="cart__total mono">{{ money(total) }}</span>
+            <span class="cart__total mono">{{ ticketPrice(total) }}</span>
           </div>
           <button class="btn btn--accent" type="button" :disabled="!canBuy" @click="startCheckout">
             {{ canBuy ? 'Оформить' : 'Ждём очередь' }}
@@ -426,7 +463,7 @@ const cartLines = computed(() => [
           <ul class="stub__lines">
             <li v-for="l in cartLines" :key="l.key">
               <span>{{ l.text }}</span>
-              <span class="mono">{{ money(l.price) }}</span>
+              <span class="mono">{{ ticketPrice(l.price) }}</span>
             </li>
           </ul>
           <div v-if="fee > 0" class="stub__fee">
@@ -435,7 +472,7 @@ const cartLines = computed(() => [
           </div>
           <div class="stub__total">
             <span>Итого</span>
-            <span class="mono">{{ money(total) }}</span>
+            <span class="mono">{{ ticketPrice(total) }}</span>
           </div>
         </div>
         <label class="field">
@@ -445,7 +482,7 @@ const cartLines = computed(() => [
         <button class="btn btn--accent checkout__submit" :disabled="busy || !emailValid">
           {{ total === 0 ? 'Получить билеты' : `Перейти к оплате · ${money(total)}` }}
         </button>
-        <p class="checkout__note">Оплата на защищённой странице платёжного провайдера. Данные карты не проходят через Партер.</p>
+        <p v-if="total > 0" class="checkout__note">Оплата на защищённой странице платёжного провайдера. Данные карты не проходят через Партер.</p>
       </form>
     </BottomSheet>
   </article>
@@ -509,13 +546,15 @@ const cartLines = computed(() => [
   }
 }
 .hero__text {
+  min-width: 0;
   display: grid;
   gap: var(--space-5);
   align-content: end;
 }
 .hero__title {
   font-size: var(--text-4xl);
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  min-width: 0; /* иначе длинное слово распирает колонку, а не переносится */
 }
 .hero__poster {
   margin: 0;
@@ -603,6 +642,11 @@ const cartLines = computed(() => [
 }
 .seats__title {
   font-size: var(--text-3xl);
+}
+.seats--loading .seatmap,
+.seats--loading .zones {
+  opacity: 0.55;
+  cursor: progress;
 }
 .seats__subtitle {
   font-size: var(--text-xl);

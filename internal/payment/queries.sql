@@ -93,3 +93,11 @@ WHERE payment_id = @payment_id AND id <> @id AND status IN ('requested', 'pendin
 INSERT INTO refund_items (refund_id, ticket_id, organizer_id, order_id)
 SELECT @refund_id::uuid, unnest(@ticket_ids::uuid[]), @organizer_id::uuid, @order_id::uuid
 ON CONFLICT DO NOTHING;
+
+-- name: GetLatestPayment :one
+-- Последняя попытка оплаты заказа покупателя: страница заказа узнаёт об
+-- отказе провайдера сразу, а не когда истечёт холд.
+SELECT p.* FROM payments p JOIN orders o ON o.id = p.order_id
+WHERE p.order_id = @order_id AND o.buyer_id = @buyer_id
+ORDER BY p.created_at DESC, p.id DESC
+LIMIT 1;

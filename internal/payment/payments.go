@@ -286,3 +286,19 @@ func withQuery(raw, key, value string) string {
 	u.RawQuery = q.Encode()
 	return u.String()
 }
+
+// LatestPayment возвращает последнюю попытку оплаты заказа покупателя.
+// Чужой заказ и заказ без попыток — ErrNotFound.
+func (s *Service) LatestPayment(ctx context.Context, buyerID, orderID string) (Payment, error) {
+	if !validID(orderID) {
+		return Payment{}, ErrNotFound
+	}
+	p, err := s.q.GetLatestPayment(ctx, paymentdb.GetLatestPaymentParams{OrderID: orderID, BuyerID: buyerID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Payment{}, ErrNotFound
+	}
+	if err != nil {
+		return Payment{}, fmt.Errorf("load latest payment: %w", err)
+	}
+	return paymentFrom(p), nil
+}

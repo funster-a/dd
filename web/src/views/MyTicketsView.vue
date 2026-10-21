@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { api } from '@/api/client'
 import type { OrderSummary } from '@/api/types'
 import { useAuth } from '@/composables/auth'
-import { dayMonth, money, orderStatusLabel, tickets, time, weekday } from '@/lib/format'
+import { dayMonth, money, orderStatusText, tickets, time, weekday } from '@/lib/format'
 
 const { authed, openSheet } = useAuth()
 const orders = ref<OrderSummary[] | null>(null)
@@ -67,7 +67,7 @@ const past = computed(() => (orders.value ?? []).filter((o) => Date.parse(o.even
                   <span class="row__title">{{ o.event_title }}</span>
                   <span class="row__meta">{{ o.venue }} · {{ tickets(o.items) }} · <span class="mono">{{ money(o.total_tiyn) }}</span></span>
                 </div>
-                <span class="row__status" :class="`row__status--${o.status}`">{{ orderStatusLabel[o.status] }}</span>
+                <span class="row__status" :class="`row__status--${o.status}`">{{ orderStatusText(o.status, o.total_tiyn) }}</span>
               </RouterLink>
             </li>
           </ul>
